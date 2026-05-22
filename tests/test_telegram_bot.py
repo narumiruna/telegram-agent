@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,9 @@ import pytest
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
 from telegramagent.skills import AgentSkill
+from telegramagent.skills import SkillInstaller
+from telegramagent.skills import SkillInstallResult
+from telegramagent.skills import SkillManagementTool
 from telegramagent.skills import format_skills_for_instructions
 from telegramagent.skills import load_agent_skills
 from telegramagent.telegram import TelegramBot
@@ -49,6 +53,32 @@ class FakeRunnableAgent:
     async def run(self, user_prompt: str) -> FakeRunResult:
         self.prompts.append(user_prompt)
         return FakeRunResult(self.output)
+
+
+class FakeCommandSkillInstaller(SkillInstaller):
+    def __init__(self, project_root: Path) -> None:
+        super().__init__(project_root=project_root)
+        self.commands: list[list[str]] = []
+
+    async def _run(self, command: Sequence[str]) -> SkillInstallResult:
+        command_list = [*command]
+        self.commands.append(command_list)
+        return SkillInstallResult(command=command_list, exit_code=0, output="ok")
+
+
+class FakeSkillInstaller:
+    def __init__(self, result: SkillInstallResult) -> None:
+        self.result = result
+        self.add_calls: list[str] = []
+        self.list_calls = 0
+
+    async def add(self, args: str) -> SkillInstallResult:
+        self.add_calls.append(args)
+        return self.result
+
+    async def list(self) -> SkillInstallResult:
+        self.list_calls += 1
+        return self.result
 
 
 class FakeTopicEndJudge:
@@ -313,6 +343,81 @@ async def test_bot_to_bot_replies_can_be_fully_disabled() -> None:
     )
 
     assert telegram.sent == []
+
+
+@pytest.mark.asyncio
+async def test_skills_add_runs_installer_and_reloads() -> None:
+    installer = FakeSkillInstaller(SkillInstallResult(command=["npx"], exit_code=0, output="installed"))
+    reload_count = 0
+
+    async def reload_skills() -> int:
+        nonlocal reload_count
+        reload_count += 1
+        return 2
+
+    bot = TelegramBot(
+        telegram=FakeTelegram(),
+        agent=FakeAgent(),
+        skill_tool=SkillManagementTool(installer=installer, skill_admins={456}, reload_skills=reload_skills),
+    )
+
+    reply = await bot.build_reply(123, "/skills add owner/repo --skill chat-style", user_id=456)
+
+    assert installer.add_calls == ["owner/repo --skill chat-style"]
+    assert reload_count == 1
+    assert "已重新載入 2 個 skill" in reply
+    assert "installed" in reply
+
+
+@pytest.mark.asyncio
+async def test_natural_language_skills_install_request_runs_installer() -> None:
+    installer = FakeSkillInstaller(SkillInstallResult(command=["npx"], exit_code=0, output="installed"))
+    bot = TelegramBot(
+        telegram=FakeTelegram(),
+        agent=FakeAgent(),
+        skill_tool=SkillManagementTool(installer=installer, skill_admins={456}),
+    )
+
+    reply = await bot.build_reply(123, "安裝 narumiruna/skills 的 skills 所有", user_id=456)
+
+    assert installer.add_calls == ["narumiruna/skills --all"]
+    assert "已重新載入" not in reply
+    assert "Skill 安裝失敗" not in reply
+
+
+@pytest.mark.asyncio
+async def test_skills_add_requires_admin() -> None:
+    installer = FakeSkillInstaller(SkillInstallResult(command=["npx"], exit_code=0, output="installed"))
+    bot = TelegramBot(
+        telegram=FakeTelegram(),
+        agent=FakeAgent(),
+        skill_tool=SkillManagementTool(installer=installer, skill_admins={999}),
+    )
+
+    reply = await bot.build_reply(123, "/skills add owner/repo", user_id=456)
+
+    assert reply == "你沒有權限管理 Agent Skills。"
+    assert installer.add_calls == []
+
+
+def test_skill_installer_builds_non_interactive_npx_add_command(tmp_path: Path) -> None:
+    installer = FakeCommandSkillInstaller(project_root=tmp_path)
+
+    result = asyncio.run(installer.add("owner/repo --skill chat-style"))
+
+    assert result.ok
+    assert installer.commands == [
+        [
+            "npx",
+            "skills",
+            "add",
+            "owner/repo",
+            "--skill",
+            "chat-style",
+            "--yes",
+            "--copy",
+        ]
+    ]
 
 
 @pytest.mark.asyncio

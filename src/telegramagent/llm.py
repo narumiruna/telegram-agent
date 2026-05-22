@@ -87,6 +87,7 @@ class ChatAgent:
     ) -> None:
         self.client = OpenAIChatClient(api_key=api_key, model=model, base_url=base_url, http_client=http_client)
         self.skills = skills or []
+        self.agent_factory = agent_factory
         self.agent = self._create_agent(api_key=api_key, model=model, base_url=base_url, agent_factory=agent_factory)
 
     @property
@@ -102,6 +103,15 @@ class ChatAgent:
         if not isinstance(output, str) or not output.strip():
             return "模型沒有回覆內容, 請稍後再試。"
         return output.strip()
+
+    def reload_skills(self, skills: list[AgentSkill]) -> None:
+        self.skills = skills
+        self.agent = self._create_agent(
+            api_key=self.client.api_key,
+            model=self.client.model,
+            base_url=self.client.base_url,
+            agent_factory=self.agent_factory,
+        )
 
     def _create_agent(
         self,

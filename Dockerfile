@@ -21,7 +21,12 @@ FROM python:${PYTHON_VERSION}-slim-${DEBIAN_VERSION}
 
 WORKDIR /app
 
-RUN groupadd --system app && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nodejs npm \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system app \
+    && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app \
+    && chown -R app:app /app
 
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
 

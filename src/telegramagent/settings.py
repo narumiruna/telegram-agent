@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     bot_max_consecutive_replies_to_bots: int = Field(default=1, ge=0, alias="BOT_MAX_CONSECUTIVE_REPLIES_TO_BOTS")
     bot_skills_dir: Path = Field(default=Path(".agents/skills"), alias="BOT_SKILLS_DIR")
     bot_enabled_skills: Annotated[set[str], NoDecode] = Field(default_factory=set, alias="BOT_ENABLED_SKILLS")
+    bot_skill_admins: Annotated[set[int], NoDecode] = Field(default_factory=set, alias="BOT_SKILL_ADMINS")
 
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
@@ -28,7 +29,7 @@ class Settings(BaseSettings):
     logfire_token: str | None = Field(default=None, alias="LOGFIRE_TOKEN")
     logfire_environment: str | None = Field(default=None, alias="LOGFIRE_ENVIRONMENT")
 
-    @field_validator("bot_whitelist", mode="before")
+    @field_validator("bot_whitelist", "bot_skill_admins", mode="before")
     @classmethod
     def parse_whitelist(cls, value: object) -> set[int] | object:
         if value is None or value == "":

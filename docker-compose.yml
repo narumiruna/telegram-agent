@@ -9,7 +9,10 @@ services:
     env_file:
       - .env
     command: ["--verbose"]
+    user: "${UID:-1000}:${GID:-1000}"
+    environment:
+      HOME: /tmp
     init: true
     restart: unless-stopped
     volumes:
-      - ./.agents:/app/.agents:ro
+      - ./.agents:/app/.agents

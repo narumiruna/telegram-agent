@@ -15,6 +15,8 @@ BOT_MAX_CONSECUTIVE_REPLIES_TO_BOTS=1
 # Agent Skills 目錄；BOT_ENABLED_SKILLS 空白代表載入目錄內全部 skills
 BOT_SKILLS_DIR=.agents/skills
 BOT_ENABLED_SKILLS=
+# 選填：可透過 Telegram 管理 skills 的 chat_id 或 user_id；空白時沿用 BOT_WHITELIST
+BOT_SKILL_ADMINS=
 
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_API_KEY=你的 API Key
@@ -52,6 +54,8 @@ docker compose down
 - `/id`：顯示 chat/user ID，方便設定白名單
 - `/reset`：清除這個聊天室的對話記憶
 - `/ask <問題>`：詢問 AI 助理
+- `/skills add <package>`：在本機專案使用 `npx skills add <package> --yes --copy` 安裝 Agent Skills
+- `/skills list`：列出已安裝 Agent Skills
 
 也可以直接傳一般文字給機器人。
 
@@ -89,6 +93,27 @@ description: Telegram 回覆風格。Use when replying to Telegram messages.
 設定 `BOT_ENABLED_SKILLS=chat-style,other-skill` 可只載入指定 skills；留空會載入 `BOT_SKILLS_DIR` 內全部 skills。
 
 目前 skills 會作為 Pydantic AI instructions 使用，不會執行 skill 內附帶的本機腳本。
+
+也可以從 Telegram 對話安裝 skills：
+
+```text
+/skills add vercel-labs/agent-skills --skill commit
+/skills list
+```
+
+也支援自然語言安裝請求，例如：
+
+```text
+安裝 narumiruna/skills 的 skills 所有
+```
+
+會轉成：
+
+```bash
+npx skills add narumiruna/skills --all --copy
+```
+
+`/skills add` 會在 bot 執行所在的專案目錄呼叫 `npx skills add ... --yes --copy`，安裝完成後自動重新載入 skills。Docker 映像已包含 `nodejs` / `npm` / `npx`，Compose 會把本機 `./.agents` 掛載到容器中讓 skills 可持久化。
 
 ## Bot 對 Bot 結束話題機制
 

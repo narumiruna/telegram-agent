@@ -41,6 +41,10 @@ class Agent(Protocol):
     async def reply(self, prompt: str, *, history: Sequence[tuple[str, str]]) -> str: ...
 
 
+class SkillTool(Protocol):
+    async def handle(self, text: str, *, chat_id: int, user_id: int | None) -> str | None: ...
+
+
 class TopicEndJudge(Protocol):
     async def should_end_topic(
         self,
@@ -127,6 +131,7 @@ class TelegramBot:
         bot_user_id: int | None = None,
         max_consecutive_replies_to_bots: int = 1,
         topic_end_judge: TopicEndJudge | None = None,
+        skill_tool: SkillTool | None = None,
     ) -> None:
         self.telegram = telegram
         self.agent = agent
@@ -135,6 +140,7 @@ class TelegramBot:
         self.bot_user_id = bot_user_id
         self.max_consecutive_replies_to_bots = max_consecutive_replies_to_bots
         self.topic_end_judge = topic_end_judge
+        self.skill_tool = skill_tool
         self.bot_reply_streaks: dict[int, int] = {}
         self.histories: dict[int, list[tuple[str, str]]] = {}
 
@@ -196,6 +202,17 @@ class TelegramBot:
         await self.telegram.send_message(chat_id, reply, reply_to_message_id=message_id)
 
     async def build_reply(self, chat_id: int, text: str, *, user_id: int | None = None) -> str:
+        if self.skill_tool is not None:
+            tool_reply = await self.skill_tool.handle(text, chat_id=chat_id, user_id=user_id)
+            if tool_reply is not None:
+                return tool_reply
+
+        command_reply = await self._handle_builtin_command(chat_id=chat_id, text=text, user_id=user_id)
+        if command_reply is not None:
+            return command_reply
+        return await self._ask_agent(chat_id, text.strip())
+
+    async def _handle_builtin_command(self, *, chat_id: int, text: str, user_id: int | None) -> str | None:
         command, _, argument = text.partition(" ")
         command_name = command.split("@", maxsplit=1)[0].lower()
         prompt = argument.strip()
@@ -214,10 +231,12 @@ class TelegramBot:
                 if not prompt:
                     return "請在 /ask 後面加上你想問的內容。"
                 return await self._ask_agent(chat_id, prompt)
+            case "/skills":
+                return "這個 bot 尚未啟用 Telegram skills 管理功能。"
             case _ if text.startswith("/"):
                 return "我不認識這個指令。輸入 /help 查看可用指令。"
             case _:
-                return await self._ask_agent(chat_id, text.strip())
+                return None
 
     async def _ask_agent(self, chat_id: int, prompt: str) -> str:
         history = self.histories.setdefault(chat_id, [])
@@ -310,6 +329,8 @@ def _help_message() -> str:
             "/id - 顯示 chat/user ID, 方便設定白名單",
             "/reset - 清除這個聊天室的對話記憶",
             "/ask <問題> - 詢問 AI 助理",
+            "/skills add <package> - 使用 npx skills add 安裝 Agent Skills",
+            "/skills list - 列出已安裝 Agent Skills",
             "也可以直接傳一般文字給我。",
         ]
     )
