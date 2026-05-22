@@ -8,6 +8,7 @@ authors         = [{ name = "narumi", email = "toucans-cutouts0f@icloud.com" }]
 dependencies    = [
   "httpx>=0.28.1",
   "logfire>=4.33.0",
+  "loguru>=0.7.3",
   "pydantic>=2.13.4",
   "pydantic-ai>=1.101.0",
   "pydantic-settings>=2.14.1",

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+import sys
 
 import typer
+from loguru import logger
 
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
@@ -11,13 +12,18 @@ from telegramagent.settings import Settings
 from telegramagent.telegram import TelegramBot
 from telegramagent.telegram import TelegramClient
 
-logger = logging.getLogger(__name__)
 app = typer.Typer(help="Run a Telegram AI bot.")
 
 
 def configure_logging(verbose: bool = False) -> None:
-    format_str = "%(asctime)s | %(levelname)s | %(name)s:%(lineno)d - %(message)s"
-    logging.basicConfig(format=format_str, level=logging.DEBUG if verbose else logging.INFO)
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        level="DEBUG" if verbose else "INFO",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {name}:{line} - {message}",
+        backtrace=False,
+        diagnose=False,
+    )
 
 
 @app.command()

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import re
 from collections.abc import Mapping
 from collections.abc import Sequence
@@ -11,8 +10,7 @@ from typing import TypedDict
 from typing import cast
 
 import httpx
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class TelegramChat(TypedDict):
@@ -146,7 +144,7 @@ class TelegramBot:
         user_id = me.get("id")
         self.bot_username = username if isinstance(username, str) else None
         self.bot_user_id = user_id if isinstance(user_id, int) else None
-        logger.info("Telegram bot started as @%s", self.bot_username or "unknown")
+        logger.info("Telegram bot started as @{}", self.bot_username or "unknown")
         offset: int | None = None
         while True:
             try:
@@ -154,8 +152,14 @@ class TelegramBot:
                 for update in updates:
                     offset = update["update_id"] + 1
                     await self.handle_update(update)
-            except httpx.HTTPError, TelegramApiError:
-                logger.exception("Telegram polling failed; retrying soon")
+            except httpx.HTTPStatusError as exc:
+                logger.warning(
+                    "Telegram polling failed with HTTP status {}; retrying soon",
+                    exc.response.status_code,
+                )
+                await asyncio.sleep(5)
+            except (httpx.HTTPError, TelegramApiError) as exc:
+                logger.warning("Telegram polling failed with {}; retrying soon", type(exc).__name__)
                 await asyncio.sleep(5)
 
     async def handle_update(self, update: TelegramUpdate) -> None:
@@ -173,16 +177,16 @@ class TelegramBot:
         message_id = message.get("message_id")
 
         if not self._should_respond_to_message(chat=chat, message=message, text=text):
-            logger.debug("Ignored unaddressed group message in chat_id=%s", chat_id)
+            logger.debug("Ignored unaddressed group message in chat_id={}", chat_id)
             return
 
         prompt = self._strip_bot_mention(text)
         if await self._should_end_bot_topic(chat_id=chat_id, sender=sender, prompt=prompt):
-            logger.info("Topic-end judge stopped bot-to-bot reply loop in chat_id=%s sender_id=%s", chat_id, user_id)
+            logger.info("Topic-end judge stopped bot-to-bot reply loop in chat_id={} sender_id={}", chat_id, user_id)
             return
 
         if not self._is_allowed(chat_id=chat_id, user_id=user_id):
-            logger.warning("Rejected message from unauthorized chat_id=%s user_id=%s", chat_id, user_id)
+            logger.warning("Rejected message from unauthorized chat_id={} user_id={}", chat_id, user_id)
             await self.telegram.send_message(
                 chat_id, "這個機器人目前沒有開放給你使用。", reply_to_message_id=message_id
             )
