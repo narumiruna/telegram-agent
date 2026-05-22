@@ -15,8 +15,19 @@ BOT_MAX_CONSECUTIVE_REPLIES_TO_BOTS=1
 # Agent Skills directory. Leave BOT_ENABLED_SKILLS empty to load every skill under the directory.
 BOT_SKILLS_DIR=.agents/skills
 BOT_ENABLED_SKILLS=
-# Optional: chat_id or user_id values allowed to manage skills from Telegram. Empty means BOT_WHITELIST is reused.
+# Optional: chat_id or user_id values allowed to manage skills and context files from Telegram.
+# Empty means BOT_WHITELIST is reused.
 BOT_SKILL_ADMINS=
+
+# SOUL.md is the bot identity/persona file.
+BOT_SOUL_PATH=SOUL.md
+BOT_SOUL_REQUIRED=false
+BOT_SOUL_MAX_CHARS=8000
+
+# MEMORY.md is durable context loaded into the bot instructions.
+BOT_MEMORY_PATH=MEMORY.md
+BOT_MEMORY_REQUIRED=false
+BOT_MEMORY_MAX_CHARS=12000
 
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_API_KEY=your API key
@@ -56,6 +67,8 @@ docker compose down
 - `/ask <question>`: ask the AI assistant
 - `/skills add <package>`: install Agent Skills in the local project with `npx skills add <package> --yes --copy`
 - `/skills list`: list installed Agent Skills
+- `/soul show|reload|path`: inspect or reload `SOUL.md`
+- `/memory show|reload|path`: inspect or reload `MEMORY.md`
 
 You can also send plain text directly to the bot.
 
@@ -65,6 +78,44 @@ In private chats, the bot replies to normal text messages. In groups and supergr
 
 1. The message mentions the bot account, for example `@your_bot hello`
 2. The message directly replies to a bot message
+
+## SOUL.md and MEMORY.md
+
+The bot can load two always-on context files before Agent Skills:
+
+1. `SOUL.md`: who the bot is — identity, worldview, voice, values, and hard boundaries
+2. `MEMORY.md`: what the bot should remember — durable user preferences, relationship context, facts, gotchas, and open threads
+
+The instruction order is:
+
+```text
+core rules -> SOUL.md -> MEMORY.md -> Agent Skills -> conversation history -> user message
+```
+
+Start from the templates:
+
+```bash
+cp SOUL.md.example SOUL.md
+cp MEMORY.md.example MEMORY.md
+```
+
+Keep `SOUL.md` short. A good soul file is usually 150–400 words; 800+ words should be treated as a warning sign. Put task procedures in Agent Skills, not in SOUL.md.
+
+`MEMORY.md` should be factual, compact, and safe to load every turn. Do not store API keys, tokens, passwords, cookies, private URLs, or sensitive personal data in it.
+
+Reload context files at runtime:
+
+```text
+/soul reload
+/memory reload
+```
+
+Docker users can edit host files and mount them into the container. If you want live host edits without rebuilding the image, uncomment or add these Compose volumes:
+
+```yaml
+- ./SOUL.md:/app/SOUL.md:ro
+- ./MEMORY.md:/app/MEMORY.md:ro
+```
 
 ## Agent Skills
 

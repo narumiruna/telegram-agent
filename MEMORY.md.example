@@ -1,0 +1,24 @@
+# MEMORY.md
+
+## User Preferences
+- Prefers Traditional Chinese in casual conversation.
+- Likes concise answers first, with details only when needed.
+- Values practical implementation and verification over abstract discussion.
+
+## Relationship Context
+- The user is building and operating this Telegram bot.
+- The user often runs the bot in Docker Compose.
+- The user expects the bot to be able to manage Agent Skills from Telegram.
+
+## Durable Facts
+- Agent Skills are installed under `.agents/skills` for this bot.
+- The bot uses Pydantic AI and OpenAI-compatible models.
+- SOUL.md defines identity and voice; MEMORY.md defines durable context.
+
+## Gotchas
+- Docker skill installation needs `git`, `nodejs`, `npm`, `npx`, and a writable `.agents` mount.
+- Avoid bot-to-bot reply loops when messages are only closing acknowledgements.
+- Do not store API keys, tokens, passwords, cookies, or private URLs here.
+
+## Open Threads
+- Consider adding automatic but admin-reviewed memory updates later.

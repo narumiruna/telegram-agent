@@ -12,6 +12,8 @@ from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
+from telegramagent.context_files import ContextFile
+from telegramagent.context_files import format_context_for_instructions
 from telegramagent.skills import AgentSkill
 from telegramagent.skills import format_skills_for_instructions
 
@@ -83,10 +85,14 @@ class ChatAgent:
         base_url: str = "https://api.openai.com/v1",
         http_client: httpx.AsyncClient | None = None,
         skills: list[AgentSkill] | None = None,
+        soul: ContextFile | None = None,
+        memory: ContextFile | None = None,
         agent_factory: AgentFactory | None = None,
     ) -> None:
         self.client = OpenAIChatClient(api_key=api_key, model=model, base_url=base_url, http_client=http_client)
         self.skills = skills or []
+        self.soul = soul
+        self.memory = memory
         self.agent_factory = agent_factory
         self.agent = self._create_agent(api_key=api_key, model=model, base_url=base_url, agent_factory=agent_factory)
 
@@ -106,6 +112,16 @@ class ChatAgent:
 
     def reload_skills(self, skills: list[AgentSkill]) -> None:
         self.skills = skills
+        self._rebuild_agent()
+
+    def reload_context(self, *, soul: ContextFile | None = None, memory: ContextFile | None = None) -> None:
+        if soul is not None:
+            self.soul = soul
+        if memory is not None:
+            self.memory = memory
+        self._rebuild_agent()
+
+    def _rebuild_agent(self) -> None:
         self.agent = self._create_agent(
             api_key=self.client.api_key,
             model=self.client.model,
@@ -121,7 +137,7 @@ class ChatAgent:
         base_url: str,
         agent_factory: AgentFactory | None,
     ) -> RunnableAgent:
-        instructions = _chat_instructions(self.skills)
+        instructions = _chat_instructions(skills=self.skills, soul=self.soul, memory=self.memory)
         if agent_factory is not None:
             return agent_factory(instructions)
         provider = OpenAIProvider(base_url=base_url, api_key=api_key)
@@ -129,12 +145,18 @@ class ChatAgent:
         return PydanticAgent(pydantic_model, instructions=instructions)
 
 
-def _chat_instructions(skills: list[AgentSkill]) -> str:
-    base = "你是一個 Telegram 機器人助理。請用繁體中文簡潔、有幫助地回答。"
+def _chat_instructions(*, skills: list[AgentSkill], soul: ContextFile | None, memory: ContextFile | None) -> str:
+    sections = ["你是一個 Telegram 機器人助理。請用繁體中文簡潔、有幫助地回答。"]
+    soul_instructions = format_context_for_instructions(soul)
+    if soul_instructions:
+        sections.append(soul_instructions)
+    memory_instructions = format_context_for_instructions(memory)
+    if memory_instructions:
+        sections.append(memory_instructions)
     skill_instructions = format_skills_for_instructions(skills)
-    if not skill_instructions:
-        return base
-    return f"{base}\n\n{skill_instructions}"
+    if skill_instructions:
+        sections.append(skill_instructions)
+    return "\n\n".join(sections)
 
 
 def _build_prompt_with_history(prompt: str, *, history: Sequence[tuple[str, str]]) -> str:

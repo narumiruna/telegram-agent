@@ -7,6 +7,9 @@ from pathlib import Path
 import typer
 from loguru import logger
 
+from telegramagent.context_files import ContextFile
+from telegramagent.context_files import ContextManagementTool
+from telegramagent.context_files import load_context_file
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
 from telegramagent.settings import Settings
@@ -37,6 +40,18 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
     settings = Settings()
 
     project_root = Path.cwd()
+    soul = load_context_file(
+        settings.bot_soul_path,
+        label="SOUL.md",
+        max_chars=settings.bot_soul_max_chars,
+        required=settings.bot_soul_required,
+    )
+    memory = load_context_file(
+        settings.bot_memory_path,
+        label="MEMORY.md",
+        max_chars=settings.bot_memory_max_chars,
+        required=settings.bot_memory_required,
+    )
     skills = load_agent_skills(
         settings.bot_skills_dir,
         enabled_names=settings.bot_enabled_skills or None,
@@ -49,6 +64,8 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         model=settings.openai_model,
         base_url=settings.openai_base_url,
         skills=skills,
+        soul=soul,
+        memory=memory,
     )
     topic_end_judge = TopicEndAgent(
         api_key=settings.openai_api_key,
@@ -65,6 +82,39 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
                 enabled_names=settings.bot_enabled_skills or None,
             )
         }
+
+    current_soul = soul
+    current_memory = memory
+
+    def get_soul_context() -> ContextFile:
+        return current_soul
+
+    def get_memory_context() -> ContextFile:
+        return current_memory
+
+    async def reload_soul() -> ContextFile:
+        nonlocal current_soul
+        current_soul = load_context_file(
+            settings.bot_soul_path,
+            label="SOUL.md",
+            max_chars=settings.bot_soul_max_chars,
+            required=settings.bot_soul_required,
+        )
+        agent.reload_context(soul=current_soul)
+        logger.info("Reloaded SOUL.md from {}", settings.bot_soul_path)
+        return current_soul
+
+    async def reload_memory() -> ContextFile:
+        nonlocal current_memory
+        current_memory = load_context_file(
+            settings.bot_memory_path,
+            label="MEMORY.md",
+            max_chars=settings.bot_memory_max_chars,
+            required=settings.bot_memory_required,
+        )
+        agent.reload_context(memory=current_memory)
+        logger.info("Reloaded MEMORY.md from {}", settings.bot_memory_path)
+        return current_memory
 
     async def reload_skills() -> int:
         updated_skills = load_agent_skills(
@@ -89,6 +139,24 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
             reload_skills=reload_skills,
             installed_skill_names=installed_skill_names,
         ),
+        tools=[
+            ContextManagementTool(
+                command_name="soul",
+                display_name="SOUL.md",
+                current_context=get_soul_context,
+                reload_context=reload_soul,
+                admins=settings.bot_skill_admins,
+                fallback_admins=settings.bot_whitelist,
+            ),
+            ContextManagementTool(
+                command_name="memory",
+                display_name="MEMORY.md",
+                current_context=get_memory_context,
+                reload_context=reload_memory,
+                admins=settings.bot_skill_admins,
+                fallback_admins=settings.bot_whitelist,
+            ),
+        ],
     )
 
     try:

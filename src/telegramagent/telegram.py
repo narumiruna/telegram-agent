@@ -132,6 +132,7 @@ class TelegramBot:
         max_consecutive_replies_to_bots: int = 1,
         topic_end_judge: TopicEndJudge | None = None,
         skill_tool: SkillTool | None = None,
+        tools: Sequence[SkillTool] = (),
     ) -> None:
         self.telegram = telegram
         self.agent = agent
@@ -141,6 +142,7 @@ class TelegramBot:
         self.max_consecutive_replies_to_bots = max_consecutive_replies_to_bots
         self.topic_end_judge = topic_end_judge
         self.skill_tool = skill_tool
+        self.tools = list(tools)
         self.bot_reply_streaks: dict[int, int] = {}
         self.histories: dict[int, list[tuple[str, str]]] = {}
 
@@ -202,8 +204,8 @@ class TelegramBot:
         await self.telegram.send_message(chat_id, reply, reply_to_message_id=message_id)
 
     async def build_reply(self, chat_id: int, text: str, *, user_id: int | None = None) -> str:
-        if self.skill_tool is not None:
-            tool_reply = await self.skill_tool.handle(text, chat_id=chat_id, user_id=user_id)
+        for tool in self._management_tools():
+            tool_reply = await tool.handle(text, chat_id=chat_id, user_id=user_id)
             if tool_reply is not None:
                 return tool_reply
 
@@ -211,6 +213,12 @@ class TelegramBot:
         if command_reply is not None:
             return command_reply
         return await self._ask_agent(chat_id, text.strip())
+
+    def _management_tools(self) -> list[SkillTool]:
+        tools = [*self.tools]
+        if self.skill_tool is not None:
+            tools.insert(0, self.skill_tool)
+        return tools
 
     async def _handle_builtin_command(self, *, chat_id: int, text: str, user_id: int | None) -> str | None:
         command, _, argument = text.partition(" ")
@@ -231,8 +239,8 @@ class TelegramBot:
                 if not prompt:
                     return "請在 /ask 後面加上你想問的內容。"
                 return await self._ask_agent(chat_id, prompt)
-            case "/skills":
-                return "這個 bot 尚未啟用 Telegram skills 管理功能。"
+            case "/skills" | "/soul" | "/memory":
+                return "這個 bot 尚未啟用這個管理功能。"
             case _ if text.startswith("/"):
                 return "我不認識這個指令。輸入 /help 查看可用指令。"
             case _:
@@ -331,6 +339,8 @@ def _help_message() -> str:
             "/ask <問題> - 詢問 AI 助理",
             "/skills add <package> - 使用 npx skills add 安裝 Agent Skills",
             "/skills list - 列出已安裝 Agent Skills",
+            "/soul show|reload|path - 管理 SOUL.md",
+            "/memory show|reload|path - 管理 MEMORY.md",
             "也可以直接傳一般文字給我。",
         ]
     )

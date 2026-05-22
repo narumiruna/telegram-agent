@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     bot_skills_dir: Path = Field(default=Path(".agents/skills"), alias="BOT_SKILLS_DIR")
     bot_enabled_skills: Annotated[set[str], NoDecode] = Field(default_factory=set, alias="BOT_ENABLED_SKILLS")
     bot_skill_admins: Annotated[set[int], NoDecode] = Field(default_factory=set, alias="BOT_SKILL_ADMINS")
+    bot_soul_path: Path = Field(default=Path("SOUL.md"), alias="BOT_SOUL_PATH")
+    bot_soul_required: bool = Field(default=False, alias="BOT_SOUL_REQUIRED")
+    bot_soul_max_chars: int = Field(default=8000, ge=1, alias="BOT_SOUL_MAX_CHARS")
+    bot_memory_path: Path = Field(default=Path("MEMORY.md"), alias="BOT_MEMORY_PATH")
+    bot_memory_required: bool = Field(default=False, alias="BOT_MEMORY_REQUIRED")
+    bot_memory_max_chars: int = Field(default=12000, ge=1, alias="BOT_MEMORY_MAX_CHARS")
 
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")

@@ -16,3 +16,6 @@ services:
     restart: unless-stopped
     volumes:
       - ./.agents:/app/.agents
+      # Uncomment these for live host edits without rebuilding the image.
+      # - ./SOUL.md:/app/SOUL.md:ro
+      # - ./MEMORY.md:/app/MEMORY.md:ro

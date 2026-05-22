@@ -8,6 +8,8 @@ from typing import Any
 import httpx
 import pytest
 
+from telegramagent.context_files import ContextManagementTool
+from telegramagent.context_files import load_context_file
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
 from telegramagent.skills import AgentSkill
@@ -346,6 +348,31 @@ async def test_bot_to_bot_replies_can_be_fully_disabled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_context_tool_runs_before_builtin_commands(tmp_path: Path) -> None:
+    context = load_context_file(_write(tmp_path / "MEMORY.md", "memory text"), label="MEMORY.md", max_chars=1000)
+
+    async def reload_context():
+        return context
+
+    bot = TelegramBot(
+        telegram=FakeTelegram(),
+        agent=FakeAgent(),
+        tools=[
+            ContextManagementTool(
+                command_name="memory",
+                display_name="MEMORY.md",
+                current_context=lambda: context,
+                reload_context=reload_context,
+                admins={456},
+            )
+        ],
+    )
+
+    assert "memory text" in await bot.build_reply(123, "/memory show", user_id=456)
+    assert await bot.build_reply(123, "/memory show", user_id=999) == "你沒有權限管理 MEMORY.md。"
+
+
+@pytest.mark.asyncio
 async def test_skills_add_runs_installer_and_reloads() -> None:
     installer = FakeSkillInstaller(SkillInstallResult(command=["npx"], exit_code=0, output="installed"))
     reload_count = 0
@@ -574,3 +601,8 @@ async def test_topic_end_agent_uses_model_for_non_obvious_bot_message() -> None:
     assert should_end is True
     assert "Telegram bot" in captured["body"]
     assert "我已經完成整理" in captured["body"]
+
+
+def _write(path: Path, content: str) -> Path:
+    path.write_text(content, encoding="utf-8")
+    return path
