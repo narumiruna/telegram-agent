@@ -6,6 +6,7 @@ import logging
 import typer
 
 from telegramagent.llm import ChatAgent
+from telegramagent.llm import TopicEndAgent
 from telegramagent.settings import Settings
 from telegramagent.telegram import TelegramBot
 from telegramagent.telegram import TelegramClient
@@ -30,8 +31,19 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         model=settings.openai_model,
         base_url=settings.openai_base_url,
     )
+    topic_end_judge = TopicEndAgent(
+        api_key=settings.openai_api_key,
+        model=settings.openai_model,
+        base_url=settings.openai_base_url,
+    )
     telegram = TelegramClient(settings.bot_token)
-    bot = TelegramBot(telegram=telegram, agent=agent, whitelist=settings.bot_whitelist)
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=agent,
+        whitelist=settings.bot_whitelist,
+        max_consecutive_replies_to_bots=settings.bot_max_consecutive_replies_to_bots,
+        topic_end_judge=topic_end_judge,
+    )
 
     try:
         asyncio.run(bot.run_forever())

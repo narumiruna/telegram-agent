@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from telegramagent.llm import ChatAgent
+from telegramagent.llm import TopicEndAgent
 from telegramagent.telegram import TelegramBot
 from telegramagent.telegram import TelegramClient
 from telegramagent.telegram import TelegramUpdate
@@ -29,6 +30,22 @@ class FakeTelegram:
 class FakeAgent:
     async def reply(self, prompt: str, *, history: Sequence[tuple[str, str]]) -> str:
         return f"AI: {prompt} ({len(history)})"
+
+
+class FakeTopicEndJudge:
+    def __init__(self, decisions: Sequence[bool]) -> None:
+        self.decisions = list(decisions)
+        self.calls: list[tuple[str, Sequence[tuple[str, str]], int]] = []
+
+    async def should_end_topic(
+        self,
+        incoming_text: str,
+        *,
+        history: Sequence[tuple[str, str]],
+        bot_reply_streak: int,
+    ) -> bool:
+        self.calls.append((incoming_text, history, bot_reply_streak))
+        return self.decisions.pop(0)
 
 
 @pytest.mark.asyncio
@@ -114,6 +131,157 @@ async def test_group_reply_to_bot_addresses_bot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_topic_end_judge_can_stop_bot_reply_without_answering() -> None:
+    telegram = FakeTelegram()
+    judge = FakeTopicEndJudge([True])
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=FakeAgent(),
+        bot_username="fakebot",
+        bot_user_id=42,
+        topic_end_judge=judge,
+    )
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 777, "is_bot": True, "username": "other_bot"},
+                "reply_to_message": {"message_id": 9, "from": {"id": 42, "username": "fakebot"}},
+                "text": "好的。",
+            },
+        }
+    )
+
+    assert telegram.sent == []
+    assert judge.calls == [("好的。", (), 0)]
+
+
+@pytest.mark.asyncio
+async def test_topic_end_judge_can_continue_bot_reply() -> None:
+    telegram = FakeTelegram()
+    judge = FakeTopicEndJudge([False])
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=FakeAgent(),
+        bot_username="fakebot",
+        bot_user_id=42,
+        topic_end_judge=judge,
+    )
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 777, "is_bot": True, "username": "other_bot"},
+                "reply_to_message": {"message_id": 9, "from": {"id": 42, "username": "fakebot"}},
+                "text": "請問下一步是什麼?",
+            },
+        }
+    )
+
+    assert telegram.sent == [(-100, "AI: 請問下一步是什麼? (0)", 10)]
+    assert judge.calls == [("請問下一步是什麼?", (), 0)]
+
+
+@pytest.mark.asyncio
+async def test_bot_to_bot_loop_stops_after_one_reply_without_judge() -> None:
+    telegram = FakeTelegram()
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), bot_username="fakebot", bot_user_id=42)
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 777, "is_bot": True, "username": "other_bot"},
+                "reply_to_message": {"message_id": 9, "from": {"id": 42, "username": "fakebot"}},
+                "text": "好。",
+            },
+        }
+    )
+    await bot.handle_update(
+        {
+            "update_id": 2,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 777, "is_bot": True, "username": "other_bot"},
+                "reply_to_message": {"message_id": 10, "from": {"id": 42, "username": "fakebot"}},
+                "text": "好的。",
+            },
+        }
+    )
+
+    assert telegram.sent == [(-100, "AI: 好。 (0)", 10)]
+
+
+@pytest.mark.asyncio
+async def test_human_message_resets_bot_to_bot_loop_guard() -> None:
+    telegram = FakeTelegram()
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), bot_username="fakebot", bot_user_id=42)
+
+    bot.bot_reply_streaks[-100] = 1
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 456, "is_bot": False},
+                "text": "@fakebot 人類插話",
+            },
+        }
+    )
+    await bot.handle_update(
+        {
+            "update_id": 2,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 777, "is_bot": True, "username": "other_bot"},
+                "reply_to_message": {"message_id": 10, "from": {"id": 42, "username": "fakebot"}},
+                "text": "好。",
+            },
+        }
+    )
+
+    assert telegram.sent == [(-100, "AI: 人類插話 (0)", 10), (-100, "AI: 好。 (2)", 11)]
+
+
+@pytest.mark.asyncio
+async def test_bot_to_bot_replies_can_be_fully_disabled() -> None:
+    telegram = FakeTelegram()
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=FakeAgent(),
+        bot_username="fakebot",
+        bot_user_id=42,
+        max_consecutive_replies_to_bots=0,
+    )
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 777, "is_bot": True, "username": "other_bot"},
+                "reply_to_message": {"message_id": 9, "from": {"id": 42, "username": "fakebot"}},
+                "text": "好。",
+            },
+        }
+    )
+
+    assert telegram.sent == []
+
+
+@pytest.mark.asyncio
 async def test_whitelist_rejects_unauthorized_message() -> None:
     telegram = FakeTelegram()
     bot = TelegramBot(telegram=telegram, agent=FakeAgent(), whitelist={999})
@@ -186,3 +354,43 @@ async def test_chat_agent_falls_back_without_api_key() -> None:
 
     assert "OPENAI_API_KEY" in reply
     assert "問題" in reply
+
+
+@pytest.mark.asyncio
+async def test_topic_end_agent_stops_obvious_closing_loop_without_api_call() -> None:
+    called = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, json={"choices": [{"message": {"content": "CONTINUE"}}]})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        judge = TopicEndAgent(api_key="key", model="model", base_url="https://example.test/v1", http_client=client)
+        should_end = await judge.should_end_topic("好的。", history=[], bot_reply_streak=0)
+
+    assert should_end is True
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_topic_end_agent_uses_model_for_non_obvious_bot_message() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.read().decode()
+        return httpx.Response(200, json={"choices": [{"message": {"content": "END"}}]})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        judge = TopicEndAgent(api_key="key", model="model", base_url="https://example.test/v1", http_client=client)
+        should_end = await judge.should_end_topic(
+            "我已經完成整理。",
+            history=[("assistant", "好的, 我來整理。")],
+            bot_reply_streak=1,
+        )
+
+    assert should_end is True
+    assert "Telegram bot" in captured["body"]
+    assert "我已經完成整理" in captured["body"]

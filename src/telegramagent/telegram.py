@@ -43,6 +43,16 @@ class Agent(Protocol):
     async def reply(self, prompt: str, *, history: Sequence[tuple[str, str]]) -> str: ...
 
 
+class TopicEndJudge(Protocol):
+    async def should_end_topic(
+        self,
+        incoming_text: str,
+        *,
+        history: Sequence[tuple[str, str]],
+        bot_reply_streak: int,
+    ) -> bool: ...
+
+
 class TelegramGateway(Protocol):
     async def get_me(self) -> dict[str, object]: ...
 
@@ -117,12 +127,17 @@ class TelegramBot:
         whitelist: set[int] | None = None,
         bot_username: str | None = None,
         bot_user_id: int | None = None,
+        max_consecutive_replies_to_bots: int = 1,
+        topic_end_judge: TopicEndJudge | None = None,
     ) -> None:
         self.telegram = telegram
         self.agent = agent
         self.whitelist = whitelist or set()
         self.bot_username = bot_username
         self.bot_user_id = bot_user_id
+        self.max_consecutive_replies_to_bots = max_consecutive_replies_to_bots
+        self.topic_end_judge = topic_end_judge
+        self.bot_reply_streaks: dict[int, int] = {}
         self.histories: dict[int, list[tuple[str, str]]] = {}
 
     async def run_forever(self) -> None:
@@ -161,6 +176,11 @@ class TelegramBot:
             logger.debug("Ignored unaddressed group message in chat_id=%s", chat_id)
             return
 
+        prompt = self._strip_bot_mention(text)
+        if await self._should_end_bot_topic(chat_id=chat_id, sender=sender, prompt=prompt):
+            logger.info("Topic-end judge stopped bot-to-bot reply loop in chat_id=%s sender_id=%s", chat_id, user_id)
+            return
+
         if not self._is_allowed(chat_id=chat_id, user_id=user_id):
             logger.warning("Rejected message from unauthorized chat_id=%s user_id=%s", chat_id, user_id)
             await self.telegram.send_message(
@@ -168,7 +188,7 @@ class TelegramBot:
             )
             return
 
-        reply = await self.build_reply(chat_id, self._strip_bot_mention(text), user_id=user_id)
+        reply = await self.build_reply(chat_id, prompt, user_id=user_id)
         await self.telegram.send_message(chat_id, reply, reply_to_message_id=message_id)
 
     async def build_reply(self, chat_id: int, text: str, *, user_id: int | None = None) -> str:
@@ -210,6 +230,32 @@ class TelegramBot:
         if not self.whitelist:
             return True
         return chat_id in self.whitelist or (user_id is not None and user_id in self.whitelist)
+
+    async def _should_end_bot_topic(self, *, chat_id: int, sender: TelegramUser | None, prompt: str) -> bool:
+        if not sender or not sender.get("is_bot"):
+            self.bot_reply_streaks[chat_id] = 0
+            return False
+        if sender.get("id") == self.bot_user_id:
+            return True
+
+        streak = self.bot_reply_streaks.get(chat_id, 0)
+        if self.topic_end_judge is not None:
+            try:
+                should_end = await self.topic_end_judge.should_end_topic(
+                    prompt,
+                    history=self.histories.get(chat_id, ()),
+                    bot_reply_streak=streak,
+                )
+            except httpx.HTTPError:
+                logger.exception("Topic-end judge failed; falling back to reply streak guard")
+            else:
+                if should_end:
+                    return True
+
+        if streak >= self.max_consecutive_replies_to_bots:
+            return True
+        self.bot_reply_streaks[chat_id] = streak + 1
+        return False
 
     def _should_respond_to_message(self, *, chat: TelegramChat, message: TelegramMessage, text: str) -> bool:
         if chat["type"] not in {"group", "supergroup"}:
