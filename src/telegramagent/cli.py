@@ -57,6 +57,15 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
     )
     skill_installer = SkillInstaller(project_root=project_root)
 
+    def installed_skill_names() -> set[str]:
+        return {
+            skill.name
+            for skill in load_agent_skills(
+                settings.bot_skills_dir,
+                enabled_names=settings.bot_enabled_skills or None,
+            )
+        }
+
     async def reload_skills() -> int:
         updated_skills = load_agent_skills(
             settings.bot_skills_dir,
@@ -78,6 +87,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
             skill_admins=settings.bot_skill_admins,
             fallback_admins=settings.bot_whitelist,
             reload_skills=reload_skills,
+            installed_skill_names=installed_skill_names,
         ),
     )
 

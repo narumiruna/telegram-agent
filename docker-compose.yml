@@ -9,7 +9,7 @@ services:
     env_file:
       - .env
     command: ["--verbose"]
-    user: "${UID:-1000}:${GID:-1000}"
+    user: "0:0"
     environment:
       HOME: /tmp
     init: true

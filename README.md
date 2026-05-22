@@ -110,10 +110,12 @@ description: Telegram 回覆風格。Use when replying to Telegram messages.
 會轉成：
 
 ```bash
-npx skills add narumiruna/skills --all --copy
+npx skills add narumiruna/skills --skill '*' --agent universal --yes --copy
 ```
 
-`/skills add` 會在 bot 執行所在的專案目錄呼叫 `npx skills add ... --yes --copy`，安裝完成後自動重新載入 skills。Docker 映像已包含 `nodejs` / `npm` / `npx`，Compose 會把本機 `./.agents` 掛載到容器中讓 skills 可持久化。
+`/skills add` 會在 bot 執行所在的專案目錄呼叫 `npx skills add ... --yes --copy`，安裝完成後自動重新載入 skills。預設會加上 `--agent universal`，只寫入 bot 會讀取的 `.agents/skills`，避免安裝到所有 agent 目錄。再次安裝前會先偵測已存在的 skills；若要強制重裝可加 `--force`。
+
+Docker 映像已包含 `git` / `nodejs` / `npm` / `npx`，Compose 會把本機 `./.agents` 掛載到容器中讓 skills 可持久化，並以 root 在容器內執行以避免掛載目錄權限造成安裝失敗。
 
 ## Bot 對 Bot 結束話題機制
 

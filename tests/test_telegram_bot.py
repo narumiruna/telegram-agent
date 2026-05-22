@@ -380,7 +380,7 @@ async def test_natural_language_skills_install_request_runs_installer() -> None:
 
     reply = await bot.build_reply(123, "安裝 narumiruna/skills 的 skills 所有", user_id=456)
 
-    assert installer.add_calls == ["narumiruna/skills --all"]
+    assert installer.add_calls == ["narumiruna/skills --skill *"]
     assert "已重新載入" not in reply
     assert "Skill 安裝失敗" not in reply
 
@@ -414,10 +414,37 @@ def test_skill_installer_builds_non_interactive_npx_add_command(tmp_path: Path) 
             "owner/repo",
             "--skill",
             "chat-style",
+            "--agent",
+            "universal",
             "--yes",
             "--copy",
         ]
     ]
+
+
+def test_skill_installer_installs_all_skills_only_for_universal_agent(tmp_path: Path) -> None:
+    installer = FakeCommandSkillInstaller(project_root=tmp_path)
+
+    result = asyncio.run(installer.add("owner/repo --all"))
+
+    assert result.ok
+    assert installer.commands == [
+        ["npx", "skills", "add", "owner/repo", "--skill", "*", "--agent", "universal", "--yes", "--copy"]
+    ]
+
+
+def test_skill_tool_skips_when_all_skills_already_exist() -> None:
+    installer = FakeSkillInstaller(SkillInstallResult(command=["npx"], exit_code=0, output="installed"))
+    tool = SkillManagementTool(
+        installer=installer,
+        skill_admins={456},
+        installed_skill_names=lambda: {"python", "writing-plans"},
+    )
+
+    reply = asyncio.run(tool.handle("/skills add owner/repo --all", chat_id=123, user_id=456))
+
+    assert reply == "目前已安裝 2 個 skill, 略過安裝。若要重裝請加 --force。"
+    assert installer.add_calls == []
 
 
 @pytest.mark.asyncio
