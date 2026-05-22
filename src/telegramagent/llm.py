@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable
+from collections.abc import Callable
 from collections.abc import Mapping
 from collections.abc import Sequence
+from typing import Protocol
 
 import httpx
+from pydantic_ai import Agent as PydanticAgent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+from telegramagent.skills import AgentSkill
+from telegramagent.skills import format_skills_for_instructions
 
 
 class OpenAIChatClient:
@@ -56,8 +65,15 @@ class OpenAIChatClient:
         return content.strip()
 
 
+class RunnableAgent(Protocol):
+    def run(self, user_prompt: str) -> Awaitable[object]: ...
+
+
+AgentFactory = Callable[[str], RunnableAgent]
+
+
 class ChatAgent:
-    """Small OpenAI-compatible chat client."""
+    """Pydantic AI chat agent with Agent Skills instruction support."""
 
     def __init__(
         self,
@@ -66,8 +82,12 @@ class ChatAgent:
         model: str,
         base_url: str = "https://api.openai.com/v1",
         http_client: httpx.AsyncClient | None = None,
+        skills: list[AgentSkill] | None = None,
+        agent_factory: AgentFactory | None = None,
     ) -> None:
         self.client = OpenAIChatClient(api_key=api_key, model=model, base_url=base_url, http_client=http_client)
+        self.skills = skills or []
+        self.agent = self._create_agent(api_key=api_key, model=model, base_url=base_url, agent_factory=agent_factory)
 
     @property
     def is_configured(self) -> bool:
@@ -77,18 +97,41 @@ class ChatAgent:
         if not self.client.is_configured:
             return f"我目前還沒設定 OPENAI_API_KEY, 所以先原樣回覆:\n\n{prompt}"
 
-        messages: list[dict[str, str]] = [
-            {
-                "role": "system",
-                "content": "你是一個 Telegram 機器人助理。請用繁體中文簡潔、有幫助地回答。",
-            }
-        ]
-        for role, content in history[-10:]:
-            if role in {"user", "assistant"} and content:
-                messages.append({"role": role, "content": content})
-        messages.append({"role": "user", "content": prompt})
+        result = await self.agent.run(_build_prompt_with_history(prompt, history=history))
+        output = getattr(result, "output", result)
+        if not isinstance(output, str) or not output.strip():
+            return "模型沒有回覆內容, 請稍後再試。"
+        return output.strip()
 
-        return await self.client.complete(messages)
+    def _create_agent(
+        self,
+        *,
+        api_key: str | None,
+        model: str,
+        base_url: str,
+        agent_factory: AgentFactory | None,
+    ) -> RunnableAgent:
+        instructions = _chat_instructions(self.skills)
+        if agent_factory is not None:
+            return agent_factory(instructions)
+        provider = OpenAIProvider(base_url=base_url, api_key=api_key)
+        pydantic_model = OpenAIChatModel(model, provider=provider)
+        return PydanticAgent(pydantic_model, instructions=instructions)
+
+
+def _chat_instructions(skills: list[AgentSkill]) -> str:
+    base = "你是一個 Telegram 機器人助理。請用繁體中文簡潔、有幫助地回答。"
+    skill_instructions = format_skills_for_instructions(skills)
+    if not skill_instructions:
+        return base
+    return f"{base}\n\n{skill_instructions}"
+
+
+def _build_prompt_with_history(prompt: str, *, history: Sequence[tuple[str, str]]) -> str:
+    recent = "\n".join(f"{role}: {content}" for role, content in history[-10:] if content)
+    if not recent:
+        return prompt
+    return f"近期對話:\n{recent}\n\n使用者新訊息:\n{prompt}"
 
 
 class TopicEndAgent:

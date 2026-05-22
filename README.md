@@ -12,6 +12,9 @@ BOT_TOKEN=你的 Telegram Bot Token
 BOT_WHITELIST=
 # 兩個 bot 互相 reply 時，最多允許連續回覆幾次；0 代表完全不回覆其他 bot
 BOT_MAX_CONSECUTIVE_REPLIES_TO_BOTS=1
+# Agent Skills 目錄；BOT_ENABLED_SKILLS 空白代表載入目錄內全部 skills
+BOT_SKILLS_DIR=.agents/skills
+BOT_ENABLED_SKILLS=
 
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_API_KEY=你的 API Key
@@ -40,6 +43,34 @@ uv run telegramagent
 
 1. 訊息中 `@` 機器人帳號，例如 `@your_bot 你好`
 2. 直接 reply 機器人的訊息
+
+## Agent Skills
+
+Bot 使用 Pydantic AI Agent 回覆訊息，並會在啟動時載入 Agent Skills 作為 instructions。
+
+預設 skills 目錄：
+
+```text
+.agents/skills/<skill-name>/SKILL.md
+```
+
+範例：
+
+```md
+---
+name: chat-style
+description: Telegram 回覆風格。Use when replying to Telegram messages.
+---
+
+# Chat Style
+
+- 用繁體中文。
+- 回答要短。
+```
+
+設定 `BOT_ENABLED_SKILLS=chat-style,other-skill` 可只載入指定 skills；留空會載入 `BOT_SKILLS_DIR` 內全部 skills。
+
+目前 skills 會作為 Pydantic AI instructions 使用，不會執行 skill 內附帶的本機腳本。
 
 ## Bot 對 Bot 結束話題機制
 

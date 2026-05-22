@@ -9,6 +9,7 @@ from loguru import logger
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
 from telegramagent.settings import Settings
+from telegramagent.skills import load_agent_skills
 from telegramagent.telegram import TelegramBot
 from telegramagent.telegram import TelegramClient
 
@@ -32,10 +33,18 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
     configure_logging(verbose)
     settings = Settings()
 
+    skills = load_agent_skills(
+        settings.bot_skills_dir,
+        enabled_names=settings.bot_enabled_skills or None,
+    )
+    if skills:
+        logger.info("Loaded {} Agent Skill(s) from {}", len(skills), settings.bot_skills_dir)
+
     agent = ChatAgent(
         api_key=settings.openai_api_key,
         model=settings.openai_model,
         base_url=settings.openai_base_url,
+        skills=skills,
     )
     topic_end_judge = TopicEndAgent(
         api_key=settings.openai_api_key,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -8,6 +9,9 @@ import pytest
 
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
+from telegramagent.skills import AgentSkill
+from telegramagent.skills import format_skills_for_instructions
+from telegramagent.skills import load_agent_skills
 from telegramagent.telegram import TelegramBot
 from telegramagent.telegram import TelegramClient
 from telegramagent.telegram import TelegramUpdate
@@ -32,6 +36,21 @@ class FakeAgent:
         return f"AI: {prompt} ({len(history)})"
 
 
+class FakeRunResult:
+    def __init__(self, output: str) -> None:
+        self.output = output
+
+
+class FakeRunnableAgent:
+    def __init__(self, output: str = "回覆") -> None:
+        self.output = output
+        self.prompts: list[str] = []
+
+    async def run(self, user_prompt: str) -> FakeRunResult:
+        self.prompts.append(user_prompt)
+        return FakeRunResult(self.output)
+
+
 class FakeTopicEndJudge:
     def __init__(self, decisions: Sequence[bool]) -> None:
         self.decisions = list(decisions)
@@ -46,6 +65,21 @@ class FakeTopicEndJudge:
     ) -> bool:
         self.calls.append((incoming_text, history, bot_reply_streak))
         return self.decisions.pop(0)
+
+
+def test_load_agent_skills_from_directory(tmp_path: Path) -> None:
+    skill_dir = tmp_path / ".agents" / "skills" / "chat-style"
+    skill_dir.mkdir(parents=True)
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text(
+        "---\nname: chat-style\ndescription: Style guide\n---\n\n# Chat Style\n\n- 回答要短。\n",
+        encoding="utf-8",
+    )
+
+    skills = load_agent_skills(tmp_path / ".agents" / "skills")
+
+    assert [skill.name for skill in skills] == ["chat-style"]
+    assert "回答要短" in format_skills_for_instructions(skills)
 
 
 @pytest.mark.asyncio
@@ -323,27 +357,41 @@ async def test_telegram_client_calls_bot_api() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_agent_uses_openai_compatible_api() -> None:
-    captured: dict[str, Any] = {}
+async def test_chat_agent_uses_pydantic_agent_with_history() -> None:
+    runnable = FakeRunnableAgent("  回覆  ")
+    captured: dict[str, str] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["url"] = str(request.url)
-        captured["authorization"] = request.headers["Authorization"]
-        captured["json"] = request.read().decode()
-        return httpx.Response(
-            200,
-            json={"choices": [{"message": {"content": "  回覆  "}}]},
-        )
+    def factory(instructions: str) -> FakeRunnableAgent:
+        captured["instructions"] = instructions
+        return runnable
 
-    transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport) as client:
-        agent = ChatAgent(api_key="key", model="model", base_url="https://example.test/v1/", http_client=client)
-        reply = await agent.reply("問題")
+    agent = ChatAgent(api_key="key", model="model", agent_factory=factory)
+    reply = await agent.reply("問題", history=[("user", "前題"), ("assistant", "前答")])
 
     assert reply == "回覆"
-    assert captured["url"] == "https://example.test/v1/chat/completions"
-    assert captured["authorization"] == "Bearer key"
-    assert '"model":"model"' in captured["json"].replace(" ", "")
+    assert "Telegram 機器人助理" in captured["instructions"]
+    assert runnable.prompts == ["近期對話:\nuser: 前題\nassistant: 前答\n\n使用者新訊息:\n問題"]
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_injects_agent_skills_into_pydantic_instructions() -> None:
+    skill = AgentSkill(
+        name="chat-style",
+        description="Style guide",
+        content="---\nname: chat-style\ndescription: Style guide\n---\n\n# Chat Style\n\n- 回答要短。",
+        path=Path(".agents/skills/chat-style/SKILL.md"),
+    )
+    captured: dict[str, str] = {}
+
+    def factory(instructions: str) -> FakeRunnableAgent:
+        captured["instructions"] = instructions
+        return FakeRunnableAgent()
+
+    agent = ChatAgent(api_key="key", model="model", skills=[skill], agent_factory=factory)
+    await agent.reply("問題")
+
+    assert "Skill: chat-style" in captured["instructions"]
+    assert "回答要短" in captured["instructions"]
 
 
 @pytest.mark.asyncio

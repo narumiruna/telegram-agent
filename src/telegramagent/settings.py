@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import Field
@@ -17,6 +18,8 @@ class Settings(BaseSettings):
     bot_token: str = Field(default="", alias="BOT_TOKEN")
     bot_whitelist: Annotated[set[int], NoDecode] = Field(default_factory=set, alias="BOT_WHITELIST")
     bot_max_consecutive_replies_to_bots: int = Field(default=1, ge=0, alias="BOT_MAX_CONSECUTIVE_REPLIES_TO_BOTS")
+    bot_skills_dir: Path = Field(default=Path(".agents/skills"), alias="BOT_SKILLS_DIR")
+    bot_enabled_skills: Annotated[set[str], NoDecode] = Field(default_factory=set, alias="BOT_ENABLED_SKILLS")
 
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
@@ -32,4 +35,13 @@ class Settings(BaseSettings):
             return set()
         if isinstance(value, str):
             return {int(item.strip()) for item in value.split(",") if item.strip()}
+        return value
+
+    @field_validator("bot_enabled_skills", mode="before")
+    @classmethod
+    def parse_enabled_skills(cls, value: object) -> set[str] | object:
+        if value is None or value == "":
+            return set()
+        if isinstance(value, str):
+            return {item.strip() for item in value.split(",") if item.strip()}
         return value
