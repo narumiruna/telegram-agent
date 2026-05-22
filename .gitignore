@@ -104,10 +104,6 @@ celerybeat.pid
 # Environments
 .env
 .venv
-
-# Local bot persona and durable memory
-SOUL.md
-MEMORY.md
 env/
 venv/
 ENV/
