@@ -27,6 +27,24 @@ OPENAI_MODEL=gpt-5.4-mini
 uv run telegramagent
 ```
 
+或用 Docker Compose 讀取 `.env` 並啟動 bot：
+
+```bash
+docker compose up -d --build
+```
+
+查看 logs：
+
+```bash
+docker compose logs -f telegramagent
+```
+
+停止：
+
+```bash
+docker compose down
+```
+
 ## 指令
 
 - `/start`：顯示簡介

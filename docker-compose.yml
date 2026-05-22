@@ -1,0 +1,15 @@
+services:
+  telegramagent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: "3.14"
+    image: telegramagent:local
+    env_file:
+      - .env
+    command: ["--verbose"]
+    init: true
+    restart: unless-stopped
+    volumes:
+      - ./.agents:/app/.agents:ro

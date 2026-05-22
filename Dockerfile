@@ -1,5 +1,5 @@
 # https://docs.astral.sh/uv/guides/integration/docker/#non-editable-installs
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION=3.14
 ARG DEBIAN_VERSION=bookworm
 FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-${DEBIAN_VERSION}-slim AS uv
 
@@ -21,8 +21,12 @@ FROM python:${PYTHON_VERSION}-slim-${DEBIAN_VERSION}
 
 WORKDIR /app
 
+RUN groupadd --system app && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app
+
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
 
 ENV PATH="/app/.venv/bin:$PATH"
+
+USER app
 
 ENTRYPOINT ["telegramagent"]
