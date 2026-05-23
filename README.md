@@ -49,6 +49,13 @@ BOT_EVENTS_ARCHIVE_PROCESSED=true
 BOT_SESSION_LOG_DIR=.telegramagent/sessions
 BOT_TASKS_MAX_CONCURRENT_PER_CHAT=1
 
+# Yahoo Finance MCP tools. Enabled by default through the installed yfmcp command.
+BOT_YFINANCE_MCP_ENABLED=true
+BOT_YFINANCE_MCP_COMMAND=yfmcp
+BOT_YFINANCE_MCP_ARGS=
+BOT_YFINANCE_MCP_INIT_TIMEOUT_SECONDS=10
+BOT_YFINANCE_MCP_READ_TIMEOUT_SECONDS=120
+
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_API_KEY=your API key
 OPENAI_MODEL=gpt-5.4-mini
@@ -161,7 +168,7 @@ The proactive runtime has a small task queue:
 - Long-running proactive work can send `處理中…` and then edit that bot-owned status message into the final result.
 - `/tasks list`, `/tasks show <id>`, and `/tasks cancel <id>` expose task state.
 
-Runtime capabilities are explicit. Built-in web fetch, YouTube transcript extraction, file-backed events, and `kabigon.api.load_url` URL extraction are available by default. The chat agent registers a Pydantic AI tool named `kabigon_load_url`, so the model can call kabigon directly for supported public HTTP(S) URLs. The proactive YouTube fallback also uses kabigon when the package is installed. Some kabigon loaders may need extra runtime assets such as Playwright browsers, depending on the URL type. Agent Skills alone still do not make a tool executable; a capability or Pydantic AI tool must be wired in runtime code.
+Runtime capabilities are explicit. Built-in web fetch, YouTube transcript extraction, file-backed events, `kabigon.api.load_url` URL extraction, and Yahoo Finance MCP tools are available by default. The chat agent registers a Pydantic AI tool named `kabigon_load_url`, so the model can call kabigon directly for supported public HTTP(S) URLs. It also registers the `yfmcp` MCP toolset when `BOT_YFINANCE_MCP_ENABLED=true`, allowing stock, ETF, options, financial statement, holder, sector, and market-news lookups through Yahoo Finance data. Financial responses are informational only and should not be treated as investment advice. Some kabigon loaders may need extra runtime assets such as Playwright browsers, depending on the URL type. Agent Skills alone still do not make a tool executable; a capability, Pydantic AI tool, or MCP toolset must be wired in runtime code.
 
 Docker Compose mounts `./.telegramagent:/app/.telegramagent` by default so session logs survive container restarts.
 

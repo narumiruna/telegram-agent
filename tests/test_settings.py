@@ -49,3 +49,19 @@ def test_proactive_runtime_settings_parse_env(monkeypatch) -> None:
 
     assert settings.bot_session_log_dir == Path(".state/sessions")
     assert settings.bot_tasks_max_concurrent_per_chat == 3
+
+
+def test_yfinance_mcp_settings_parse_env(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_YFINANCE_MCP_ENABLED", "false")
+    monkeypatch.setenv("BOT_YFINANCE_MCP_COMMAND", "uvx")
+    monkeypatch.setenv("BOT_YFINANCE_MCP_ARGS", "--from yfmcp yfmcp")
+    monkeypatch.setenv("BOT_YFINANCE_MCP_INIT_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("BOT_YFINANCE_MCP_READ_TIMEOUT_SECONDS", "30")
+
+    settings = Settings()
+
+    assert settings.bot_yfinance_mcp_enabled is False
+    assert settings.bot_yfinance_mcp_command == "uvx"
+    assert settings.bot_yfinance_mcp_args == ("--from", "yfmcp", "yfmcp")
+    assert settings.bot_yfinance_mcp_init_timeout_seconds == 5
+    assert settings.bot_yfinance_mcp_read_timeout_seconds == 30

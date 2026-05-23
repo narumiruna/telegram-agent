@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import Annotated
 
@@ -43,6 +44,17 @@ class Settings(BaseSettings):
     bot_events_archive_processed: bool = Field(default=True, alias="BOT_EVENTS_ARCHIVE_PROCESSED")
     bot_session_log_dir: Path = Field(default=Path(".telegramagent/sessions"), alias="BOT_SESSION_LOG_DIR")
     bot_tasks_max_concurrent_per_chat: int = Field(default=1, ge=1, alias="BOT_TASKS_MAX_CONCURRENT_PER_CHAT")
+    bot_yfinance_mcp_enabled: bool = Field(default=True, alias="BOT_YFINANCE_MCP_ENABLED")
+    bot_yfinance_mcp_command: str = Field(default="yfmcp", alias="BOT_YFINANCE_MCP_COMMAND")
+    bot_yfinance_mcp_args: Annotated[tuple[str, ...], NoDecode] = Field(
+        default_factory=tuple, alias="BOT_YFINANCE_MCP_ARGS"
+    )
+    bot_yfinance_mcp_init_timeout_seconds: float = Field(
+        default=10.0, gt=0, alias="BOT_YFINANCE_MCP_INIT_TIMEOUT_SECONDS"
+    )
+    bot_yfinance_mcp_read_timeout_seconds: float = Field(
+        default=120.0, gt=0, alias="BOT_YFINANCE_MCP_READ_TIMEOUT_SECONDS"
+    )
 
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
@@ -76,4 +88,13 @@ class Settings(BaseSettings):
             return set()
         if isinstance(value, str):
             return {item.strip() for item in value.split(",") if item.strip()}
+        return value
+
+    @field_validator("bot_yfinance_mcp_args", mode="before")
+    @classmethod
+    def parse_yfinance_mcp_args(cls, value: object) -> tuple[str, ...] | object:
+        if value is None or value == "":
+            return ()
+        if isinstance(value, str):
+            return tuple(shlex.split(value))
         return value

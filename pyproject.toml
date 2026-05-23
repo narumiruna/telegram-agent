@@ -6,6 +6,7 @@ readme          = "README.md"
 requires-python = ">=3.14"
 authors         = [{ name = "narumi", email = "toucans-cutouts0f@icloud.com" }]
 dependencies    = [
+  "fastmcp>=3.3.1",
   "httpx>=0.28.1",
   "kabigon>=0.19.4",
   "logfire>=4.33.0",
@@ -14,6 +15,7 @@ dependencies    = [
   "pydantic-ai>=1.101.0",
   "pydantic-settings>=2.14.1",
   "typer>=0.25.1",
+  "yfmcp>=0.11.3",
   "youtube-transcript-api>=1.2.4",
 ]
 

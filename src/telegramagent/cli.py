@@ -11,6 +11,7 @@ from telegramagent.actions import ActionSettings
 from telegramagent.actions import KabigonExternalLoader
 from telegramagent.actions import PendingActionStore
 from telegramagent.actions import ProactiveActionTool
+from telegramagent.capabilities import Capability
 from telegramagent.capabilities import CapabilityRegistry
 from telegramagent.context_files import ContextFile
 from telegramagent.context_files import ContextManagementTool
@@ -22,6 +23,9 @@ from telegramagent.events import ImmediateEvent
 from telegramagent.events import event_prompt
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
+from telegramagent.mcp import YFinanceMcpConfig
+from telegramagent.mcp import build_yfinance_mcp_toolsets
+from telegramagent.mcp import command_available
 from telegramagent.session import SessionLog
 from telegramagent.settings import Settings
 from telegramagent.skills import SkillInstaller
@@ -44,6 +48,16 @@ def configure_logging(verbose: bool = False) -> None:
         backtrace=False,
         diagnose=False,
     )
+
+
+def _yfinance_mcp_unavailable_reason(config: YFinanceMcpConfig, *, available: bool) -> str:
+    if available:
+        return ""
+    if not config.enabled:
+        return "disabled"
+    if not command_available(config.command):
+        return f"command not found: {config.command}"
+    return "not configured"
 
 
 @app.command()
@@ -73,6 +87,22 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         logger.info("Loaded {} Agent Skill(s) from {}", len(skills), settings.bot_skills_dir)
 
     capabilities = CapabilityRegistry()
+    yfinance_mcp_config = YFinanceMcpConfig(
+        enabled=settings.bot_yfinance_mcp_enabled,
+        command=settings.bot_yfinance_mcp_command,
+        args=settings.bot_yfinance_mcp_args,
+        init_timeout_seconds=settings.bot_yfinance_mcp_init_timeout_seconds,
+        read_timeout_seconds=settings.bot_yfinance_mcp_read_timeout_seconds,
+    )
+    yfinance_mcp_toolsets = build_yfinance_mcp_toolsets(yfinance_mcp_config)
+    capabilities.set(
+        Capability(
+            "mcp.yfinance",
+            bool(yfinance_mcp_toolsets),
+            "Yahoo Finance market data MCP tools via yfmcp",
+            _yfinance_mcp_unavailable_reason(yfinance_mcp_config, available=bool(yfinance_mcp_toolsets)),
+        )
+    )
     agent = ChatAgent(
         api_key=settings.openai_api_key,
         model=settings.openai_model,
@@ -82,6 +112,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         memory=memory,
         capability_summary=capabilities.summary(),
         kabigon_tool_timeout_seconds=settings.bot_kabigon_timeout_seconds,
+        mcp_toolsets=yfinance_mcp_toolsets,
     )
     topic_end_judge = TopicEndAgent(
         api_key=settings.openai_api_key,

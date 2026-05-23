@@ -98,6 +98,7 @@ class ChatAgent:
         agent_factory: AgentFactory | None = None,
         capability_summary: str = "",
         kabigon_tool_timeout_seconds: float = 180.0,
+        mcp_toolsets: Sequence[Any] = (),
     ) -> None:
         self.client = OpenAIChatClient(api_key=api_key, model=model, base_url=base_url, http_client=http_client)
         self.skills = skills or []
@@ -106,6 +107,7 @@ class ChatAgent:
         self.capability_summary = capability_summary
         self.agent_factory = agent_factory
         self.kabigon_tool_timeout_seconds = kabigon_tool_timeout_seconds
+        self.mcp_toolsets = tuple(mcp_toolsets)
         self.agent = self._create_agent(api_key=api_key, model=model, base_url=base_url, agent_factory=agent_factory)
 
     @property
@@ -160,6 +162,7 @@ class ChatAgent:
             pydantic_model,
             instructions=instructions,
             tools=[cast(Any, kabigon_load_url)],
+            toolsets=cast(Any, self.mcp_toolsets),
             tool_timeout=self.kabigon_tool_timeout_seconds,
         )
 
@@ -174,7 +177,8 @@ def _chat_instructions(
         "如果使用者要求你自動處理、讀取、整理或查詢，只有在工具結果或系統訊息明確提供內容時，"
         "才可以說你已經讀取或正在根據內容整理；如果沒有工具結果，不要假裝會在背景工作。"
         "Agent Skills 是操作說明，不代表你在 Telegram runtime 真的有該工具；"
-        "只有 runtime capabilities 或 Pydantic AI tools 中列出的工具才是真的可執行。"
+        "只有 runtime capabilities、Pydantic AI tools 或已啟用 MCP toolsets 中列出的工具才是真的可執行。"
+        "使用股票與金融資料時，明確說明僅供資訊參考，不構成投資建議。"
     ]
     soul_instructions = format_context_for_instructions(soul)
     if soul_instructions:

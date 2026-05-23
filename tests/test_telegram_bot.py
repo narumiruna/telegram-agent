@@ -754,16 +754,30 @@ async def test_chat_agent_injects_runtime_capabilities_into_pydantic_instruction
 
     assert "Runtime capabilities" in captured["instructions"]
     assert "external_loader.kabigon: unavailable" in captured["instructions"]
-    assert "只有 runtime capabilities 或 Pydantic AI tools 中列出的工具才是真的可執行" in captured["instructions"]
+    assert (
+        "只有 runtime capabilities、Pydantic AI tools 或已啟用 MCP toolsets 中列出的工具才是真的可執行"
+        in captured["instructions"]
+    )
+    assert "不構成投資建議" in captured["instructions"]
 
 
 @pytest.mark.asyncio
-async def test_chat_agent_registers_kabigon_load_url_tool(monkeypatch) -> None:
+async def test_chat_agent_registers_kabigon_load_url_tool_and_mcp_toolsets(monkeypatch) -> None:
     captured: dict[str, Any] = {}
+    sentinel_toolset = object()
 
     class FakePydanticAgent:
-        def __init__(self, model: object, *, instructions: str, tools: Sequence[object], tool_timeout: int) -> None:
+        def __init__(
+            self,
+            model: object,
+            *,
+            instructions: str,
+            tools: Sequence[object],
+            toolsets: Sequence[object],
+            tool_timeout: int,
+        ) -> None:
             captured["tools"] = tools
+            captured["toolsets"] = toolsets
             captured["tool_timeout"] = tool_timeout
 
         async def run(self, user_prompt: str, **kwargs: Any) -> FakeRunResult:
@@ -771,11 +785,12 @@ async def test_chat_agent_registers_kabigon_load_url_tool(monkeypatch) -> None:
 
     monkeypatch.setattr("telegramagent.llm.PydanticAgent", FakePydanticAgent)
 
-    agent = ChatAgent(api_key="key", model="model")
+    agent = ChatAgent(api_key="key", model="model", mcp_toolsets=[sentinel_toolset])
     reply = await agent.reply("問題")
 
     assert reply == "ok"
     assert [getattr(tool, "__name__", "") for tool in captured["tools"]] == ["kabigon_load_url"]
+    assert captured["toolsets"] == (sentinel_toolset,)
     assert captured["tool_timeout"] == 180
 
 

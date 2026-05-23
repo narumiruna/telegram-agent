@@ -37,13 +37,10 @@ class CapabilityRegistry:
 
 
 def default_capabilities() -> list[Capability]:
-    try:
-        importlib.metadata.version("kabigon")
-    except importlib.metadata.PackageNotFoundError:
-        kabigon_api_available = False
-    else:
-        kabigon_api_available = True
+    kabigon_api_available = _package_available("kabigon")
+    yfmcp_available = _package_available("yfmcp")
     kabigon_path = shutil.which("kabigon") or shutil.which("uvx")
+    yfmcp_path = shutil.which("yfmcp")
     return [
         Capability("web_fetch", True, "bounded HTTP(S) text/HTML fetching with SSRF guards"),
         Capability("youtube_transcript", True, "YouTube subtitle/transcript extraction with timeout"),
@@ -60,4 +57,26 @@ def default_capabilities() -> list[Capability]:
             "host kabigon executable detection only; not used unless explicitly wired",
             "kabigon executable not found" if not shutil.which("kabigon") else "",
         ),
+        Capability(
+            "mcp.yfinance",
+            yfmcp_available and yfmcp_path is not None,
+            "Yahoo Finance market data MCP tools via yfmcp",
+            _yfinance_reason(package_available=yfmcp_available, command_available=yfmcp_path is not None),
+        ),
     ]
+
+
+def _package_available(name: str) -> bool:
+    try:
+        importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
+
+
+def _yfinance_reason(*, package_available: bool, command_available: bool) -> str:
+    if not package_available:
+        return "yfmcp package not installed"
+    if not command_available:
+        return "yfmcp executable not found"
+    return ""
