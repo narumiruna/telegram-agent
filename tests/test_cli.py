@@ -45,3 +45,24 @@ def test_configure_logging_redacts_sensitive_stdlib_log_values(capsys) -> None:
         root_logger.handlers = original_handlers
         root_logger.setLevel(original_level)
         logging.captureWarnings(False)
+
+
+def test_configure_logging_suppresses_openai_debug_payloads(capsys) -> None:
+    root_logger = logging.getLogger()
+    openai_logger = logging.getLogger("openai")
+    original_handlers = [*root_logger.handlers]
+    original_root_level = root_logger.level
+    original_openai_level = openai_logger.level
+
+    try:
+        configure_logging(verbose=True)
+
+        logging.getLogger("openai._base_client").debug("Request options with prompt body")
+
+        captured = capsys.readouterr()
+        assert "Request options with prompt body" not in captured.err
+    finally:
+        root_logger.handlers = original_handlers
+        root_logger.setLevel(original_root_level)
+        openai_logger.setLevel(original_openai_level)
+        logging.captureWarnings(False)

@@ -32,6 +32,8 @@ RUN apt-get update \
     && chown -R app:app /app
 
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
+RUN /app/.venv/bin/playwright install-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=uv --chown=app:app /ms-playwright /ms-playwright
 
 ENV PATH="/app/.venv/bin:$PATH"

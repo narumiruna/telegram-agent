@@ -82,7 +82,7 @@ def configure_logging(verbose: bool = False) -> None:
     root_logger = logging.getLogger()
     root_logger.handlers = [LoguruInterceptHandler()]
     root_logger.setLevel(logging.DEBUG if verbose else logging.INFO)
-    for noisy_logger_name in ("httpx", "httpcore", "urllib3"):
+    for noisy_logger_name in ("httpx", "httpcore", "openai", "urllib3"):
         logging.getLogger(noisy_logger_name).setLevel(logging.WARNING)
 
 
