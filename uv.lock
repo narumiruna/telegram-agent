@@ -3030,6 +3030,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-ai" },
     { name = "pydantic-settings" },
+    { name = "telegraph" },
     { name = "typer" },
     { name = "yfmcp" },
     { name = "youtube-transcript-api" },
@@ -3054,6 +3055,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pydantic-ai", specifier = ">=1.101.0" },
     { name = "pydantic-settings", specifier = ">=2.14.1" },
+    { name = "telegraph", specifier = ">=2.2.0" },
     { name = "typer", specifier = ">=0.25.1" },
     { name = "yfmcp", specifier = ">=0.11.3" },
     { name = "youtube-transcript-api", specifier = ">=1.2.4" },
@@ -3066,6 +3068,18 @@ dev = [
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.15.14" },
     { name = "ty", specifier = ">=0.0.38" },
+]
+
+[[package]]
+name = "telegraph"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/49/81/1c9f99004e23555fb21b80a2ef6ddbecb3a7a4eefbc4aac75ffb5a9ccf71/telegraph-2.2.0.tar.gz", hash = "sha256:012908f18208c451c7189f4bda7c39a1369241ac436c7543bb6c3fccbe9cfd5d", size = 8011, upload-time = "2022-10-26T18:37:49.049Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d3/75/1bc2f8c4e4a736e2e582a1518eb4621db3c9dcb100f379fab5ab49c8d1ac/telegraph-2.2.0-py3-none-any.whl", hash = "sha256:d20b2a5d7cfdd66890c8c3fd60aa8585cabb7c6b03579d3eb1cd8af056ed9971", size = 10749, upload-time = "2022-10-26T18:37:47.899Z" },
 ]
 
 [[package]]

@@ -21,6 +21,8 @@ from telegramagent.images import ImageAttachment
 from telegramagent.images import as_telegram_photo
 from telegramagent.session import SessionLog
 from telegramagent.tasks import TaskQueue
+from telegramagent.telegraph_pages import TelegraphPagePublisher
+from telegramagent.telegraph_pages import TelegraphPublishError
 
 
 class TelegramChat(TypedDict):
@@ -118,6 +120,10 @@ class TopicEndJudge(Protocol):
     ) -> bool: ...
 
 
+class LongMessagePublisher(Protocol):
+    async def publish(self, text: str) -> str: ...
+
+
 class TelegramGateway(Protocol):
     async def get_me(self) -> dict[str, object]: ...
 
@@ -160,10 +166,19 @@ class TelegramApiError(RuntimeError):
 
 
 class TelegramClient:
-    def __init__(self, token: str, *, http_client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        token: str,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+        telegraph_publisher: LongMessagePublisher | None = None,
+        long_message_threshold: int = 2000,
+    ) -> None:
         self.token = token
         self.base_url = f"https://api.telegram.org/bot{token}"
         self.http_client = http_client
+        self.telegraph_publisher = telegraph_publisher or TelegraphPagePublisher()
+        self.long_message_threshold = long_message_threshold
 
     async def get_me(self) -> dict[str, object]:
         result = await self._request("getMe")
@@ -197,7 +212,8 @@ class TelegramClient:
 
     async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> int | None:
         last_message_id: int | None = None
-        for chunk in _telegram_html_chunks(text):
+        outbound_text = await self._outbound_message_text(text)
+        for chunk in _telegram_html_chunks(outbound_text):
             payload: dict[str, object] = {
                 "chat_id": chat_id,
                 "text": chunk,
@@ -248,7 +264,8 @@ class TelegramClient:
         return last_message_id
 
     async def edit_message_text(self, chat_id: int, message_id: int, text: str) -> None:
-        chunks = _telegram_html_chunks(text)
+        outbound_text = await self._outbound_message_text(text)
+        chunks = _telegram_html_chunks(outbound_text)
         await self._request(
             "editMessageText",
             {
@@ -261,6 +278,16 @@ class TelegramClient:
         )
         for chunk in chunks[1:]:
             await self.send_message(chat_id, chunk, reply_to_message_id=message_id)
+
+    async def _outbound_message_text(self, text: str) -> str:
+        sanitized = _sanitize_telegram_text(text)
+        if len(sanitized) <= self.long_message_threshold:
+            return text
+        try:
+            return await self.telegraph_publisher.publish(sanitized)
+        except TelegraphPublishError:
+            logger.exception("Failed to publish long Telegram message to Telegraph; falling back to Telegram chunks")
+            return text
 
     async def _request(self, method: str, payload: dict[str, object] | None = None) -> object:
         if self.http_client is None:

@@ -33,6 +33,10 @@ from telegramagent.telegram import TelegramBot
 from telegramagent.telegram import TelegramClient
 from telegramagent.telegram import TelegramFile
 from telegramagent.telegram import TelegramUpdate
+from telegramagent.telegraph_pages import TelegraphPublishError
+from telegramagent.telegraph_pages import _sanitize_telegraph_html
+from telegramagent.telegraph_pages import format_telegraph_html
+from telegramagent.telegraph_pages import telegraph_page_title
 
 
 class FakeTelegram:
@@ -145,6 +149,19 @@ class FakeImageGenerator:
     async def generate(self, prompt: str) -> GeneratedImage:
         self.prompts.append(prompt)
         return self.image
+
+
+class FakeTelegraphPublisher:
+    def __init__(self, url: str = "https://telegra.ph/long-reply", error: TelegraphPublishError | None = None) -> None:
+        self.url = url
+        self.error = error
+        self.published: list[str] = []
+
+    async def publish(self, text: str) -> str:
+        self.published.append(text)
+        if self.error is not None:
+            raise self.error
+        return self.url
 
 
 class FakeRunResult:
@@ -1047,6 +1064,125 @@ async def test_telegram_client_formats_commonmark_markdown_as_safe_html() -> Non
     assert "<pre>code block &gt; should be escaped\n</pre>" in payloads[0]["text"]
     assert "\x00" not in payloads[0]["text"]
     assert "\x08" not in payloads[0]["text"]
+
+
+def test_telegraph_html_formats_markdown_and_sanitizes_supported_tags() -> None:
+    text = (
+        "# Page title\n\n"
+        "This is **bold** with `code` and <script>plain text</script>.\n\n"
+        "```html\n<div>escaped code</div>\n```"
+    )
+
+    assert telegraph_page_title(text) == "Page title"
+    rendered = format_telegraph_html(text)
+
+    assert "<h3>Page title</h3>" in rendered
+    assert "This is <b>bold</b> with <code>code</code>" in rendered
+    assert "&lt;script&gt;plain text&lt;/script&gt;" in rendered
+    assert "<pre>&lt;div&gt;escaped code&lt;/div&gt;\n</pre>" in rendered
+
+
+def test_telegraph_html_sanitizer_remaps_and_escapes_unsupported_html() -> None:
+    rendered = _sanitize_telegraph_html(
+        '<h1>Title</h1><del>Gone</del><span class="x">No</span><a href="https://example.com" rel="x">Link</a>'
+    )
+
+    assert rendered == (
+        '<h3>Title</h3><s>Gone</s>&lt;span class="x"&gt;No&lt;/span&gt;<a href="https://example.com">Link</a>'
+    )
+
+
+@pytest.mark.asyncio
+async def test_telegram_client_publishes_messages_over_2000_chars_to_telegraph() -> None:
+    payloads: list[dict[str, Any]] = []
+    publisher = FakeTelegraphPublisher()
+    text = "x" * 2001
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.read().decode()))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 99}})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        telegram = TelegramClient("token", http_client=client, telegraph_publisher=publisher)
+        message_id = await telegram.send_message(123, text, reply_to_message_id=55)
+
+    assert message_id == 99
+    assert publisher.published == [text]
+    assert payloads == [
+        {
+            "chat_id": 123,
+            "text": "https://telegra.ph/long-reply",
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+            "reply_to_message_id": 55,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_telegram_client_does_not_publish_messages_at_2000_chars() -> None:
+    payloads: list[dict[str, Any]] = []
+    publisher = FakeTelegraphPublisher()
+    text = "x" * 2000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.read().decode()))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 99}})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        telegram = TelegramClient("token", http_client=client, telegraph_publisher=publisher)
+        message_id = await telegram.send_message(123, text)
+
+    assert message_id == 99
+    assert publisher.published == []
+    assert payloads[0]["text"] == text
+
+
+@pytest.mark.asyncio
+async def test_telegram_client_edits_long_messages_to_telegraph_url() -> None:
+    payloads: list[dict[str, Any]] = []
+    publisher = FakeTelegraphPublisher(url="https://telegra.ph/status")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.read().decode()))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 99}})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        telegram = TelegramClient("token", http_client=client, telegraph_publisher=publisher)
+        await telegram.edit_message_text(123, 99, "x" * 2001)
+
+    assert publisher.published == ["x" * 2001]
+    assert payloads == [
+        {
+            "chat_id": 123,
+            "message_id": 99,
+            "text": "https://telegra.ph/status",
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_telegram_client_falls_back_to_chunks_when_telegraph_publish_fails() -> None:
+    payloads: list[dict[str, Any]] = []
+    publisher = FakeTelegraphPublisher(error=TelegraphPublishError("no page"))
+    text = "x" * 4100
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.read().decode()))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 99}})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        telegram = TelegramClient("token", http_client=client, telegraph_publisher=publisher)
+        await telegram.send_message(123, text)
+
+    assert publisher.published == [text]
+    assert [payload["text"] for payload in payloads] == ["x" * 4096, "x" * 4]
 
 
 @pytest.mark.asyncio
