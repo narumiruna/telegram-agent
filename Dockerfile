@@ -7,6 +7,7 @@ WORKDIR /app
 
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
@@ -16,6 +17,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ADD . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv run --no-dev playwright install chromium
 
 FROM python:${PYTHON_VERSION}-slim-${DEBIAN_VERSION}
 
@@ -29,8 +32,10 @@ RUN apt-get update \
     && chown -R app:app /app
 
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
+COPY --from=uv --chown=app:app /ms-playwright /ms-playwright
 
 ENV PATH="/app/.venv/bin:$PATH"
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 USER app
 
