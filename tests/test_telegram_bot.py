@@ -14,6 +14,7 @@ from pydantic_ai.messages import ToolReturnPart
 
 from telegramagent.actions import ActionContent
 from telegramagent.actions import ProactiveActionTool
+from telegramagent.actions import UrlContext
 from telegramagent.context_files import ContextManagementTool
 from telegramagent.context_files import load_context_file
 from telegramagent.images import AgentReply
@@ -688,6 +689,219 @@ async def test_group_mention_addresses_bot_and_strips_mention() -> None:
     )
 
     assert telegram.sent == [(-100, "AI: 你好 (0)", 10)]
+
+
+@pytest.mark.asyncio
+async def test_group_mention_reply_includes_replied_text_context_in_llm_prompt() -> None:
+    telegram = FakeTelegram()
+    agent = FakeArtifactAgent(AgentReply("ok"))
+    bot = TelegramBot(telegram=telegram, agent=agent, bot_username="fakebot", bot_user_id=42)
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 789, "username": "bob"},
+                "reply_to_message": {
+                    "message_id": 10,
+                    "date": 1_764_000_000,
+                    "from": {"id": 456, "username": "alice"},
+                    "text": "我覺得 Gemini 目前 coding 強，但 agentic coding 還弱",
+                },
+                "text": "@FakeBot 你怎麼看？",
+            },
+        }
+    )
+
+    assert telegram.sent == [(-100, "ok", 11)]
+    prompt = agent.calls[0][0]
+    assert "Replied message context:\nSender: @alice\nType: text" in prompt
+    assert "Date: 2025-11-24T16:00:00+00:00" in prompt
+    assert "Content: 我覺得 Gemini 目前 coding 強，但 agentic coding 還弱" in prompt
+    assert "Current user message:\n你怎麼看？" in prompt
+    assert "Treat the replied message and extracted URL content as the primary object" in prompt
+
+
+@pytest.mark.asyncio
+async def test_group_mention_reply_includes_non_text_context_placeholder() -> None:
+    telegram = FakeTelegram()
+    agent = FakeArtifactAgent(AgentReply("ok"))
+    bot = TelegramBot(telegram=telegram, agent=agent, bot_username="fakebot", bot_user_id=42)
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 789, "username": "bob"},
+                "reply_to_message": {
+                    "message_id": 10,
+                    "from": {"id": 456, "first_name": "Alice"},
+                    "sticker": {"file_id": "sticker-1"},
+                },
+                "text": "@FakeBot 這是什麼？",
+            },
+        }
+    )
+
+    assert telegram.sent == [(-100, "ok", 11)]
+    prompt = agent.calls[0][0]
+    assert "Replied message context:\nSender: Alice\nType: sticker" in prompt
+    assert "Content: 使用者回覆的是一則 sticker 訊息，無文字內容" in prompt
+    assert "Current user message:\n這是什麼？" in prompt
+
+
+@pytest.mark.asyncio
+async def test_group_mention_reply_to_x_url_includes_extracted_url_context() -> None:
+    telegram = FakeTelegram()
+    agent = FakeArtifactAgent(AgentReply("ok"))
+    extractor_calls: list[str] = []
+
+    async def extract(url: str) -> UrlContext:
+        extractor_calls.append(url)
+        return UrlContext(
+            url=url,
+            final_url="https://x.com/IEObserve/status/2058190539988898008",
+            source_type="x_post",
+            fetched_at="2026-05-23T00:00:00+00:00",
+            extraction_status="partial",
+            title="IEObserve on X",
+            author="@IEObserve",
+            text="這是一則擷取到的 X 貼文摘要文字。",
+        )
+
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=agent,
+        bot_username="fakebot",
+        bot_user_id=42,
+        url_context_extractor=extract,
+    )
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 789, "username": "bob"},
+                "reply_to_message": {
+                    "message_id": 10,
+                    "from": {"id": 456, "username": "alice"},
+                    "text": "https://x.com/IEObserve/status/2058190539988898008?s=20",
+                },
+                "text": "@FakeBot",
+            },
+        }
+    )
+
+    assert telegram.sent == [(-100, "ok", 11)]
+    assert extractor_calls == ["https://x.com/IEObserve/status/2058190539988898008?s=20"]
+    prompt = agent.calls[0][0]
+    assert "URLs found:\n- https://x.com/IEObserve/status/2058190539988898008?s=20" in prompt
+    assert "Extracted URL context:" in prompt
+    assert "Source type: x_post" in prompt
+    assert "Extraction status: partial" in prompt
+    assert "Title: IEObserve on X" in prompt
+    assert "Author: @IEObserve" in prompt
+    assert "Content:\n這是一則擷取到的 X 貼文摘要文字。" in prompt
+    assert "Current user message:\n（使用者只提及 bot，未提供額外文字。）" in prompt
+    assert "respond directly with a useful interpretation/commentary/summary" in prompt
+
+
+@pytest.mark.asyncio
+async def test_group_mention_reply_url_entities_prioritize_replied_urls() -> None:
+    telegram = FakeTelegram()
+    agent = FakeArtifactAgent(AgentReply("ok"))
+    extractor_calls: list[str] = []
+
+    async def extract(url: str) -> UrlContext:
+        extractor_calls.append(url)
+        return UrlContext(
+            url=url,
+            final_url=url,
+            source_type="webpage",
+            fetched_at="2026-05-23T00:00:00+00:00",
+            extraction_status="success",
+            title="頁面",
+            text=f"擷取內容: {url}",
+        )
+
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=agent,
+        bot_username="fakebot",
+        bot_user_id=42,
+        url_context_extractor=extract,
+    )
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 789, "username": "bob"},
+                "reply_to_message": {
+                    "message_id": 10,
+                    "from": {"id": 456, "username": "alice"},
+                    "text": "看這篇",
+                    "entities": [
+                        {
+                            "type": "text_link",
+                            "offset": 0,
+                            "length": 3,
+                            "url": "https://example.com/replied",
+                        }
+                    ],
+                },
+                "text": "@FakeBot 再看 https://example.com/current",
+                "entities": [
+                    {"type": "mention", "offset": 0, "length": 8},
+                    {"type": "url", "offset": 12, "length": 27},
+                ],
+            },
+        }
+    )
+
+    assert telegram.sent == [(-100, "ok", 11)]
+    assert extractor_calls == ["https://example.com/replied", "https://example.com/current"]
+    prompt = agent.calls[0][0]
+    assert prompt.index("- https://example.com/replied") < prompt.index("- https://example.com/current")
+
+
+@pytest.mark.asyncio
+async def test_group_mention_reply_photo_caption_includes_caption_context() -> None:
+    telegram = FakeTelegram()
+    agent = FakeArtifactAgent(AgentReply("ok"))
+    bot = TelegramBot(telegram=telegram, agent=agent, bot_username="fakebot", bot_user_id=42)
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 789, "username": "bob"},
+                "reply_to_message": {
+                    "message_id": 10,
+                    "from": {"id": 456, "first_name": "Alice"},
+                    "photo": [{"file_id": "photo-1", "width": 100, "height": 100}],
+                    "caption": "這張圖在講模型比較",
+                },
+                "text": "@FakeBot",
+            },
+        }
+    )
+
+    assert telegram.sent == [(-100, "ok", 11)]
+    prompt = agent.calls[0][0]
+    assert "Type: photo" in prompt
+    assert "Content: 使用者回覆的是一則 photo 訊息，caption: 這張圖在講模型比較" in prompt
+    assert "Current user message:\n（使用者只提及 bot，未提供額外文字。）" in prompt
 
 
 @pytest.mark.asyncio

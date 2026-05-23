@@ -7,12 +7,16 @@ import httpx
 import pytest
 
 from telegramagent.actions import ActionContent
+from telegramagent.actions import ActionError
 from telegramagent.actions import ActionRouter
 from telegramagent.actions import ActionSettings
+from telegramagent.actions import FetchedResponse
 from telegramagent.actions import PendingActionStore
 from telegramagent.actions import ProactiveActionTool
+from telegramagent.actions import extract_url_context
 from telegramagent.capabilities import Capability
 from telegramagent.capabilities import CapabilityRegistry
+from telegramagent.kabigon_tool import KabigonLoadError
 
 
 class FakeAgent:
@@ -390,3 +394,88 @@ async def test_non_actionable_text_returns_none() -> None:
     agent = FakeAgent()
 
     assert await tool.handle("今天好累", chat_id=123, agent=agent, history=[]) is None
+
+
+@pytest.mark.asyncio
+async def test_extract_url_context_reads_webpage_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fetch(url: str, *, timeout_seconds: float, max_bytes: int, max_redirects: int = 3):
+        assert url == "https://example.com/article"
+        assert timeout_seconds == 15.0
+        assert max_bytes == 80_000
+        assert max_redirects == 3
+        return (
+            "https://example.com/final",
+            FetchedResponse(
+                200,
+                headers={"content-type": "text/html; charset=utf-8"},
+                content=(
+                    b"<html><head>"
+                    b"<title>Fallback title</title>"
+                    b'<meta property="og:title" content="OG title">'
+                    b'<meta name="description" content="Meta description">'
+                    b"</head><body>"
+                    b"<nav>navigation</nav><h1>Article heading</h1><p>Main text</p><footer>footer</footer>"
+                    b"</body></html>"
+                ),
+            ),
+        )
+
+    monkeypatch.setattr("telegramagent.actions._fetch_public_url_follow_redirects", fetch)
+
+    context = await extract_url_context("https://example.com/article")
+
+    assert context.url == "https://example.com/article"
+    assert context.final_url == "https://example.com/final"
+    assert context.source_type == "webpage"
+    assert context.extraction_status == "success"
+    assert context.title == "OG title"
+    assert context.description == "Meta description"
+    assert context.text is not None
+    assert "Article heading Main text" in context.text
+    assert "navigation" not in context.text
+    assert "footer" not in context.text
+
+
+@pytest.mark.asyncio
+async def test_extract_url_context_returns_partial_for_x_status_when_fetchers_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fetch(url: str, *, timeout_seconds: float, max_bytes: int, max_redirects: int = 3):
+        raise ActionError("network failed token=secret-value")
+
+    async def load(url: str, *, timeout_seconds: float, max_chars: int) -> str:
+        raise KabigonLoadError("kabigon failed Bearer secret-token")
+
+    monkeypatch.setattr("telegramagent.actions._fetch_public_url_follow_redirects", fetch)
+    monkeypatch.setattr("telegramagent.actions.load_url_with_kabigon", load)
+
+    context = await extract_url_context("https://x.com/IEObserve/status/2058190539988898008?s=20")
+
+    assert context.source_type == "x_post"
+    assert context.extraction_status == "partial"
+    assert context.author == "@IEObserve"
+    assert context.text is not None
+    assert "status id 2058190539988898008" in context.text
+    assert context.error is not None
+    assert "token=[redacted]" in context.error
+    assert "Bearer [redacted]" in context.error
+    assert "secret-value" not in context.error
+    assert "secret-token" not in context.error
+
+
+@pytest.mark.asyncio
+async def test_extract_url_context_returns_failed_for_unreadable_webpage(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fetch(url: str, *, timeout_seconds: float, max_bytes: int, max_redirects: int = 3):
+        raise ActionError("timeout")
+
+    async def load(url: str, *, timeout_seconds: float, max_chars: int) -> str:
+        raise KabigonLoadError("kabigon timeout")
+
+    monkeypatch.setattr("telegramagent.actions._fetch_public_url_follow_redirects", fetch)
+    monkeypatch.setattr("telegramagent.actions.load_url_with_kabigon", load)
+
+    context = await extract_url_context("https://example.com/slow")
+
+    assert context.source_type == "webpage"
+    assert context.extraction_status == "failed"
+    assert context.error == "built-in fetch: timeout; kabigon: kabigon timeout"

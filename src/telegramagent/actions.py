@@ -10,10 +10,13 @@ import time
 from collections.abc import Callable
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC
+from datetime import datetime
 from html.parser import HTMLParser
 from typing import Literal
 from typing import Protocol
 from urllib.parse import parse_qs
+from urllib.parse import urljoin
 from urllib.parse import urlparse
 from urllib.parse import urlunparse
 
@@ -52,6 +55,20 @@ class ActionContent:
 
 
 @dataclass(frozen=True)
+class UrlContext:
+    url: str
+    final_url: str
+    source_type: Literal["x_post", "webpage", "youtube", "unknown"]
+    fetched_at: str
+    extraction_status: Literal["success", "partial", "failed"]
+    title: str | None = None
+    author: str | None = None
+    text: str | None = None
+    description: str | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class ActionDecision:
     kind: Literal["answer", "execute", "ask", "confirm", "queue", "fallback_failed"]
     action: str = ""
@@ -71,6 +88,47 @@ class FetchedResponse:
         match = re.search(r"charset=([^;\s]+)", content_type, flags=re.IGNORECASE)
         encoding = match.group(1) if match is not None else "utf-8"
         return self.content.decode(encoding, errors="replace")
+
+
+async def extract_url_context(
+    url: str,
+    *,
+    timeout_seconds: float = 15.0,
+    max_chars: int = 6000,
+    max_bytes: int = 80_000,
+) -> UrlContext:
+    fetched_at = datetime.now(UTC).isoformat()
+    source_type = _source_type_for_url(url)
+    try:
+        final_url, response = await _fetch_public_url_follow_redirects(
+            url, timeout_seconds=timeout_seconds, max_bytes=max_bytes
+        )
+        return _url_context_from_response(
+            url,
+            final_url=final_url,
+            response=response,
+            source_type=source_type,
+            fetched_at=fetched_at,
+            max_chars=max_chars,
+        )
+    except (ActionError, httpx.HTTPError, OSError, TimeoutError) as primary_exc:
+        try:
+            body = await load_url_with_kabigon(url, timeout_seconds=timeout_seconds, max_chars=max_chars)
+        except KabigonLoadError as fallback_exc:
+            return _failed_url_context(
+                url,
+                source_type=source_type,
+                fetched_at=fetched_at,
+                primary_error=primary_exc,
+                fallback_error=fallback_exc,
+            )
+        return _url_context_from_text(
+            url,
+            source_type=source_type,
+            fetched_at=fetched_at,
+            text=body,
+            extraction_status="success",
+        )
 
 
 class Agent(Protocol):
@@ -375,13 +433,13 @@ class _TextExtractor(HTMLParser):
         self.parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in {"script", "style", "noscript", "svg"}:
+        if tag in {"script", "style", "noscript", "svg", "nav", "footer", "header"}:
             self.skip_depth += 1
         if tag in {"p", "br", "div", "section", "article", "li", "h1", "h2", "h3"}:
             self.parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style", "noscript", "svg"} and self.skip_depth > 0:
+        if tag in {"script", "style", "noscript", "svg", "nav", "footer", "header"} and self.skip_depth > 0:
             self.skip_depth -= 1
         if tag in {"p", "li", "h1", "h2", "h3"}:
             self.parts.append("\n")
@@ -393,6 +451,9 @@ class _TextExtractor(HTMLParser):
 
 _URL_RE = re.compile(r"https?://[^\s<>()]+", flags=re.IGNORECASE)
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be"}
+_X_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}
+_SENSITIVE_ERROR_RE = re.compile(r"(?i)\b(token|api[_-]?key|authorization|cookie|set-cookie|password|secret)=([^\s;]+)")
+_BEARER_ERROR_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _FOLLOWUP_RE = re.compile(
     r"^(go|開始|執行|繼續|做|自動做|你就自動做事|整理|摘要|好|好呀|ok|okay|有字幕|抓抓看|抓字幕|用\s*kabigon.*)\s*[.!！。]*$",
     re.IGNORECASE,
@@ -408,9 +469,15 @@ def _readable_error(exc: BaseException) -> str:
     if not text:
         text = type(exc).__name__
     text = _collapse_whitespace(text)
+    text = _redact_error_text(text)
     if len(text) > 180:
         return f"{text[:180]}…"
     return text
+
+
+def _redact_error_text(text: str) -> str:
+    text = _SENSITIVE_ERROR_RE.sub(lambda match: f"{match.group(1)}=[redacted]", text)
+    return _BEARER_ERROR_RE.sub("Bearer [redacted]", text)
 
 
 def _first_url(text: str) -> str | None:
@@ -439,6 +506,31 @@ def _confirmation_required_reason(text: str) -> str | None:
 
 def _is_youtube_url(url: str) -> bool:
     return (urlparse(url).hostname or "").casefold() in _YOUTUBE_HOSTS
+
+
+def _source_type_for_url(url: str) -> Literal["x_post", "webpage", "youtube", "unknown"]:
+    if _is_x_status_url(url):
+        return "x_post"
+    if _is_youtube_url(url):
+        return "youtube"
+    parsed = urlparse(url)
+    if parsed.scheme.casefold() in {"http", "https"} and parsed.hostname:
+        return "webpage"
+    return "unknown"
+
+
+def _is_x_status_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").casefold()
+    path_parts = [part for part in parsed.path.split("/") if part]
+    return host in _X_HOSTS and len(path_parts) >= 3 and path_parts[1] == "status"
+
+
+def _x_status_parts(url: str) -> tuple[str, str] | None:
+    if not _is_x_status_url(url):
+        return None
+    path_parts = [part for part in urlparse(url).path.split("/") if part]
+    return path_parts[0], path_parts[2]
 
 
 def _latest_url_from_history(history: Sequence[tuple[str, str]]) -> str | None:
@@ -508,6 +600,28 @@ async def _fetch_public_url(url: str, *, timeout_seconds: float, max_bytes: int)
         raise ActionError("這個連結回應不完整，我目前讀不到內容。") from exc
 
     return FetchedResponse(status_code=status_code, headers=headers, content=body)
+
+
+async def _fetch_public_url_follow_redirects(
+    url: str, *, timeout_seconds: float, max_bytes: int, max_redirects: int = 3
+) -> tuple[str, FetchedResponse]:
+    current_url = url
+    for _redirect_count in range(max_redirects + 1):
+        response = await _fetch_public_url(current_url, timeout_seconds=timeout_seconds, max_bytes=max_bytes)
+        if not 300 <= response.status_code < 400:
+            return current_url, response
+
+        location = response.headers.get("location")
+        if not location:
+            raise ActionError("這個連結重新導向但沒有提供 Location header。")
+        next_url = urljoin(current_url, location)
+        parsed = urlparse(next_url)
+        if parsed.scheme.casefold() not in {"http", "https"} or parsed.hostname is None:
+            raise ActionError("這個連結重新導向到不支援或無效的 URL。")
+        await _assert_public_host(parsed.hostname)
+        current_url = next_url
+
+    raise ActionError("這個連結重新導向太多次，我先不自動讀取。")
 
 
 async def _assert_public_host(host: str) -> None:
@@ -593,6 +707,165 @@ def _html_title(raw_html: str) -> str | None:
     if match is None:
         return None
     return _collapse_whitespace(html.unescape(match.group(1))) or None
+
+
+class _HTMLMetadataExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title_parts: list[str] = []
+        self.in_title = False
+        self.meta: dict[str, str] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "title":
+            self.in_title = True
+            return
+        if tag != "meta":
+            return
+        values = {key.casefold(): value for key, value in attrs if value is not None}
+        content = values.get("content")
+        if not content:
+            return
+        key = values.get("property") or values.get("name")
+        if key:
+            self.meta[key.casefold()] = _collapse_whitespace(html.unescape(content))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title":
+            self.in_title = False
+
+    def handle_data(self, data: str) -> None:
+        if self.in_title:
+            self.title_parts.append(data)
+
+    @property
+    def title(self) -> str | None:
+        return _collapse_whitespace(html.unescape(" ".join(self.title_parts))) or None
+
+
+def _html_metadata(raw_html: str) -> _HTMLMetadataExtractor:
+    parser = _HTMLMetadataExtractor()
+    parser.feed(raw_html)
+    return parser
+
+
+def _url_context_from_response(
+    url: str,
+    *,
+    final_url: str,
+    response: FetchedResponse,
+    source_type: Literal["x_post", "webpage", "youtube", "unknown"],
+    fetched_at: str,
+    max_chars: int,
+) -> UrlContext:
+    if response.status_code >= 400:
+        raise ActionError(f"這個連結回傳 HTTP {response.status_code}，我目前讀不到內容。")
+    content_type = response.headers.get("content-type", "")
+    if "text/html" not in content_type and "text/plain" not in content_type:
+        raise ActionError("這個連結不是可讀取的文字或 HTML 內容。")
+
+    raw_text = response.text
+    title: str | None = None
+    description: str | None = None
+    author: str | None = None
+    if "text/html" in content_type:
+        metadata = _html_metadata(raw_text)
+        title = metadata.meta.get("og:title") or metadata.meta.get("twitter:title") or metadata.title
+        description = (
+            metadata.meta.get("og:description")
+            or metadata.meta.get("twitter:description")
+            or metadata.meta.get("description")
+        )
+        author = metadata.meta.get("article:author") or metadata.meta.get("author")
+        text = _collapse_whitespace(html.unescape(_html_to_text(raw_text)))[:max_chars]
+    else:
+        text = _collapse_whitespace(html.unescape(raw_text))[:max_chars]
+
+    if source_type == "x_post" and author is None:
+        x_parts = _x_status_parts(final_url) or _x_status_parts(url)
+        if x_parts is not None:
+            author = f"@{x_parts[0]}"
+
+    if not text and not description and not title:
+        raise ActionError("這個頁面沒有讀到可用內容。")
+
+    status: Literal["success", "partial"] = "success" if text else "partial"
+    return UrlContext(
+        url=url,
+        final_url=final_url,
+        source_type=source_type,
+        fetched_at=fetched_at,
+        extraction_status=status,
+        title=title,
+        author=author,
+        text=text or None,
+        description=description,
+    )
+
+
+def _url_context_from_text(
+    url: str,
+    *,
+    source_type: Literal["x_post", "webpage", "youtube", "unknown"],
+    fetched_at: str,
+    text: str,
+    extraction_status: Literal["success", "partial"],
+    error: str | None = None,
+) -> UrlContext:
+    x_parts = _x_status_parts(url)
+    author = f"@{x_parts[0]}" if x_parts is not None else None
+    return UrlContext(
+        url=url,
+        final_url=url,
+        source_type=source_type,
+        fetched_at=fetched_at,
+        extraction_status=extraction_status,
+        author=author,
+        text=text[:6000],
+        error=error,
+    )
+
+
+def _failed_url_context(
+    url: str,
+    *,
+    source_type: Literal["x_post", "webpage", "youtube", "unknown"],
+    fetched_at: str,
+    primary_error: BaseException,
+    fallback_error: BaseException,
+) -> UrlContext:
+    error = f"built-in fetch: {_readable_error(primary_error)}; kabigon: {_readable_error(fallback_error)}"
+    if source_type != "x_post":
+        return UrlContext(
+            url=url,
+            final_url=url,
+            source_type=source_type,
+            fetched_at=fetched_at,
+            extraction_status="failed",
+            error=error,
+        )
+
+    x_parts = _x_status_parts(url)
+    if x_parts is None:
+        return UrlContext(
+            url=url,
+            final_url=url,
+            source_type=source_type,
+            fetched_at=fetched_at,
+            extraction_status="failed",
+            error=error,
+        )
+    username, status_id = x_parts
+    return UrlContext(
+        url=url,
+        final_url=url,
+        source_type=source_type,
+        fetched_at=fetched_at,
+        extraction_status="partial",
+        author=f"@{username}",
+        text=f"X/Twitter status URL by @{username}, status id {status_id}. Full post text was not extracted.",
+        error=error,
+    )
 
 
 def _collapse_whitespace(text: str) -> str:

@@ -6,6 +6,9 @@ import re
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
+from dataclasses import replace
+from datetime import UTC
+from datetime import datetime
 from typing import NotRequired
 from typing import Protocol
 from typing import TypedDict
@@ -15,6 +18,8 @@ import httpx
 from loguru import logger
 from pydantic_ai.exceptions import AgentRunError
 
+from telegramagent.actions import UrlContext
+from telegramagent.actions import extract_url_context
 from telegramagent.images import AgentReply
 from telegramagent.images import GeneratedImage
 from telegramagent.images import ImageAttachment
@@ -53,6 +58,13 @@ class TelegramDocument(TypedDict, total=False):
     file_size: int
 
 
+class TelegramMessageEntity(TypedDict, total=False):
+    type: str
+    offset: int
+    length: int
+    url: str
+
+
 class TelegramFile(TypedDict, total=False):
     file_id: str
     file_unique_id: str
@@ -65,11 +77,21 @@ TelegramMessage = TypedDict(
     {
         "message_id": int,
         "chat": TelegramChat,
+        "date": int,
         "text": str,
+        "entities": list[TelegramMessageEntity],
         "caption": str,
+        "caption_entities": list[TelegramMessageEntity],
         "photo": list[TelegramPhotoSize],
+        "video": object,
         "document": TelegramDocument,
+        "sticker": object,
+        "voice": object,
+        "audio": object,
+        "animation": object,
+        "video_note": object,
         "from": TelegramUser,
+        "sender_chat": object,
         "reply_to_message": object,
     },
     total=False,
@@ -124,6 +146,10 @@ class LongMessagePublisher(Protocol):
     async def publish(self, text: str) -> str: ...
 
 
+class UrlContextLoader(Protocol):
+    async def __call__(self, url: str) -> UrlContext: ...
+
+
 class TelegramGateway(Protocol):
     async def get_me(self) -> dict[str, object]: ...
 
@@ -155,6 +181,17 @@ class TelegramImageRef:
     media_type: str
     filename: str
     file_size: int | None = None
+
+
+@dataclass(frozen=True)
+class ReplyMessageContext:
+    sender: str
+    message_type: str
+    content: str
+    message_date: str | None = None
+    message_id: int | None = None
+    urls_found: tuple[str, ...] = ()
+    url_contexts: tuple[UrlContext, ...] = ()
 
 
 class TelegramImageError(RuntimeError):
@@ -348,6 +385,7 @@ class TelegramBot:
         image_input_enabled: bool = True,
         image_max_bytes: int = 8_000_000,
         image_generator: ImageGenerator | None = None,
+        url_context_extractor: UrlContextLoader | None = None,
     ) -> None:
         self.telegram = telegram
         self.agent = agent
@@ -365,6 +403,7 @@ class TelegramBot:
         self.image_input_enabled = image_input_enabled
         self.image_max_bytes = image_max_bytes
         self.image_generator = image_generator
+        self.url_context_extractor = url_context_extractor or extract_url_context
         self.bot_reply_streaks: dict[int, int] = {}
         self.histories: dict[int, list[tuple[str, str]]] = {}
 
@@ -455,7 +494,8 @@ class TelegramBot:
             background_task.add_done_callback(_log_background_task_error)
             return
 
-        reply = await self.build_response(chat_id, prompt, user_id=user_id, images=images)
+        reply_context = await self._reply_context_for_llm(message=message, text=text)
+        reply = await self.build_response(chat_id, prompt, user_id=user_id, images=images, reply_context=reply_context)
         await self._send_agent_reply(chat_id, reply, reply_to_message_id=message_id)
 
     async def build_response(
@@ -465,9 +505,16 @@ class TelegramBot:
         *,
         user_id: int | None = None,
         images: Sequence[ImageAttachment] = (),
+        reply_context: ReplyMessageContext | None = None,
     ) -> AgentReply:
         return await self._build_response(
-            chat_id, text, user_id=user_id, allow_management=True, synthetic=False, images=images
+            chat_id,
+            text,
+            user_id=user_id,
+            allow_management=True,
+            synthetic=False,
+            images=images,
+            reply_context=reply_context,
         )
 
     async def build_reply(
@@ -533,14 +580,22 @@ class TelegramBot:
         allow_management: bool,
         synthetic: bool,
         images: Sequence[ImageAttachment],
+        reply_context: ReplyMessageContext | None = None,
     ) -> AgentReply:
         reply = await self._generate_response(
-            chat_id, text, user_id=user_id, allow_management=allow_management, images=images
+            chat_id,
+            text,
+            user_id=user_id,
+            allow_management=allow_management,
+            images=images,
+            reply_context=reply_context,
         )
         if not _is_reset_command(text) and not (not allow_management and _is_management_command(text)):
             self._record_turn(
                 chat_id,
-                user_text=_history_user_text(text, images=images),
+                user_text=_history_user_text(
+                    _history_text_with_reply_context(text, reply_context=reply_context), images=images
+                ),
                 assistant_text=reply.text,
                 synthetic=synthetic,
             )
@@ -554,6 +609,7 @@ class TelegramBot:
         user_id: int | None,
         allow_management: bool,
         images: Sequence[ImageAttachment],
+        reply_context: ReplyMessageContext | None = None,
     ) -> AgentReply:
         if allow_management:
             for tool in self._management_tools():
@@ -562,7 +618,7 @@ class TelegramBot:
                     return AgentReply(text=tool_reply)
 
             command_reply = await self._handle_builtin_command(
-                chat_id=chat_id, text=text, user_id=user_id, images=images
+                chat_id=chat_id, text=text, user_id=user_id, images=images, reply_context=reply_context
             )
             if command_reply is not None:
                 return command_reply if isinstance(command_reply, AgentReply) else AgentReply(text=command_reply)
@@ -573,7 +629,39 @@ class TelegramBot:
             proactive_reply = await self._handle_proactive_action(chat_id=chat_id, text=text)
             if proactive_reply is not None:
                 return AgentReply(text=proactive_reply)
-        return await self._ask_agent_response(chat_id, text.strip(), images=images)
+        return await self._ask_agent_response(
+            chat_id, _llm_prompt_with_reply_context(text.strip(), reply_context=reply_context), images=images
+        )
+
+    async def _reply_context_for_llm(self, *, message: TelegramMessage, text: str) -> ReplyMessageContext | None:
+        if not self._mentions_bot(text):
+            return None
+        context = _reply_message_context(message)
+        if context is None:
+            return None
+        urls_found = _reply_context_urls(message)
+        url_contexts = []
+        for url in urls_found:
+            try:
+                url_contexts.append(await self.url_context_extractor(url))
+            except Exception as exc:  # noqa: BLE001 - URL enrichment must not break normal bot replies
+                logger.warning(
+                    "URL context extraction crashed for url={} with {}",
+                    url,
+                    type(exc).__name__,
+                )
+                url_contexts.append(_failed_url_context_from_exception(url, exc))
+        context = replace(context, urls_found=tuple(urls_found), url_contexts=tuple(url_contexts))
+        logger.debug(
+            "Captured Telegram reply context chat_id={} message_id={} replied_message_id={} "
+            "replied_type={} url_count={}",
+            message.get("chat", {}).get("id"),
+            message.get("message_id"),
+            context.message_id,
+            context.message_type,
+            len(context.urls_found),
+        )
+        return context
 
     def _management_tools(self) -> list[SkillTool]:
         tools = [*self.tools]
@@ -646,6 +734,7 @@ class TelegramBot:
         text: str,
         user_id: int | None,
         images: Sequence[ImageAttachment],
+        reply_context: ReplyMessageContext | None = None,
     ) -> str | AgentReply | None:
         command, _, argument = text.partition(" ")
         command_name = command.split("@", maxsplit=1)[0].lower()
@@ -664,7 +753,11 @@ class TelegramBot:
             case "/ask":
                 if not prompt and not images:
                     return "請在 /ask 後面加上你想問的內容。"
-                return await self._ask_agent_response(chat_id, prompt or _DEFAULT_IMAGE_PROMPT, images=images)
+                return await self._ask_agent_response(
+                    chat_id,
+                    _llm_prompt_with_reply_context(prompt or _DEFAULT_IMAGE_PROMPT, reply_context=reply_context),
+                    images=images,
+                )
             case "/skills" | "/soul" | "/memory":
                 return "這個 bot 尚未啟用這個管理功能。"
             case _ if text.startswith("/"):
@@ -894,7 +987,7 @@ class TelegramBot:
         if not self.bot_username:
             return text
         mention_pattern = re.compile(rf"@{re.escape(self.bot_username)}\b", flags=re.IGNORECASE)
-        return mention_pattern.sub("", text).strip() or text
+        return mention_pattern.sub("", text).strip()
 
 
 _DEFAULT_IMAGE_PROMPT = "請閱讀這張圖片，描述重點並回答使用者可能想知道的內容。"
@@ -983,6 +1076,267 @@ def _history_user_text(text: str, *, images: Sequence[ImageAttachment]) -> str:
     return f"[圖片: {image_names}]"
 
 
+def _history_text_with_reply_context(text: str, *, reply_context: ReplyMessageContext | None) -> str:
+    if reply_context is None:
+        return text
+    return _llm_prompt_with_reply_context(text, reply_context=reply_context)
+
+
+def _llm_prompt_with_reply_context(text: str, *, reply_context: ReplyMessageContext | None) -> str:
+    if reply_context is None:
+        return text
+    lines = [
+        "Replied message context:",
+        f"Sender: {reply_context.sender}",
+        f"Type: {reply_context.message_type}",
+    ]
+    if reply_context.message_date is not None:
+        lines.append(f"Date: {reply_context.message_date}")
+    lines.extend(
+        [
+            f"Content: {reply_context.content}",
+        ]
+    )
+    if reply_context.urls_found:
+        lines.extend(["URLs found:", *[f"- {url}" for url in reply_context.urls_found]])
+    if reply_context.url_contexts:
+        lines.extend(["", "Extracted URL context:"])
+        for url_context in reply_context.url_contexts:
+            lines.extend(_format_url_context(url_context))
+    lines.extend(
+        [
+            "",
+            "Current user message:",
+            text.strip() or "（使用者只提及 bot，未提供額外文字。）",
+            "",
+            "Important instruction for the assistant:",
+            "The user mentioned the bot while replying to the above message. "
+            "Treat the replied message and extracted URL content as the primary object the user wants you to look at. "
+            "If the current message only contains the bot mention and no explicit instruction, respond directly with a "
+            "useful interpretation/commentary/summary of the replied content instead of asking what to do.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _format_url_context(context: UrlContext) -> list[str]:
+    lines = [
+        f"URL: {context.url}",
+        f"Final URL: {context.final_url}",
+        f"Source type: {context.source_type}",
+        f"Extraction status: {context.extraction_status}",
+        f"Fetched at: {context.fetched_at}",
+    ]
+    if context.title:
+        lines.append(f"Title: {context.title}")
+    if context.author:
+        lines.append(f"Author: {context.author}")
+    if context.description:
+        lines.append(f"Description: {context.description}")
+    if context.error:
+        lines.append(f"Error: {context.error}")
+    content = context.text or context.description
+    if content:
+        lines.extend(["Content:", _truncate_context_text(content)])
+    else:
+        lines.extend(["Content:", "（沒有擷取到可讀內容。）"])
+    lines.append("")
+    return lines
+
+
+def _truncate_context_text(text: str, limit: int = 4000) -> str:
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}…"
+
+
+def _reply_message_context(message: TelegramMessage) -> ReplyMessageContext | None:
+    reply_to_message = message.get("reply_to_message")
+    if not isinstance(reply_to_message, Mapping):
+        return None
+    reply_mapping = cast(Mapping[str, object], reply_to_message)
+    message_type = _telegram_message_content_type(reply_mapping)
+    return ReplyMessageContext(
+        sender=_telegram_message_sender(reply_mapping),
+        message_type=message_type,
+        content=_telegram_message_content(reply_mapping, message_type=message_type),
+        message_date=_telegram_message_date(reply_mapping.get("date")),
+        message_id=_optional_int(reply_mapping.get("message_id")),
+    )
+
+
+def _reply_context_urls(message: TelegramMessage) -> tuple[str, ...]:
+    reply_to_message = message.get("reply_to_message")
+    urls: list[str] = []
+    if isinstance(reply_to_message, Mapping):
+        urls.extend(_urls_from_telegram_message(cast(Mapping[str, object], reply_to_message)))
+    urls.extend(_urls_from_telegram_message(cast(Mapping[str, object], message)))
+    return tuple(_dedupe_urls(urls)[:3])
+
+
+def _urls_from_telegram_message(message: Mapping[str, object]) -> list[str]:
+    urls: list[str] = []
+    text = message.get("text")
+    if isinstance(text, str) and text:
+        urls.extend(_urls_from_text_and_entities(text, message.get("entities")))
+    caption = message.get("caption")
+    if isinstance(caption, str) and caption:
+        urls.extend(_urls_from_text_and_entities(caption, message.get("caption_entities")))
+    return urls
+
+
+def _urls_from_text_and_entities(text: str, entities: object) -> list[str]:
+    urls = _urls_from_text(text)
+    if isinstance(entities, Sequence) and not isinstance(entities, str | bytes):
+        for entity in entities:
+            if not isinstance(entity, Mapping):
+                continue
+            entity_mapping = cast(Mapping[str, object], entity)
+            entity_type = entity_mapping.get("type")
+            if entity_type == "text_link":
+                url = entity_mapping.get("url")
+                if isinstance(url, str):
+                    urls.append(_trim_url(url))
+            elif entity_type == "url":
+                offset = entity_mapping.get("offset")
+                length = entity_mapping.get("length")
+                if isinstance(offset, int) and isinstance(length, int):
+                    urls.append(_trim_url(_telegram_entity_text(text, offset=offset, length=length)))
+    return [url for url in urls if url]
+
+
+def _urls_from_text(text: str) -> list[str]:
+    return [_trim_url(match.group(0)) for match in _PLAIN_URL_RE.finditer(text)]
+
+
+def _trim_url(url: str) -> str:
+    return url.strip().rstrip(".,，。!！?)）]}>")
+
+
+def _telegram_entity_text(text: str, *, offset: int, length: int) -> str:
+    encoded = text.encode("utf-16-le")
+    start = max(offset, 0) * 2
+    end = max(offset + length, offset) * 2
+    return encoded[start:end].decode("utf-16-le", errors="ignore")
+
+
+def _dedupe_urls(urls: Sequence[str]) -> list[str]:
+    seen = set()
+    deduped = []
+    for url in urls:
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        deduped.append(url)
+    return deduped
+
+
+def _failed_url_context_from_exception(url: str, exc: BaseException) -> UrlContext:
+    return UrlContext(
+        url=url,
+        final_url=url,
+        source_type="unknown",
+        fetched_at=datetime.now(UTC).isoformat(),
+        extraction_status="failed",
+        error=f"{type(exc).__name__}: {_safe_error_summary(str(exc))}",
+    )
+
+
+def _safe_error_summary(text: str) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(
+        r"(?i)\b(token|api[_-]?key|authorization|cookie|set-cookie|password|secret)=([^\s;]+)",
+        lambda match: f"{match.group(1)}=[redacted]",
+        text,
+    )
+    text = re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]", text)
+    if not text:
+        return "unknown error"
+    if len(text) > 180:
+        return f"{text[:180]}…"
+    return text
+
+
+def _telegram_message_sender(message: Mapping[str, object]) -> str:
+    sender = message.get("from")
+    if isinstance(sender, Mapping):
+        return _telegram_actor_name(cast(Mapping[str, object], sender), fallback_prefix="user_id")
+
+    sender_chat = message.get("sender_chat")
+    if isinstance(sender_chat, Mapping):
+        return _telegram_actor_name(cast(Mapping[str, object], sender_chat), fallback_prefix="chat_id")
+
+    return "unknown"
+
+
+def _telegram_actor_name(actor: Mapping[str, object], *, fallback_prefix: str) -> str:
+    username = actor.get("username")
+    if isinstance(username, str) and username:
+        return f"@{username}"
+
+    first_name = actor.get("first_name")
+    last_name = actor.get("last_name")
+    name_parts = [part for part in (first_name, last_name) if isinstance(part, str) and part]
+    if name_parts:
+        return " ".join(name_parts)
+
+    title = actor.get("title")
+    if isinstance(title, str) and title:
+        return title
+
+    actor_id = actor.get("id")
+    if isinstance(actor_id, int):
+        return f"{fallback_prefix}={actor_id}"
+
+    return "unknown"
+
+
+def _telegram_message_content_type(message: Mapping[str, object]) -> str:
+    text = message.get("text")
+    if isinstance(text, str) and text:
+        return "text"
+    for content_type in (
+        "photo",
+        "video",
+        "document",
+        "sticker",
+        "voice",
+        "audio",
+        "animation",
+        "video_note",
+    ):
+        if message.get(content_type) is not None:
+            return content_type
+    if isinstance(message.get("caption"), str):
+        return "caption"
+    return "unknown"
+
+
+def _telegram_message_content(message: Mapping[str, object], *, message_type: str) -> str:
+    text = message.get("text")
+    if isinstance(text, str) and text:
+        return text
+
+    caption = message.get("caption")
+    if isinstance(caption, str) and caption:
+        if message_type == "caption":
+            return caption
+        return f"使用者回覆的是一則 {message_type} 訊息，caption: {caption}"
+
+    if message_type == "unknown":
+        return "無法取得被回覆訊息內容"
+    return f"使用者回覆的是一則 {message_type} 訊息，無文字內容"
+
+
+def _telegram_message_date(value: object) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    try:
+        return datetime.fromtimestamp(value, tz=UTC).isoformat()
+    except OSError, OverflowError, ValueError:
+        return None
+
+
 def _passive_group_history_text(message: TelegramMessage, *, text: str, image_ref: TelegramImageRef | None) -> str:
     body_parts: list[str] = []
     if text.strip():
@@ -1048,7 +1402,10 @@ def _log_background_task_error(task: asyncio.Task[None]) -> None:
 
 
 def _is_management_command(text: str) -> bool:
-    command = text.strip().split(maxsplit=1)[0].split("@", maxsplit=1)[0].lower()
+    parts = text.strip().split(maxsplit=1)
+    if not parts:
+        return False
+    command = parts[0].split("@", maxsplit=1)[0].lower()
     return command in {
         "/skills",
         "/soul",
@@ -1065,7 +1422,10 @@ def _is_management_command(text: str) -> bool:
 
 
 def _is_reset_command(text: str) -> bool:
-    return text.strip().split(maxsplit=1)[0].split("@", maxsplit=1)[0].lower() == "/reset"
+    parts = text.strip().split(maxsplit=1)
+    if not parts:
+        return False
+    return parts[0].split("@", maxsplit=1)[0].lower() == "/reset"
 
 
 def _is_likely_long_running_action(text: str) -> bool:
@@ -1083,6 +1443,7 @@ _FENCED_CODE_RE = re.compile(r"```(?:([^\n`]*)\n)?([\s\S]*?)```")
 _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+)$")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*", flags=re.DOTALL)
+_PLAIN_URL_RE = re.compile(r"https?://[^\s<>()]+", flags=re.IGNORECASE)
 
 
 def _telegram_html_chunks(text: str, *, limit: int = 4096) -> list[str]:
