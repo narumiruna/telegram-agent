@@ -37,3 +37,13 @@ def test_event_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_events_max_queued_per_chat == 2
     assert settings.bot_events_max_text_chars == 123
     assert settings.bot_events_archive_processed is False
+
+
+def test_proactive_runtime_settings_parse_env(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_SESSION_LOG_DIR", ".state/sessions")
+    monkeypatch.setenv("BOT_TASKS_MAX_CONCURRENT_PER_CHAT", "3")
+
+    settings = Settings()
+
+    assert settings.bot_session_log_dir == Path(".state/sessions")
+    assert settings.bot_tasks_max_concurrent_per_chat == 3

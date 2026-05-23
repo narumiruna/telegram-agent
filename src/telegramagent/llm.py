@@ -93,11 +93,13 @@ class ChatAgent:
         soul: ContextFile | None = None,
         memory: ContextFile | None = None,
         agent_factory: AgentFactory | None = None,
+        capability_summary: str = "",
     ) -> None:
         self.client = OpenAIChatClient(api_key=api_key, model=model, base_url=base_url, http_client=http_client)
         self.skills = skills or []
         self.soul = soul
         self.memory = memory
+        self.capability_summary = capability_summary
         self.agent_factory = agent_factory
         self.agent = self._create_agent(api_key=api_key, model=model, base_url=base_url, agent_factory=agent_factory)
 
@@ -142,7 +144,9 @@ class ChatAgent:
         base_url: str,
         agent_factory: AgentFactory | None,
     ) -> RunnableAgent:
-        instructions = _chat_instructions(skills=self.skills, soul=self.soul, memory=self.memory)
+        instructions = _chat_instructions(
+            skills=self.skills, soul=self.soul, memory=self.memory, capability_summary=self.capability_summary
+        )
         if agent_factory is not None:
             return agent_factory(instructions)
         provider = OpenAIProvider(base_url=base_url, api_key=api_key)
@@ -150,7 +154,9 @@ class ChatAgent:
         return PydanticAgent(pydantic_model, instructions=instructions)
 
 
-def _chat_instructions(*, skills: list[AgentSkill], soul: ContextFile | None, memory: ContextFile | None) -> str:
+def _chat_instructions(
+    *, skills: list[AgentSkill], soul: ContextFile | None, memory: ContextFile | None, capability_summary: str = ""
+) -> str:
     sections = [
         "你是一個 Telegram 機器人助理。請用繁體中文簡潔、有幫助地回答。"
         "對話歷史會以真正的 prior messages 提供；回覆前必須先檢查近期對話，"
@@ -166,6 +172,8 @@ def _chat_instructions(*, skills: list[AgentSkill], soul: ContextFile | None, me
     memory_instructions = format_context_for_instructions(memory)
     if memory_instructions:
         sections.append(memory_instructions)
+    if capability_summary:
+        sections.append(f"Runtime capabilities:\n{capability_summary}")
     skill_instructions = format_skills_for_instructions(skills)
     if skill_instructions:
         sections.append(skill_instructions)

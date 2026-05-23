@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     bot_events_max_queued_per_chat: int = Field(default=5, ge=1, alias="BOT_EVENTS_MAX_QUEUED_PER_CHAT")
     bot_events_max_text_chars: int = Field(default=4000, ge=1, alias="BOT_EVENTS_MAX_TEXT_CHARS")
     bot_events_archive_processed: bool = Field(default=True, alias="BOT_EVENTS_ARCHIVE_PROCESSED")
+    bot_session_log_dir: Path = Field(default=Path(".telegramagent/sessions"), alias="BOT_SESSION_LOG_DIR")
+    bot_tasks_max_concurrent_per_chat: int = Field(default=1, ge=1, alias="BOT_TASKS_MAX_CONCURRENT_PER_CHAT")
 
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")

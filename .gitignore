@@ -136,6 +136,9 @@ dmypy.json
 
 # Runtime bot state
 .events/
+.telegramagent/
 
 # Codex CLI
 .codex
+
+third_party/

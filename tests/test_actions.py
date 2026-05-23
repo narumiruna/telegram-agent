@@ -7,8 +7,12 @@ import httpx
 import pytest
 
 from telegramagent.actions import ActionContent
+from telegramagent.actions import ActionRouter
 from telegramagent.actions import ActionSettings
+from telegramagent.actions import PendingActionStore
 from telegramagent.actions import ProactiveActionTool
+from telegramagent.capabilities import Capability
+from telegramagent.capabilities import CapabilityRegistry
 
 
 class FakeAgent:
@@ -31,6 +35,23 @@ class SlowTranscriptFetcher:
         raise AssertionError("unreachable")
 
 
+class FailingTranscriptFetcher:
+    async def fetch(self, video_id: str, *, languages: Sequence[str]) -> ActionContent:
+        raise RuntimeError("no transcript")
+
+
+class FakeExternalLoader:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[str] = []
+
+    async def fetch(self, url: str) -> ActionContent:
+        self.calls.append(url)
+        if self.fail:
+            raise OSError("external loader failed")
+        return ActionContent(title="external", source_url=url, body="外部 loader 內容", content_type="external_loader")
+
+
 class FakeTranscriptFetcher:
     def __init__(self) -> None:
         self.calls: list[tuple[str, Sequence[str]]] = []
@@ -43,6 +64,22 @@ class FakeTranscriptFetcher:
             body="這是一段影片字幕。它會被拿來整理摘要。",
             content_type="youtube_transcript",
         )
+
+
+def test_action_router_returns_structured_decisions_from_history_url() -> None:
+    router = ActionRouter()
+    pending = PendingActionStore()
+
+    decision = router.route(
+        "有字幕",
+        chat_id=123,
+        history=[("user", "https://www.youtube.com/watch?v=h_7fdZjUKE8"), ("assistant", "抓不到字幕")],
+        pending=pending,
+    )
+
+    assert decision.kind == "execute"
+    assert decision.action == "youtube_summary"
+    assert decision.url == "https://www.youtube.com/watch?v=h_7fdZjUKE8"
 
 
 @pytest.mark.asyncio
@@ -90,6 +127,38 @@ async def test_followup_subtitle_and_kabigon_words_reuse_pending_youtube_url() -
         ("h_7fdZjUKE8", ("zh-Hant", "zh-TW", "zh", "ja", "en")),
         ("h_7fdZjUKE8", ("zh-Hant", "zh-TW", "zh", "ja", "en")),
     ]
+
+
+@pytest.mark.asyncio
+async def test_youtube_fallback_uses_enabled_external_loader() -> None:
+    agent = FakeAgent()
+    external_loader = FakeExternalLoader()
+    tool = ProactiveActionTool(
+        capabilities=CapabilityRegistry([Capability("external_loader.kabigon", True, "test fallback")]),
+        transcript_fetcher=FailingTranscriptFetcher(),
+        external_loader=external_loader,
+    )
+
+    reply = await tool.handle("https://youtu.be/iG-hzh9roNw", chat_id=123, agent=agent, history=[])
+
+    assert reply == "整理完成"
+    assert external_loader.calls == ["https://youtu.be/iG-hzh9roNw"]
+    assert "外部 loader 內容" in agent.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_youtube_fallback_reports_unavailable_external_loader_without_claiming_it_ran() -> None:
+    agent = FakeAgent()
+    tool = ProactiveActionTool(
+        capabilities=CapabilityRegistry([Capability("external_loader.kabigon", False, "test fallback", "disabled")]),
+        transcript_fetcher=FailingTranscriptFetcher(),
+    )
+
+    reply = await tool.handle("https://youtu.be/iG-hzh9roNw", chat_id=123, agent=agent, history=[])
+
+    assert reply is not None
+    assert "不是目前已啟用的 runtime capability" in reply
+    assert agent.prompts == []
 
 
 @pytest.mark.asyncio

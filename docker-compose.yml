@@ -17,5 +17,6 @@ services:
     volumes:
       - ./.agents:/app/.agents
       - ./.events:/app/.events
+      - ./.telegramagent:/app/.telegramagent
       - ./SOUL.md:/app/SOUL.md:ro
       - ./MEMORY.md:/app/MEMORY.md:ro

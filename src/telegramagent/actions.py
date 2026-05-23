@@ -11,6 +11,7 @@ from collections.abc import Callable
 from collections.abc import Sequence
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from typing import Literal
 from typing import Protocol
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
@@ -18,6 +19,8 @@ from urllib.parse import urlunparse
 
 import httpx
 from loguru import logger
+
+from telegramagent.capabilities import CapabilityRegistry
 
 
 @dataclass(frozen=True)
@@ -46,6 +49,14 @@ class ActionContent:
 
 
 @dataclass(frozen=True)
+class ActionDecision:
+    kind: Literal["answer", "execute", "ask", "confirm", "queue", "fallback_failed"]
+    action: str = ""
+    url: str = ""
+    message: str = ""
+
+
+@dataclass(frozen=True)
 class FetchedResponse:
     status_code: int
     headers: dict[str, str]
@@ -65,6 +76,10 @@ class Agent(Protocol):
 
 class TranscriptFetcher(Protocol):
     async def fetch(self, video_id: str, *, languages: Sequence[str]) -> ActionContent: ...
+
+
+class ExternalLoader(Protocol):
+    async def fetch(self, url: str) -> ActionContent: ...
 
 
 class PendingActionStore:
@@ -97,6 +112,55 @@ class DefaultTranscriptFetcher:
         return await asyncio.to_thread(_fetch_youtube_transcript, video_id, tuple(languages))
 
 
+class ActionRouter:
+    def __init__(self, *, capabilities: CapabilityRegistry | None = None) -> None:
+        self.capabilities = capabilities or CapabilityRegistry()
+
+    def route(
+        self,
+        text: str,
+        *,
+        chat_id: int,
+        history: Sequence[tuple[str, str]],
+        pending: PendingActionStore,
+    ) -> ActionDecision:
+        url = _first_url(text)
+        if url is not None:
+            confirmation = _confirmation_required_reason(text)
+            if confirmation is not None:
+                return ActionDecision(kind="confirm", message=confirmation)
+            if _is_youtube_url(url):
+                if _youtube_video_id(url) is None:
+                    pending.clear(chat_id)
+                    return ActionDecision(
+                        kind="ask",
+                        message=(
+                            "這個 YouTube 連結格式我讀不到，"
+                            "請貼一般的 youtube.com/watch、youtube.com/shorts 或 youtu.be 連結。"
+                        ),
+                    )
+                action = "youtube_summary"
+            else:
+                action = "url_summary"
+            pending.remember(chat_id, kind=action, url=url)
+            return ActionDecision(kind="execute", action=action, url=url)
+
+        if _is_followup_trigger(text):
+            action = pending.get(chat_id)
+            if action is None:
+                inferred_url = _latest_url_from_history(history)
+                if inferred_url is None:
+                    return ActionDecision(kind="answer")
+                action_kind = "youtube_summary" if _is_youtube_url(inferred_url) else "url_summary"
+                pending.remember(chat_id, kind=action_kind, url=inferred_url)
+                action = pending.get(chat_id)
+            if action is None:
+                return ActionDecision(kind="answer")
+            return ActionDecision(kind="execute", action=action.kind, url=action.url)
+
+        return ActionDecision(kind="answer")
+
+
 class ProactiveActionTool:
     def __init__(
         self,
@@ -105,11 +169,17 @@ class ProactiveActionTool:
         pending: PendingActionStore | None = None,
         transcript_fetcher: TranscriptFetcher | None = None,
         http_client_factory: Callable[[], httpx.AsyncClient] | None = None,
+        capabilities: CapabilityRegistry | None = None,
+        external_loader: ExternalLoader | None = None,
+        router: ActionRouter | None = None,
     ) -> None:
         self.settings = settings or ActionSettings()
         self.pending = pending or PendingActionStore(ttl_seconds=self.settings.pending_ttl_seconds)
         self.transcript_fetcher = transcript_fetcher or DefaultTranscriptFetcher()
         self.http_client_factory = http_client_factory
+        self.capabilities = capabilities or CapabilityRegistry()
+        self.external_loader = external_loader
+        self.router = router or ActionRouter(capabilities=self.capabilities)
 
     async def handle(
         self,
@@ -122,30 +192,13 @@ class ProactiveActionTool:
         if not self.settings.enabled:
             return None
 
-        url = _first_url(text)
-        if url is not None:
-            confirmation = _confirmation_required_reason(text)
-            if confirmation is not None:
-                return confirmation
-            if _is_youtube_url(url):
-                if _youtube_video_id(url) is None:
-                    self.pending.clear(chat_id)
-                    return (
-                        "這個 YouTube 連結格式我讀不到，"
-                        "請貼一般的 youtube.com/watch、youtube.com/shorts 或 youtu.be 連結。"
-                    )
-                kind = "youtube_summary"
-            else:
-                kind = "url_summary"
-            self.pending.remember(chat_id, kind=kind, url=url)
-            return await self._execute(kind=kind, url=url, agent=agent, history=history)
-
-        if _is_followup_trigger(text):
-            pending = self.pending.get(chat_id)
-            if pending is None:
-                return None
-            return await self._execute(kind=pending.kind, url=pending.url, agent=agent, history=history)
-
+        decision = self.router.route(text, chat_id=chat_id, history=history, pending=self.pending)
+        if decision.kind == "answer":
+            return None
+        if decision.kind in {"ask", "confirm", "fallback_failed"}:
+            return decision.message
+        if decision.kind in {"execute", "queue"}:
+            return await self._execute(kind=decision.action, url=decision.url, agent=agent, history=history)
         return None
 
     async def _execute(
@@ -158,7 +211,7 @@ class ProactiveActionTool:
     ) -> str:
         try:
             if kind == "youtube_summary":
-                content = await self._fetch_youtube(url)
+                content = await self._fetch_youtube_with_fallback(url)
             else:
                 content = await self._fetch_url(url)
         except ActionError as exc:
@@ -174,14 +227,37 @@ class ProactiveActionTool:
             logger.exception("LLM request failed after proactive action")
             return "AI 服務暫時無法使用, 請稍後再試。"
 
+    async def _fetch_youtube_with_fallback(self, url: str) -> ActionContent:
+        try:
+            return await self._fetch_youtube(url)
+        except ActionError as exc:
+            if self.capabilities.is_available("external_loader.kabigon") and self.external_loader is not None:
+                try:
+                    return await asyncio.wait_for(
+                        self.external_loader.fetch(url), timeout=self.settings.url_timeout_seconds
+                    )
+                except (ActionError, OSError, TimeoutError) as fallback_exc:
+                    raise ActionError(
+                        f"{exc}\n我也嘗試了已啟用的外部 loader fallback，但失敗了: {type(fallback_exc).__name__}。"
+                    ) from fallback_exc
+            raise ActionError(
+                f"{exc}\n我已保留前面的 YouTube 連結，但外部 loader（例如 kabigon）"
+                "不是目前已啟用的 runtime capability。如果你有字幕文字，可以直接貼上，我會接著整理。"
+            ) from exc
+
     async def _fetch_youtube(self, url: str) -> ActionContent:
         video_id = _youtube_video_id(url)
         if video_id is None:
             raise ActionError("這個 YouTube 連結格式我讀不到，請貼一般的 youtube.com/watch 或 youtu.be 連結。")
-        content = await asyncio.wait_for(
-            self.transcript_fetcher.fetch(video_id, languages=self.settings.youtube_languages),
-            timeout=self.settings.url_timeout_seconds,
-        )
+        try:
+            content = await asyncio.wait_for(
+                self.transcript_fetcher.fetch(video_id, languages=self.settings.youtube_languages),
+                timeout=self.settings.url_timeout_seconds,
+            )
+        except Exception as exc:
+            raise ActionError(
+                "我有找到 YouTube 影片，但目前抓不到可用字幕；可能是字幕關閉、影片受限，或 YouTube 擋住伺服器 IP。"
+            ) from exc
         if len(content.body) > self.settings.max_extracted_chars:
             return ActionContent(
                 title=content.title,
@@ -298,6 +374,14 @@ def _confirmation_required_reason(text: str) -> str | None:
 
 def _is_youtube_url(url: str) -> bool:
     return (urlparse(url).hostname or "").casefold() in _YOUTUBE_HOSTS
+
+
+def _latest_url_from_history(history: Sequence[tuple[str, str]]) -> str | None:
+    for _role, content in reversed(history):
+        url = _first_url(content)
+        if url is not None:
+            return url
+    return None
 
 
 def _youtube_video_id(url: str) -> str | None:

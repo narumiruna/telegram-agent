@@ -44,6 +44,10 @@ BOT_EVENTS_MAX_QUEUED_PER_CHAT=5
 BOT_EVENTS_MAX_TEXT_CHARS=4000
 BOT_EVENTS_ARCHIVE_PROCESSED=true
 
+# Durable proactive runtime state and task queue limits.
+BOT_SESSION_LOG_DIR=.telegramagent/sessions
+BOT_TASKS_MAX_CONCURRENT_PER_CHAT=1
+
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_API_KEY=your API key
 OPENAI_MODEL=gpt-5.4-mini
@@ -85,6 +89,7 @@ docker compose down
 - `/soul show|reload|path`: inspect or reload `SOUL.md`
 - `/memory show|reload|path`: inspect or reload `MEMORY.md`
 - `/events list|show <name>|cancel <name>|reload`: manage pending file-backed events
+- `/tasks list|show <id>|cancel <id>`: inspect or cancel proactive runtime tasks
 
 You can also send plain text directly to the bot.
 
@@ -143,6 +148,20 @@ Safety limits:
 - Successful events are moved to `processed/` when `BOT_EVENTS_ARCHIVE_PROCESSED=true`; invalid or failed events are moved to `failed/`.
 
 Docker Compose mounts `./.events:/app/.events` by default, so host scripts can write to `.events/inbox/`.
+
+## Proactive Runtime State
+
+The bot stores durable per-chat JSONL session logs under `BOT_SESSION_LOG_DIR` (default `.telegramagent/sessions`). These logs let it reconstruct recent context after a restart, including previously shared URLs, synthetic event messages, and assistant replies. Runtime state directories are git-ignored.
+
+The proactive runtime has a small task queue:
+
+- `BOT_TASKS_MAX_CONCURRENT_PER_CHAT` limits concurrent proactive work per chat.
+- Long-running proactive work can send `處理中…` and then edit that bot-owned status message into the final result.
+- `/tasks list`, `/tasks show <id>`, and `/tasks cancel <id>` expose task state.
+
+Runtime capabilities are explicit. Built-in web fetch, YouTube transcript extraction, and file-backed events are available by default. Optional external loaders such as kabigon are treated as unavailable unless explicitly wired as runtime capabilities; Agent Skills alone do not make a tool executable.
+
+Docker Compose mounts `./.telegramagent:/app/.telegramagent` by default so session logs survive container restarts.
 
 ## Group Reply Rules
 

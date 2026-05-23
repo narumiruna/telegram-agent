@@ -11,4 +11,6 @@ build
 *.egg-info
 htmlcov
 .events
+.telegramagent
+third_party
 .codex

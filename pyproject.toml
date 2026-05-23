@@ -40,9 +40,11 @@ pre_commit_hooks = ["uv lock", "git add uv.lock"]
 
 [tool.pytest]
 filterwarnings = ["ignore::DeprecationWarning"]
+testpaths      = ["tests"]
 
 [tool.ruff]
-line-length = 120
+line-length    = 120
+extend-exclude = ["third_party"]
 
 [tool.ruff.lint]
 select = [

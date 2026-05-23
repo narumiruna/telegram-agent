@@ -10,6 +10,7 @@ from loguru import logger
 from telegramagent.actions import ActionSettings
 from telegramagent.actions import PendingActionStore
 from telegramagent.actions import ProactiveActionTool
+from telegramagent.capabilities import CapabilityRegistry
 from telegramagent.context_files import ContextFile
 from telegramagent.context_files import ContextManagementTool
 from telegramagent.context_files import load_context_file
@@ -20,10 +21,13 @@ from telegramagent.events import ImmediateEvent
 from telegramagent.events import event_prompt
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
+from telegramagent.session import SessionLog
 from telegramagent.settings import Settings
 from telegramagent.skills import SkillInstaller
 from telegramagent.skills import SkillManagementTool
 from telegramagent.skills import load_agent_skills
+from telegramagent.tasks import TaskManagementTool
+from telegramagent.tasks import TaskQueue
 from telegramagent.telegram import TelegramBot
 from telegramagent.telegram import TelegramClient
 
@@ -67,6 +71,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
     if skills:
         logger.info("Loaded {} Agent Skill(s) from {}", len(skills), settings.bot_skills_dir)
 
+    capabilities = CapabilityRegistry()
     agent = ChatAgent(
         api_key=settings.openai_api_key,
         model=settings.openai_model,
@@ -74,6 +79,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         skills=skills,
         soul=soul,
         memory=memory,
+        capability_summary=capabilities.summary(),
     )
     topic_end_judge = TopicEndAgent(
         api_key=settings.openai_api_key,
@@ -90,6 +96,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
             allowed_schemes=frozenset(settings.bot_proactive_allowed_schemes),
         ),
         pending=PendingActionStore(ttl_seconds=settings.bot_proactive_pending_ttl_seconds),
+        capabilities=capabilities,
     )
 
     def installed_skill_names() -> set[str]:
@@ -143,6 +150,8 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         logger.info("Reloaded {} Agent Skill(s) from {}", len(updated_skills), settings.bot_skills_dir)
         return len(updated_skills)
 
+    session_log = SessionLog(settings.bot_session_log_dir)
+    task_queue = TaskQueue(max_concurrent_per_chat=settings.bot_tasks_max_concurrent_per_chat)
     telegram = TelegramClient(settings.bot_token)
     event_watcher = EventWatcher(
         settings=EventSettings(
@@ -178,6 +187,8 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
             installed_skill_names=installed_skill_names,
         ),
         proactive_tool=proactive_tool,
+        session_log=session_log,
+        task_queue=task_queue,
         tools=[
             ContextManagementTool(
                 command_name="soul",
@@ -197,6 +208,11 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
             ),
             EventManagementTool(
                 watcher=event_watcher,
+                admins=settings.bot_skill_admins,
+                fallback_admins=settings.bot_whitelist,
+            ),
+            TaskManagementTool(
+                queue=task_queue,
                 admins=settings.bot_skill_admins,
                 fallback_admins=settings.bot_whitelist,
             ),

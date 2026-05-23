@@ -8,16 +8,20 @@ from typing import Any
 import httpx
 import pytest
 
+from telegramagent.actions import ActionContent
+from telegramagent.actions import ProactiveActionTool
 from telegramagent.context_files import ContextManagementTool
 from telegramagent.context_files import load_context_file
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
+from telegramagent.session import SessionLog
 from telegramagent.skills import AgentSkill
 from telegramagent.skills import SkillInstaller
 from telegramagent.skills import SkillInstallResult
 from telegramagent.skills import SkillManagementTool
 from telegramagent.skills import format_skills_for_instructions
 from telegramagent.skills import load_agent_skills
+from telegramagent.tasks import TaskQueue
 from telegramagent.telegram import TelegramBot
 from telegramagent.telegram import TelegramClient
 from telegramagent.telegram import TelegramUpdate
@@ -108,6 +112,20 @@ class FakeProactiveTool:
     ) -> str | None:
         self.calls.append((text, chat_id, [*history]))
         return self.replies.pop(0)
+
+
+class FakeTranscriptFetcher:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def fetch(self, video_id: str, *, languages: Sequence[str]) -> ActionContent:
+        self.calls.append(video_id)
+        return ActionContent(
+            title=f"video {video_id}",
+            source_url=f"https://youtu.be/{video_id}",
+            body="字幕內容",
+            content_type="youtube_transcript",
+        )
 
 
 class FakeTopicEndJudge:
@@ -233,6 +251,79 @@ async def test_synthetic_message_allows_proactive_and_generic_reply() -> None:
     assert proactive.calls == [("[EVENT:job] https://example.com", 123, [])]
     assert telegram.sent == [(123, "事件整理完成", None)]
     assert bot.histories[123] == [("user", "[EVENT:job] https://example.com"), ("assistant", "事件整理完成")]
+
+
+@pytest.mark.asyncio
+async def test_session_log_restores_history_after_restart(tmp_path: Path) -> None:
+    session_log = SessionLog(tmp_path / "sessions")
+    first_bot = TelegramBot(telegram=FakeTelegram(), agent=FakeAgent(), session_log=session_log)
+
+    assert await first_bot.build_reply(123, "https://youtu.be/video") == "AI: https://youtu.be/video (0)"
+
+    second_proactive = FakeProactiveTool(["沿用前面的網址完成"])
+    second_bot = TelegramBot(
+        telegram=FakeTelegram(), agent=FakeAgent(), proactive_tool=second_proactive, session_log=session_log
+    )
+
+    assert await second_bot.build_reply(123, "有字幕") == "沿用前面的網址完成"
+    assert second_proactive.calls == [
+        ("有字幕", 123, [("user", "https://youtu.be/video"), ("assistant", "AI: https://youtu.be/video (0)")])
+    ]
+
+
+@pytest.mark.asyncio
+async def test_session_log_restores_url_for_kabigon_followup_after_restart(tmp_path: Path) -> None:
+    session_log = SessionLog(tmp_path / "sessions")
+    first_fetcher = FakeTranscriptFetcher()
+    first_bot = TelegramBot(
+        telegram=FakeTelegram(),
+        agent=FakeAgent(),
+        proactive_tool=ProactiveActionTool(transcript_fetcher=first_fetcher),
+        session_log=session_log,
+    )
+
+    first_reply = await first_bot.build_reply(123, "https://www.youtube.com/watch?v=h_7fdZjUKE8")
+
+    assert "字幕內容" in first_reply
+
+    second_fetcher = FakeTranscriptFetcher()
+    second_bot = TelegramBot(
+        telegram=FakeTelegram(),
+        agent=FakeAgent(),
+        proactive_tool=ProactiveActionTool(transcript_fetcher=second_fetcher),
+        session_log=session_log,
+    )
+
+    await second_bot.build_reply(123, "你用 kabigon 抓抓看阿")
+
+    assert first_fetcher.calls == ["h_7fdZjUKE8"]
+    assert second_fetcher.calls == ["h_7fdZjUKE8"]
+
+
+@pytest.mark.asyncio
+async def test_handle_update_routes_long_action_through_background_task_queue() -> None:
+    telegram = FakeTelegram()
+    proactive = FakeProactiveTool(["背景整理完成"])
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), proactive_tool=proactive, task_queue=TaskQueue())
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 456},
+                "text": "https://example.com",
+            },
+        }
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert telegram.sent == [(123, "處理中…", 10)]
+    assert telegram.edited == [(123, 100, "背景整理完成")]
+    assert bot.task_queue is not None
+    assert [task.status for task in bot.task_queue.list_records(chat_id=123)] == ["completed"]
 
 
 @pytest.mark.asyncio
@@ -645,6 +736,24 @@ async def test_chat_agent_uses_pydantic_agent_with_history() -> None:
     assert "Telegram 機器人助理" in captured["instructions"]
     assert runnable.prompts == ["問題"]
     assert runnable.message_history_lengths == [2]
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_injects_runtime_capabilities_into_pydantic_instructions() -> None:
+    captured: dict[str, str] = {}
+
+    def factory(instructions: str) -> FakeRunnableAgent:
+        captured["instructions"] = instructions
+        return FakeRunnableAgent()
+
+    agent = ChatAgent(
+        api_key="key", model="model", capability_summary="- external_loader.kabigon: unavailable", agent_factory=factory
+    )
+    await agent.reply("問題")
+
+    assert "Runtime capabilities" in captured["instructions"]
+    assert "external_loader.kabigon: unavailable" in captured["instructions"]
+    assert "不要聲稱會使用 kabigon" in captured["instructions"]
 
 
 @pytest.mark.asyncio

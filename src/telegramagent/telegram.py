@@ -12,6 +12,9 @@ from typing import cast
 import httpx
 from loguru import logger
 
+from telegramagent.session import SessionLog
+from telegramagent.tasks import TaskQueue
+
 
 class TelegramChat(TypedDict):
     id: int
@@ -168,6 +171,8 @@ class TelegramBot:
         skill_tool: SkillTool | None = None,
         tools: Sequence[SkillTool] = (),
         proactive_tool: ProactiveTool | None = None,
+        session_log: SessionLog | None = None,
+        task_queue: TaskQueue | None = None,
     ) -> None:
         self.telegram = telegram
         self.agent = agent
@@ -179,6 +184,8 @@ class TelegramBot:
         self.skill_tool = skill_tool
         self.tools = list(tools)
         self.proactive_tool = proactive_tool
+        self.session_log = session_log
+        self.task_queue = task_queue
         self.bot_reply_streaks: dict[int, int] = {}
         self.histories: dict[int, list[tuple[str, str]]] = {}
 
@@ -236,11 +243,24 @@ class TelegramBot:
             )
             return
 
+        if self.task_queue is not None and not prompt.startswith("/") and _is_likely_long_running_action(prompt):
+            background_task = asyncio.create_task(
+                self.dispatch_synthetic_message(
+                    chat_id=chat_id,
+                    text=prompt,
+                    reply_to_message_id=message_id,
+                    reply_mode="edit-status",
+                    synthetic=False,
+                )
+            )
+            background_task.add_done_callback(_log_background_task_error)
+            return
+
         reply = await self.build_reply(chat_id, prompt, user_id=user_id)
         await self.telegram.send_message(chat_id, reply, reply_to_message_id=message_id)
 
     async def build_reply(self, chat_id: int, text: str, *, user_id: int | None = None) -> str:
-        return await self._build_reply(chat_id, text, user_id=user_id, allow_management=True)
+        return await self._build_reply(chat_id, text, user_id=user_id, allow_management=True, synthetic=False)
 
     async def dispatch_synthetic_message(
         self,
@@ -249,6 +269,7 @@ class TelegramBot:
         text: str,
         reply_to_message_id: int | None = None,
         reply_mode: str = "send",
+        synthetic: bool = True,
     ) -> None:
         status_message_id: int | None = None
         if reply_mode == "edit-status":
@@ -257,7 +278,22 @@ class TelegramBot:
                 "處理中…",
                 reply_to_message_id=reply_to_message_id,
             )
-        reply = await self._build_reply(chat_id, text, user_id=None, allow_management=False)
+
+        async def action(_task: object) -> str:
+            return await self._build_reply(chat_id, text, user_id=None, allow_management=False, synthetic=synthetic)
+
+        if self.task_queue is not None:
+            task = await self.task_queue.run(
+                chat_id=chat_id,
+                description=text[:120],
+                action=action,
+                priority="next",
+                status_message_id=status_message_id,
+            )
+            reply = task.output if task.status == "completed" else task.error or "任務沒有完成。"
+        else:
+            reply = await action(object())
+
         if reply_mode == "edit-status" and status_message_id is not None:
             try:
                 await self.telegram.edit_message_text(chat_id, status_message_id, reply)
@@ -267,7 +303,15 @@ class TelegramBot:
             return
         await self.telegram.send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
 
-    async def _build_reply(self, chat_id: int, text: str, *, user_id: int | None, allow_management: bool) -> str:
+    async def _build_reply(
+        self, chat_id: int, text: str, *, user_id: int | None, allow_management: bool, synthetic: bool
+    ) -> str:
+        reply = await self._generate_reply(chat_id, text, user_id=user_id, allow_management=allow_management)
+        if not _is_reset_command(text) and not (not allow_management and _is_management_command(text)):
+            self._record_turn(chat_id, user_text=text.strip(), assistant_text=reply, synthetic=synthetic)
+        return reply
+
+    async def _generate_reply(self, chat_id: int, text: str, *, user_id: int | None, allow_management: bool) -> str:
         if allow_management:
             for tool in self._management_tools():
                 tool_reply = await tool.handle(text, chat_id=chat_id, user_id=user_id)
@@ -294,12 +338,29 @@ class TelegramBot:
     async def _handle_proactive_action(self, *, chat_id: int, text: str) -> str | None:
         if self.proactive_tool is None:
             return None
+        return await self.proactive_tool.handle(
+            text.strip(), chat_id=chat_id, agent=self.agent, history=self._history(chat_id)
+        )
+
+    def _history(self, chat_id: int) -> list[tuple[str, str]]:
+        if self.session_log is not None:
+            return self.session_log.history(chat_id, limit=20)
+        return self.histories.setdefault(chat_id, [])
+
+    def _record_turn(self, chat_id: int, *, user_text: str, assistant_text: str, synthetic: bool = False) -> None:
+        if self.session_log is not None:
+            self.session_log.append_turn(
+                chat_id, user_text=user_text, assistant_text=assistant_text, synthetic=synthetic
+            )
+            return
         history = self.histories.setdefault(chat_id, [])
-        reply = await self.proactive_tool.handle(text.strip(), chat_id=chat_id, agent=self.agent, history=history)
-        if reply is not None:
-            history.extend([("user", text.strip()), ("assistant", reply)])
-            del history[:-20]
-        return reply
+        history.extend([("user", user_text), ("assistant", assistant_text)])
+        del history[:-20]
+
+    def _clear_history(self, chat_id: int) -> None:
+        self.histories.pop(chat_id, None)
+        if self.session_log is not None:
+            self.session_log.clear_chat(chat_id)
 
     async def _handle_builtin_command(self, *, chat_id: int, text: str, user_id: int | None) -> str | None:
         command, _, argument = text.partition(" ")
@@ -314,7 +375,7 @@ class TelegramBot:
             case "/id":
                 return f"chat_id: {chat_id}\nuser_id: {user_id if user_id is not None else 'unknown'}"
             case "/reset":
-                self.histories.pop(chat_id, None)
+                self._clear_history(chat_id)
                 return "已清除這個聊天室的對話記憶。"
             case "/ask":
                 if not prompt:
@@ -328,14 +389,12 @@ class TelegramBot:
                 return None
 
     async def _ask_agent(self, chat_id: int, prompt: str) -> str:
-        history = self.histories.setdefault(chat_id, [])
+        history = self._history(chat_id)
         try:
             reply = await self.agent.reply(prompt, history=history)
         except httpx.HTTPError:
             logger.exception("LLM request failed")
             return "AI 服務暫時無法使用, 請稍後再試。"
-        history.extend([("user", prompt), ("assistant", reply)])
-        del history[:-20]
         return reply
 
     def _is_allowed(self, *, chat_id: int, user_id: int | None) -> bool:
@@ -355,7 +414,7 @@ class TelegramBot:
             try:
                 should_end = await self.topic_end_judge.should_end_topic(
                     prompt,
-                    history=self.histories.get(chat_id, ()),
+                    history=tuple(self._history(chat_id)),
                     bot_reply_streak=streak,
                 )
             except httpx.HTTPError:
@@ -423,14 +482,36 @@ def _help_message() -> str:
             "/soul show|reload|path - 管理 SOUL.md",
             "/memory show|reload|path - 管理 MEMORY.md",
             "/events list|show|cancel|reload - 管理 immediate events",
+            "/tasks list|show|cancel - 管理 proactive tasks",
             "也可以直接傳一般文字給我。",
         ]
     )
 
 
+def _log_background_task_error(task: asyncio.Task[None]) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError, httpx.HTTPError, TelegramApiError:
+        logger.exception("Background Telegram task failed")
+
+
 def _is_management_command(text: str) -> bool:
     command = text.strip().split(maxsplit=1)[0].split("@", maxsplit=1)[0].lower()
-    return command in {"/skills", "/soul", "/memory", "/events", "/start", "/help", "/id", "/reset", "/ask"}
+    return command in {"/skills", "/soul", "/memory", "/events", "/tasks", "/start", "/help", "/id", "/reset", "/ask"}
+
+
+def _is_reset_command(text: str) -> bool:
+    return text.strip().split(maxsplit=1)[0].split("@", maxsplit=1)[0].lower() == "/reset"
+
+
+def _is_likely_long_running_action(text: str) -> bool:
+    normalized = text.strip().casefold()
+    return (
+        "http://" in normalized
+        or "https://" in normalized
+        or normalized in {"go", "ok", "okay", "有字幕", "抓字幕", "抓抓看", "你就自動做事"}
+        or "kabigon" in normalized
+    )
 
 
 def _chunk_text(text: str, limit: int = 4096) -> list[str]:
