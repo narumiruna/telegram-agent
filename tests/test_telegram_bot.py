@@ -1006,14 +1006,22 @@ async def test_whitelist_rejects_unauthorized_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_telegram_client_formats_commonmark_bold_as_safe_html() -> None:
+async def test_telegram_client_formats_commonmark_markdown_as_safe_html() -> None:
     payloads: list[dict[str, Any]] = []
     text = (
-        "**至少 90 人死亡**\r\n"
-        "中國山西省 **留神峪煤礦** 發生氣體爆炸\n"
-        "URL: https://www.bbc.com/news/articles/c5y0ve18qlko?x=1&y=2\n"
-        "```text\n特殊符號: _ * [ ] ( ) ~ ` > # + - = | { } . !\n```\n"
-        "特殊符號: _ * [ ] ( ) ~ ` > # + - = | { } . !"
+        "## 🌅 清晨趕車到新潟，旅程一開始就很有戲\r\n"
+        "\n"
+        "影片一開場就是早晨 6 點，主角其實有點遲到。\n"
+        "\n"
+        "## 🌸 櫻花、城跡、山景，把日本春天拍得很滿\n"
+        "\n"
+        "這一趟重點是 **櫻花** 和 **城堡遺跡**。\n"
+        "\n"
+        "URL: https://example.com/a_b?x=1&y=2\n"
+        "\n"
+        "特殊符號: _ * [ ] ( ) ~ ` > # + - = | { } . !\n"
+        "`code`\n"
+        "```text\ncode block > should be escaped\n```"
         "\x00\x08"
     )
 
@@ -1028,11 +1036,15 @@ async def test_telegram_client_formats_commonmark_bold_as_safe_html() -> None:
 
     assert message_id == 99
     assert payloads[0]["parse_mode"] == "HTML"
+    assert "##" not in payloads[0]["text"]
     assert "**" not in payloads[0]["text"]
-    assert "<b>至少 90 人死亡</b>" in payloads[0]["text"]
-    assert "中國山西省 <b>留神峪煤礦</b> 發生氣體爆炸" in payloads[0]["text"]
-    assert "https://www.bbc.com/news/articles/c5y0ve18qlko?x=1&amp;y=2" in payloads[0]["text"]
-    assert "<pre>特殊符號: _ * [ ] ( ) ~ ` &gt; # + - = | { } . !\n</pre>" in payloads[0]["text"]
+    assert "<b>🌅 清晨趕車到新潟，旅程一開始就很有戲</b>" in payloads[0]["text"]
+    assert "<b>🌸 櫻花、城跡、山景，把日本春天拍得很滿</b>" in payloads[0]["text"]
+    assert "這一趟重點是 <b>櫻花</b> 和 <b>城堡遺跡</b>。" in payloads[0]["text"]
+    assert "https://example.com/a_b?x=1&amp;y=2" in payloads[0]["text"]
+    assert "特殊符號: _ * [ ] ( ) ~ ` &gt; # + - = | { } . !" in payloads[0]["text"]
+    assert "<code>code</code>" in payloads[0]["text"]
+    assert "<pre>code block &gt; should be escaped\n</pre>" in payloads[0]["text"]
     assert "\x00" not in payloads[0]["text"]
     assert "\x08" not in payloads[0]["text"]
 

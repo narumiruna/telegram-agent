@@ -1054,12 +1054,13 @@ def _is_likely_long_running_action(text: str) -> bool:
 _TELEGRAM_PARSE_MODE = "HTML"
 _FENCED_CODE_RE = re.compile(r"```(?:([^\n`]*)\n)?([\s\S]*?)```")
 _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+)$")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*", flags=re.DOTALL)
 
 
 def _telegram_html_chunks(text: str, *, limit: int = 4096) -> list[str]:
     sanitized = _sanitize_telegram_text(text)
-    return [_format_telegram_html(chunk) for chunk in _chunk_text(sanitized, limit=limit)]
+    return [_format_for_telegram(chunk) for chunk in _chunk_text(sanitized, limit=limit)]
 
 
 def _sanitize_telegram_text(text: str) -> str:
@@ -1067,7 +1068,7 @@ def _sanitize_telegram_text(text: str) -> str:
     return "".join(character for character in normalized if _is_allowed_telegram_text_character(character))
 
 
-def _format_telegram_html(text: str) -> str:
+def _format_for_telegram(text: str) -> str:
     parts: list[str] = []
     cursor = 0
     for match in _FENCED_CODE_RE.finditer(text):
@@ -1079,19 +1080,35 @@ def _format_telegram_html(text: str) -> str:
 
 
 def _format_inline_telegram_html(text: str) -> str:
+    return "".join(_format_inline_telegram_line(line) for line in text.splitlines(keepends=True))
+
+
+def _format_inline_telegram_line(line: str) -> str:
+    content = line.removesuffix("\n")
+    newline = "\n" if content != line else ""
+    heading_match = _HEADING_RE.match(content)
+    if heading_match is None:
+        return _format_inline_markdown_html(content, convert_bold=True) + newline
+
+    heading_text = heading_match.group(2).strip()
+    return f"<b>{_format_inline_markdown_html(heading_text, convert_bold=False)}</b>{newline}"
+
+
+def _format_inline_markdown_html(text: str, *, convert_bold: bool) -> str:
     parts: list[str] = []
     cursor = 0
     for match in _INLINE_CODE_RE.finditer(text):
-        parts.append(_format_bold_telegram_html(text[cursor : match.start()]))
+        parts.append(_format_markdown_text_html(text[cursor : match.start()], convert_bold=convert_bold))
         parts.append(f"<code>{html.escape(match.group(1), quote=False)}</code>")
         cursor = match.end()
-    parts.append(_format_bold_telegram_html(text[cursor:]))
+    parts.append(_format_markdown_text_html(text[cursor:], convert_bold=convert_bold))
     return "".join(parts)
 
 
-def _format_bold_telegram_html(text: str) -> str:
+def _format_markdown_text_html(text: str, *, convert_bold: bool) -> str:
     escaped = html.escape(text, quote=False)
-    return _BOLD_RE.sub(lambda match: f"<b>{match.group(1)}</b>", escaped)
+    replacement = (lambda match: f"<b>{match.group(1)}</b>") if convert_bold else (lambda match: match.group(1))
+    return _BOLD_RE.sub(replacement, escaped)
 
 
 def _is_allowed_telegram_text_character(character: str) -> bool:
