@@ -12,10 +12,12 @@ from typing import cast
 import httpx
 from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai.messages import BinaryContent
+from pydantic_ai.messages import FilePart
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.messages import TextPart
+from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.messages import UserContent
 from pydantic_ai.messages import UserPromptPart
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -23,7 +25,10 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from telegramagent.context_files import ContextFile
 from telegramagent.context_files import format_context_for_instructions
+from telegramagent.images import AgentReply
+from telegramagent.images import GeneratedImage
 from telegramagent.images import ImageAttachment
+from telegramagent.images import image_from_binary
 from telegramagent.kabigon_tool import kabigon_load_url
 from telegramagent.skills import AgentSkill
 from telegramagent.skills import format_skills_for_instructions
@@ -129,16 +134,27 @@ class ChatAgent:
         history: Sequence[tuple[str, str]] = (),
         images: Sequence[ImageAttachment] = (),
     ) -> str:
+        return (await self.reply_with_artifacts(prompt, history=history, images=images)).text
+
+    async def reply_with_artifacts(
+        self,
+        prompt: str,
+        *,
+        history: Sequence[tuple[str, str]] = (),
+        images: Sequence[ImageAttachment] = (),
+    ) -> AgentReply:
         if not self.client.is_configured:
             if images:
-                return f"我有收到圖片，但目前還沒設定 OPENAI_API_KEY，所以不能讀圖。文字內容：\n\n{prompt}"
-            return f"我目前還沒設定 OPENAI_API_KEY, 所以先原樣回覆:\n\n{prompt}"
+                return AgentReply(
+                    text=f"我有收到圖片，但目前還沒設定 OPENAI_API_KEY，所以不能讀圖。文字內容：\n\n{prompt}"
+                )
+            return AgentReply(text=f"我目前還沒設定 OPENAI_API_KEY, 所以先原樣回覆:\n\n{prompt}")
 
         result = await self.agent.run(_user_prompt(prompt, images), message_history=_message_history(history))
         output = getattr(result, "output", result)
         if not isinstance(output, str) or not output.strip():
-            return "模型沒有回覆內容, 請稍後再試。"
-        return output.strip()
+            return AgentReply(text="模型沒有回覆內容, 請稍後再試。", images=tuple(_result_images(result)))
+        return AgentReply(text=output.strip(), images=tuple(_result_images(result)))
 
     def reload_skills(self, skills: list[AgentSkill]) -> None:
         self.skills = skills
@@ -220,6 +236,42 @@ def _user_prompt(prompt: str, images: Sequence[ImageAttachment]) -> str | list[U
         parts.append(f"圖片 {index}: {image.filename}")
         parts.append(BinaryContent(data=image.data, media_type=image.media_type, identifier=image.filename))
     return parts
+
+
+def _result_images(result: object) -> list[GeneratedImage]:
+    new_messages = getattr(result, "new_messages", None)
+    if not callable(new_messages):
+        return []
+    images: list[GeneratedImage] = []
+    for message in new_messages():
+        if isinstance(message, ModelRequest):
+            images.extend(_request_images(message))
+        elif isinstance(message, ModelResponse):
+            images.extend(_response_images(message))
+    return images
+
+
+def _request_images(message: ModelRequest) -> list[GeneratedImage]:
+    return [
+        image_from_binary(file.data, media_type=file.media_type, filename_prefix=_safe_filename_prefix(part.tool_name))
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+        for file in part.files
+        if isinstance(file, BinaryContent) and file.is_image
+    ]
+
+
+def _response_images(message: ModelResponse) -> list[GeneratedImage]:
+    return [
+        image_from_binary(part.content.data, media_type=part.content.media_type)
+        for part in message.parts
+        if isinstance(part, FilePart) and part.content.is_image
+    ]
+
+
+def _safe_filename_prefix(value: str) -> str:
+    prefix = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value).strip("-._")
+    return prefix or "tool-image"
 
 
 def _message_history(history: Sequence[tuple[str, str]]) -> list[ModelMessage]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import io
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -20,6 +21,12 @@ class GeneratedImage:
     data: bytes
     media_type: str = "image/png"
     filename: str = "generated-image.png"
+
+
+@dataclass(frozen=True)
+class AgentReply:
+    text: str
+    images: tuple[GeneratedImage, ...] = ()
 
 
 class ImageGenerationError(RuntimeError):
@@ -106,11 +113,37 @@ class OpenAIImageGenerator:
         return GeneratedImage(data=response.content, media_type=media_type, filename=filename)
 
 
-def _filename_for_media_type(media_type: str) -> str:
+def image_from_binary(data: bytes, *, media_type: str, filename_prefix: str = "image") -> GeneratedImage:
+    return GeneratedImage(
+        data=data, media_type=media_type, filename=_filename_for_media_type(media_type, filename_prefix)
+    )
+
+
+def as_telegram_photo(image: GeneratedImage) -> GeneratedImage:
+    if image.media_type in {"image/jpeg", "image/png"}:
+        return image
+    try:
+        from PIL import Image
+    except ImportError:
+        return image
+
+    try:
+        with Image.open(io.BytesIO(image.data)) as opened_image:
+            converted = opened_image.convert("RGBA")
+            buffer = io.BytesIO()
+            converted.save(buffer, format="PNG")
+    except OSError:
+        return image
+    return GeneratedImage(
+        data=buffer.getvalue(), media_type="image/png", filename=_filename_for_media_type("image/png")
+    )
+
+
+def _filename_for_media_type(media_type: str, prefix: str = "generated-image") -> str:
     extension = {
         "image/jpeg": "jpg",
         "image/png": "png",
         "image/webp": "webp",
         "image/gif": "gif",
     }.get(media_type, "png")
-    return f"generated-image.{extension}"
+    return f"{prefix}.{extension}"

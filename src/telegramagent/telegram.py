@@ -14,8 +14,10 @@ import httpx
 from loguru import logger
 from pydantic_ai.exceptions import AgentRunError
 
+from telegramagent.images import AgentReply
 from telegramagent.images import GeneratedImage
 from telegramagent.images import ImageAttachment
+from telegramagent.images import as_telegram_photo
 from telegramagent.session import SessionLog
 from telegramagent.tasks import TaskQueue
 
@@ -422,8 +424,20 @@ class TelegramBot:
             background_task.add_done_callback(_log_background_task_error)
             return
 
-        reply = await self.build_reply(chat_id, prompt, user_id=user_id, images=images)
-        await self.telegram.send_message(chat_id, reply, reply_to_message_id=message_id)
+        reply = await self.build_response(chat_id, prompt, user_id=user_id, images=images)
+        await self._send_agent_reply(chat_id, reply, reply_to_message_id=message_id)
+
+    async def build_response(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        user_id: int | None = None,
+        images: Sequence[ImageAttachment] = (),
+    ) -> AgentReply:
+        return await self._build_response(
+            chat_id, text, user_id=user_id, allow_management=True, synthetic=False, images=images
+        )
 
     async def build_reply(
         self,
@@ -433,9 +447,7 @@ class TelegramBot:
         user_id: int | None = None,
         images: Sequence[ImageAttachment] = (),
     ) -> str:
-        return await self._build_reply(
-            chat_id, text, user_id=user_id, allow_management=True, synthetic=False, images=images
-        )
+        return (await self.build_response(chat_id, text, user_id=user_id, images=images)).text
 
     async def dispatch_synthetic_message(
         self,
@@ -455,9 +467,10 @@ class TelegramBot:
             )
 
         async def action(_task: object) -> str:
-            return await self._build_reply(
+            reply = await self._build_response(
                 chat_id, text, user_id=None, allow_management=False, synthetic=synthetic, images=()
             )
+            return reply.text
 
         if self.task_queue is not None:
             task = await self.task_queue.run(
@@ -480,7 +493,7 @@ class TelegramBot:
             return
         await self.telegram.send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
 
-    async def _build_reply(
+    async def _build_response(
         self,
         chat_id: int,
         text: str,
@@ -489,17 +502,20 @@ class TelegramBot:
         allow_management: bool,
         synthetic: bool,
         images: Sequence[ImageAttachment],
-    ) -> str:
-        reply = await self._generate_reply(
+    ) -> AgentReply:
+        reply = await self._generate_response(
             chat_id, text, user_id=user_id, allow_management=allow_management, images=images
         )
         if not _is_reset_command(text) and not (not allow_management and _is_management_command(text)):
             self._record_turn(
-                chat_id, user_text=_history_user_text(text, images=images), assistant_text=reply, synthetic=synthetic
+                chat_id,
+                user_text=_history_user_text(text, images=images),
+                assistant_text=reply.text,
+                synthetic=synthetic,
             )
         return reply
 
-    async def _generate_reply(
+    async def _generate_response(
         self,
         chat_id: int,
         text: str,
@@ -507,26 +523,26 @@ class TelegramBot:
         user_id: int | None,
         allow_management: bool,
         images: Sequence[ImageAttachment],
-    ) -> str:
+    ) -> AgentReply:
         if allow_management:
             for tool in self._management_tools():
                 tool_reply = await tool.handle(text, chat_id=chat_id, user_id=user_id)
                 if tool_reply is not None:
-                    return tool_reply
+                    return AgentReply(text=tool_reply)
 
             command_reply = await self._handle_builtin_command(
                 chat_id=chat_id, text=text, user_id=user_id, images=images
             )
             if command_reply is not None:
-                return command_reply
+                return command_reply if isinstance(command_reply, AgentReply) else AgentReply(text=command_reply)
         elif _is_management_command(text):
-            return "Event 訊息不允許執行管理指令。"
+            return AgentReply(text="Event 訊息不允許執行管理指令。")
 
         if not images:
             proactive_reply = await self._handle_proactive_action(chat_id=chat_id, text=text)
             if proactive_reply is not None:
-                return proactive_reply
-        return await self._ask_agent(chat_id, text.strip(), images=images)
+                return AgentReply(text=proactive_reply)
+        return await self._ask_agent_response(chat_id, text.strip(), images=images)
 
     def _management_tools(self) -> list[SkillTool]:
         tools = [*self.tools]
@@ -599,7 +615,7 @@ class TelegramBot:
         text: str,
         user_id: int | None,
         images: Sequence[ImageAttachment],
-    ) -> str | None:
+    ) -> str | AgentReply | None:
         command, _, argument = text.partition(" ")
         command_name = command.split("@", maxsplit=1)[0].lower()
         prompt = argument.strip()
@@ -617,7 +633,7 @@ class TelegramBot:
             case "/ask":
                 if not prompt and not images:
                     return "請在 /ask 後面加上你想問的內容。"
-                return await self._ask_agent(chat_id, prompt or _DEFAULT_IMAGE_PROMPT, images=images)
+                return await self._ask_agent_response(chat_id, prompt or _DEFAULT_IMAGE_PROMPT, images=images)
             case "/skills" | "/soul" | "/memory":
                 return "這個 bot 尚未啟用這個管理功能。"
             case _ if text.startswith("/"):
@@ -626,8 +642,16 @@ class TelegramBot:
                 return None
 
     async def _ask_agent(self, chat_id: int, prompt: str, *, images: Sequence[ImageAttachment] = ()) -> str:
+        return (await self._ask_agent_response(chat_id, prompt, images=images)).text
+
+    async def _ask_agent_response(
+        self, chat_id: int, prompt: str, *, images: Sequence[ImageAttachment] = ()
+    ) -> AgentReply:
         history = self._history(chat_id)
         try:
+            rich_reply = getattr(self.agent, "reply_with_artifacts", None)
+            if callable(rich_reply):
+                return await rich_reply(prompt, history=history, images=images)
             if images:
                 reply = await self.agent.reply(prompt, history=history, images=images)
             else:
@@ -635,9 +659,33 @@ class TelegramBot:
         except httpx.HTTPError, AgentRunError:
             logger.exception("LLM request failed")
             if images:
-                return "AI 服務暫時無法處理這張圖片，可能是目前模型或 provider 不支援圖片理解。"
-            return "AI 服務暫時無法使用, 請稍後再試。"
-        return reply
+                return AgentReply(text="AI 服務暫時無法處理這張圖片，可能是目前模型或 provider 不支援圖片理解。")
+            return AgentReply(text="AI 服務暫時無法使用, 請稍後再試。")
+        return AgentReply(text=reply)
+
+    async def _send_agent_reply(
+        self, chat_id: int, reply: AgentReply, *, reply_to_message_id: int | None = None
+    ) -> None:
+        parent_message_id = await self.telegram.send_message(
+            chat_id, reply.text, reply_to_message_id=reply_to_message_id
+        )
+        for image in reply.images:
+            photo = as_telegram_photo(image)
+            try:
+                await self.telegram.send_photo(
+                    chat_id,
+                    photo.data,
+                    filename=photo.filename,
+                    media_type=photo.media_type,
+                    reply_to_message_id=parent_message_id or reply_to_message_id,
+                )
+            except httpx.HTTPError, TelegramApiError:
+                logger.exception("Failed to send agent image artifact")
+                await self.telegram.send_message(
+                    chat_id,
+                    "我有產生一張圖表，但目前無法透過 Telegram 傳送。",
+                    reply_to_message_id=parent_message_id or reply_to_message_id,
+                )
 
     async def _handle_image_generation_command(
         self, *, chat_id: int, prompt: str, reply_to_message_id: int | None

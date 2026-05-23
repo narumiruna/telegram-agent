@@ -7,11 +7,15 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic_ai.messages import BinaryContent
+from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ToolReturnPart
 
 from telegramagent.actions import ActionContent
 from telegramagent.actions import ProactiveActionTool
 from telegramagent.context_files import ContextManagementTool
 from telegramagent.context_files import load_context_file
+from telegramagent.images import AgentReply
 from telegramagent.images import GeneratedImage
 from telegramagent.images import ImageAttachment
 from telegramagent.llm import ChatAgent
@@ -91,6 +95,31 @@ class FakeAgent:
         return f"AI: {prompt} ({len(history)})"
 
 
+class FakeArtifactAgent:
+    def __init__(self, agent_reply: AgentReply) -> None:
+        self.agent_reply = agent_reply
+        self.calls: list[tuple[str, Sequence[tuple[str, str]], list[ImageAttachment]]] = []
+
+    async def reply_with_artifacts(
+        self,
+        prompt: str,
+        *,
+        history: Sequence[tuple[str, str]],
+        images: Sequence[ImageAttachment] = (),
+    ) -> AgentReply:
+        self.calls.append((prompt, [*history], [*images]))
+        return self.agent_reply
+
+    async def reply(
+        self,
+        prompt: str,
+        *,
+        history: Sequence[tuple[str, str]],
+        images: Sequence[ImageAttachment] = (),
+    ) -> str:
+        return self.agent_reply.text
+
+
 class FakeVisionAgent:
     def __init__(self) -> None:
         self.calls: list[tuple[str, Sequence[tuple[str, str]], list[ImageAttachment]]] = []
@@ -118,20 +147,25 @@ class FakeImageGenerator:
 
 
 class FakeRunResult:
-    def __init__(self, output: str) -> None:
+    def __init__(self, output: str, messages: Sequence[object] = ()) -> None:
         self.output = output
+        self.messages = list(messages)
+
+    def new_messages(self) -> list[object]:
+        return self.messages
 
 
 class FakeRunnableAgent:
-    def __init__(self, output: str = "回覆") -> None:
+    def __init__(self, output: str = "回覆", messages: Sequence[object] = ()) -> None:
         self.output = output
+        self.messages = [*messages]
         self.prompts: list[Any] = []
         self.message_history_lengths: list[int] = []
 
     async def run(self, user_prompt: Any, **kwargs: Any) -> FakeRunResult:
         self.prompts.append(user_prompt)
         self.message_history_lengths.append(len(kwargs.get("message_history") or []))
-        return FakeRunResult(self.output)
+        return FakeRunResult(self.output, messages=self.messages)
 
 
 class FakeCommandSkillInstaller(SkillInstaller):
@@ -505,6 +539,33 @@ async def test_proactive_tool_falls_back_to_agent_when_no_action_matches() -> No
 
     assert await bot.build_reply(123, "你好") == "AI: 你好 (0)"
     assert proactive.calls == [("你好", 123, [])]
+
+
+@pytest.mark.asyncio
+async def test_handle_update_sends_agent_image_artifacts_after_text_reply() -> None:
+    telegram = FakeTelegram()
+    agent = FakeArtifactAgent(
+        AgentReply(
+            text="這是股價圖。", images=(GeneratedImage(data=b"webp", media_type="image/webp", filename="chart.webp"),)
+        )
+    )
+    bot = TelegramBot(telegram=telegram, agent=agent)
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 456},
+                "text": "畫 AAPL 股價圖",
+            },
+        }
+    )
+
+    assert telegram.sent == [(123, "這是股價圖。", 10)]
+    assert telegram.sent_photos == [(123, b"webp", None, "chart.webp", "image/webp", 100)]
+    assert bot.histories[123] == [("user", "畫 AAPL 股價圖"), ("assistant", "這是股價圖。")]
 
 
 @pytest.mark.asyncio
@@ -995,6 +1056,30 @@ async def test_chat_agent_passes_images_as_binary_user_content() -> None:
     assert prompt[1] == "圖片 1: sample.png"
     assert prompt[2].data == b"image-bytes"
     assert prompt[2].media_type == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_extracts_tool_return_images_as_artifacts() -> None:
+    tool_result = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name="yfinance_get_price_history",
+                content=BinaryContent(data=b"webp", media_type="image/webp"),
+            )
+        ]
+    )
+    runnable = FakeRunnableAgent("這是圖表", messages=[tool_result])
+
+    def factory(instructions: str) -> FakeRunnableAgent:
+        return runnable
+
+    agent = ChatAgent(api_key="key", model="model", agent_factory=factory)
+    reply = await agent.reply_with_artifacts("畫 AAPL 股價圖")
+
+    assert reply.text == "這是圖表"
+    assert reply.images == (
+        GeneratedImage(data=b"webp", media_type="image/webp", filename="yfinance_get_price_history.webp"),
+    )
 
 
 @pytest.mark.asyncio
