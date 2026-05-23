@@ -93,6 +93,8 @@ async def test_youtube_url_triggers_transcript_summary() -> None:
     assert reply == "整理完成"
     assert fetcher.calls == [("iG-hzh9roNw", ("zh-Hant", "zh-TW", "zh", "ja", "en"))]
     assert "已經實際讀取到外部內容" in agent.prompts[0]
+    assert "標題開頭必須剛好有一個 emoji" in agent.prompts[0]
+    assert "最後一個 section 必須是收尾" in agent.prompts[0]
     assert "這是一段影片字幕" in agent.prompts[0]
 
 

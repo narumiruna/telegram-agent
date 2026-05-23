@@ -632,7 +632,10 @@ def _build_summary_prompt(content: ActionContent, *, max_chars: int) -> str:
     return (
         "你已經實際讀取到外部內容。請根據下方工具結果，用台灣繁體中文主動整理。\n"
         "不要說你還沒讀到內容；如果內容不足，直接說明限制。\n"
-        "輸出格式：1) 一句話總結 2) 重點條列 3) 如果是影片/文章，列出值得注意的細節。\n\n"
+        "輸出成 3 到 5 個連貫 section。每個 section 標題都要具體、使用台灣繁體中文，"
+        "且標題開頭必須剛好有一個 emoji。每個 section 內文可以有一段或多段，"
+        "section 之間轉折要自然，整體要像同一篇 cohesive post。"
+        "最後一個 section 必須是收尾，只能重述前面已提過的重點，不要加入新資訊。\n\n"
         f"來源標題: {content.title}\n"
         f"來源網址: {content.source_url}\n"
         f"內容類型: {content.content_type}\n\n"
