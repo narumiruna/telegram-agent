@@ -5,7 +5,9 @@ from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Mapping
 from collections.abc import Sequence
+from typing import Any
 from typing import Protocol
+from typing import cast
 
 import httpx
 from pydantic_ai import Agent as PydanticAgent
@@ -19,6 +21,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from telegramagent.context_files import ContextFile
 from telegramagent.context_files import format_context_for_instructions
+from telegramagent.kabigon_tool import kabigon_load_url
 from telegramagent.skills import AgentSkill
 from telegramagent.skills import format_skills_for_instructions
 
@@ -94,6 +97,7 @@ class ChatAgent:
         memory: ContextFile | None = None,
         agent_factory: AgentFactory | None = None,
         capability_summary: str = "",
+        kabigon_tool_timeout_seconds: float = 180.0,
     ) -> None:
         self.client = OpenAIChatClient(api_key=api_key, model=model, base_url=base_url, http_client=http_client)
         self.skills = skills or []
@@ -101,6 +105,7 @@ class ChatAgent:
         self.memory = memory
         self.capability_summary = capability_summary
         self.agent_factory = agent_factory
+        self.kabigon_tool_timeout_seconds = kabigon_tool_timeout_seconds
         self.agent = self._create_agent(api_key=api_key, model=model, base_url=base_url, agent_factory=agent_factory)
 
     @property
@@ -151,7 +156,12 @@ class ChatAgent:
             return agent_factory(instructions)
         provider = OpenAIProvider(base_url=base_url, api_key=api_key)
         pydantic_model = OpenAIChatModel(model, provider=provider)
-        return PydanticAgent(pydantic_model, instructions=instructions)
+        return PydanticAgent(
+            pydantic_model,
+            instructions=instructions,
+            tools=[cast(Any, kabigon_load_url)],
+            tool_timeout=self.kabigon_tool_timeout_seconds,
+        )
 
 
 def _chat_instructions(
@@ -164,7 +174,7 @@ def _chat_instructions(
         "如果使用者要求你自動處理、讀取、整理或查詢，只有在工具結果或系統訊息明確提供內容時，"
         "才可以說你已經讀取或正在根據內容整理；如果沒有工具結果，不要假裝會在背景工作。"
         "Agent Skills 是操作說明，不代表你在 Telegram runtime 真的有該工具；"
-        "除非系統已提供工具結果，否則不要聲稱會使用 kabigon 或其他外部工具。"
+        "只有 runtime capabilities 或 Pydantic AI tools 中列出的工具才是真的可執行。"
     ]
     soul_instructions = format_context_for_instructions(soul)
     if soul_instructions:

@@ -234,6 +234,33 @@ async def test_generic_url_fetch_extracts_html_text(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
+async def test_generic_url_uses_kabigon_fallback_when_builtin_fetch_cannot_extract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def allow_host(host: str) -> None:
+        assert host == "example.com"
+
+    monkeypatch.setattr("telegramagent.actions._assert_public_host", allow_host)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "application/json"}, json={"ok": True})
+
+    external_loader = FakeExternalLoader()
+    tool = ProactiveActionTool(
+        http_client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        capabilities=CapabilityRegistry([Capability("external_loader.kabigon", True, "test fallback")]),
+        external_loader=external_loader,
+    )
+    agent = FakeAgent()
+
+    reply = await tool.handle("整理 https://example.com/data.json", chat_id=123, agent=agent, history=[])
+
+    assert reply == "整理完成"
+    assert external_loader.calls == ["https://example.com/data.json"]
+    assert "外部 loader 內容" in agent.prompts[0]
+
+
+@pytest.mark.asyncio
 async def test_generic_url_blocks_localhost() -> None:
     tool = ProactiveActionTool()
     agent = FakeAgent()

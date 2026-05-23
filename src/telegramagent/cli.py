@@ -8,6 +8,7 @@ import typer
 from loguru import logger
 
 from telegramagent.actions import ActionSettings
+from telegramagent.actions import KabigonExternalLoader
 from telegramagent.actions import PendingActionStore
 from telegramagent.actions import ProactiveActionTool
 from telegramagent.capabilities import CapabilityRegistry
@@ -80,6 +81,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         soul=soul,
         memory=memory,
         capability_summary=capabilities.summary(),
+        kabigon_tool_timeout_seconds=settings.bot_kabigon_timeout_seconds,
     )
     topic_end_judge = TopicEndAgent(
         api_key=settings.openai_api_key,
@@ -94,9 +96,16 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
             max_extracted_chars=settings.bot_proactive_max_extracted_chars,
             pending_ttl_seconds=settings.bot_proactive_pending_ttl_seconds,
             allowed_schemes=frozenset(settings.bot_proactive_allowed_schemes),
+            external_loader_timeout_seconds=settings.bot_kabigon_timeout_seconds,
         ),
         pending=PendingActionStore(ttl_seconds=settings.bot_proactive_pending_ttl_seconds),
         capabilities=capabilities,
+        external_loader=KabigonExternalLoader(
+            timeout_seconds=settings.bot_kabigon_timeout_seconds,
+            max_chars=settings.bot_proactive_max_extracted_chars,
+        )
+        if capabilities.is_available("external_loader.kabigon")
+        else None,
     )
 
     def installed_skill_names() -> set[str]:

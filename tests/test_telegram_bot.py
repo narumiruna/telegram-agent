@@ -753,7 +753,29 @@ async def test_chat_agent_injects_runtime_capabilities_into_pydantic_instruction
 
     assert "Runtime capabilities" in captured["instructions"]
     assert "external_loader.kabigon: unavailable" in captured["instructions"]
-    assert "不要聲稱會使用 kabigon" in captured["instructions"]
+    assert "只有 runtime capabilities 或 Pydantic AI tools 中列出的工具才是真的可執行" in captured["instructions"]
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_registers_kabigon_load_url_tool(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakePydanticAgent:
+        def __init__(self, model: object, *, instructions: str, tools: Sequence[object], tool_timeout: int) -> None:
+            captured["tools"] = tools
+            captured["tool_timeout"] = tool_timeout
+
+        async def run(self, user_prompt: str, **kwargs: Any) -> FakeRunResult:
+            return FakeRunResult("ok")
+
+    monkeypatch.setattr("telegramagent.llm.PydanticAgent", FakePydanticAgent)
+
+    agent = ChatAgent(api_key="key", model="model")
+    reply = await agent.reply("問題")
+
+    assert reply == "ok"
+    assert [getattr(tool, "__name__", "") for tool in captured["tools"]] == ["kabigon_load_url"]
+    assert captured["tool_timeout"] == 180
 
 
 @pytest.mark.asyncio

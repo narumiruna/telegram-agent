@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 import shutil
 from dataclasses import dataclass
 
@@ -36,6 +37,12 @@ class CapabilityRegistry:
 
 
 def default_capabilities() -> list[Capability]:
+    try:
+        importlib.metadata.version("kabigon")
+    except importlib.metadata.PackageNotFoundError:
+        kabigon_api_available = False
+    else:
+        kabigon_api_available = True
     kabigon_path = shutil.which("kabigon") or shutil.which("uvx")
     return [
         Capability("web_fetch", True, "bounded HTTP(S) text/HTML fetching with SSRF guards"),
@@ -43,9 +50,9 @@ def default_capabilities() -> list[Capability]:
         Capability("file_events", True, "local file-backed immediate event dispatch"),
         Capability(
             "external_loader.kabigon",
-            False,
-            "optional URL loader fallback; disabled unless explicitly wired as a runtime capability",
-            "not configured",
+            kabigon_api_available,
+            "kabigon.api.load_url URL extraction fallback and Pydantic AI tool",
+            "kabigon package not installed" if not kabigon_api_available else "",
         ),
         Capability(
             "external_command.kabigon",

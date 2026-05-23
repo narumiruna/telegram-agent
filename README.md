@@ -32,6 +32,7 @@ BOT_MEMORY_MAX_CHARS=12000
 # Proactive mode executes safe default actions for URLs and short follow-ups like "go".
 BOT_PROACTIVE_ENABLED=true
 BOT_PROACTIVE_URL_TIMEOUT_SECONDS=15
+BOT_KABIGON_TIMEOUT_SECONDS=180
 BOT_PROACTIVE_MAX_EXTRACTED_CHARS=12000
 BOT_PROACTIVE_PENDING_TTL_SECONDS=900
 BOT_PROACTIVE_ALLOWED_SCHEMES=http,https
@@ -98,7 +99,7 @@ You can also send plain text directly to the bot.
 When proactive mode is enabled, the bot does not only suggest work for supported links. It executes a safe default action:
 
 - YouTube links: fetch available subtitles/transcripts and summarize them.
-- HTTP(S) text or HTML links: fetch bounded page text and summarize it.
+- HTTP(S) links: try the bounded built-in text/HTML fetcher first, then fall back to `kabigon.api.load_url` for supported public URLs when built-in extraction fails.
 - Short follow-ups such as `go`, `開始`, `繼續`, or `你就自動做事`: reuse the most recent pending URL/action in that chat for `BOT_PROACTIVE_PENDING_TTL_SECONDS` seconds.
 
 Safety limits:
@@ -106,8 +107,9 @@ Safety limits:
 - Only `http` and `https` URLs are supported.
 - Localhost, private networks, link-local addresses, and cloud metadata IPs are blocked.
 - Redirects are not followed automatically.
-- Large or non-text responses are rejected.
-- If YouTube subtitles are disabled, unavailable, or blocked by YouTube, the bot says so instead of pretending it watched the video.
+- Large built-in responses are rejected before fallback; kabigon results are truncated to `BOT_PROACTIVE_MAX_EXTRACTED_CHARS`.
+- If built-in fetch and kabigon both fail, the bot reports that honestly instead of pretending it read the page.
+- If YouTube subtitles are disabled, unavailable, or blocked by YouTube, the bot tries kabigon fallback and says so if both paths fail.
 
 Disable this behavior with `BOT_PROACTIVE_ENABLED=false`.
 
@@ -159,7 +161,7 @@ The proactive runtime has a small task queue:
 - Long-running proactive work can send `處理中…` and then edit that bot-owned status message into the final result.
 - `/tasks list`, `/tasks show <id>`, and `/tasks cancel <id>` expose task state.
 
-Runtime capabilities are explicit. Built-in web fetch, YouTube transcript extraction, and file-backed events are available by default. Optional external loaders such as kabigon are treated as unavailable unless explicitly wired as runtime capabilities; Agent Skills alone do not make a tool executable.
+Runtime capabilities are explicit. Built-in web fetch, YouTube transcript extraction, file-backed events, and `kabigon.api.load_url` URL extraction are available by default. The chat agent registers a Pydantic AI tool named `kabigon_load_url`, so the model can call kabigon directly for supported public HTTP(S) URLs. The proactive YouTube fallback also uses kabigon when the package is installed. Some kabigon loaders may need extra runtime assets such as Playwright browsers, depending on the URL type. Agent Skills alone still do not make a tool executable; a capability or Pydantic AI tool must be wired in runtime code.
 
 Docker Compose mounts `./.telegramagent:/app/.telegramagent` by default so session logs survive container restarts.
 

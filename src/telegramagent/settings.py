@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     bot_memory_max_chars: int = Field(default=12000, ge=1, alias="BOT_MEMORY_MAX_CHARS")
     bot_proactive_enabled: bool = Field(default=True, alias="BOT_PROACTIVE_ENABLED")
     bot_proactive_url_timeout_seconds: float = Field(default=15.0, gt=0, alias="BOT_PROACTIVE_URL_TIMEOUT_SECONDS")
+    bot_kabigon_timeout_seconds: float = Field(default=180.0, gt=0, alias="BOT_KABIGON_TIMEOUT_SECONDS")
     bot_proactive_max_extracted_chars: int = Field(default=12000, ge=100, alias="BOT_PROACTIVE_MAX_EXTRACTED_CHARS")
     bot_proactive_pending_ttl_seconds: int = Field(default=900, ge=1, alias="BOT_PROACTIVE_PENDING_TTL_SECONDS")
     bot_proactive_allowed_schemes: Annotated[set[str], NoDecode] = Field(

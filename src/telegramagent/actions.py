@@ -21,6 +21,8 @@ import httpx
 from loguru import logger
 
 from telegramagent.capabilities import CapabilityRegistry
+from telegramagent.kabigon_tool import KabigonLoadError
+from telegramagent.kabigon_tool import load_url_with_kabigon
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,7 @@ class ActionSettings:
     pending_ttl_seconds: int = 900
     allowed_schemes: frozenset[str] = frozenset({"http", "https"})
     youtube_languages: tuple[str, ...] = ("zh-Hant", "zh-TW", "zh", "ja", "en")
+    external_loader_timeout_seconds: float = 180.0
 
 
 @dataclass(frozen=True)
@@ -110,6 +113,19 @@ class PendingActionStore:
 class DefaultTranscriptFetcher:
     async def fetch(self, video_id: str, *, languages: Sequence[str]) -> ActionContent:
         return await asyncio.to_thread(_fetch_youtube_transcript, video_id, tuple(languages))
+
+
+class KabigonExternalLoader:
+    def __init__(self, *, timeout_seconds: float = 180.0, max_chars: int = 20000) -> None:
+        self.timeout_seconds = timeout_seconds
+        self.max_chars = max_chars
+
+    async def fetch(self, url: str) -> ActionContent:
+        try:
+            body = await load_url_with_kabigon(url, timeout_seconds=self.timeout_seconds, max_chars=self.max_chars)
+        except KabigonLoadError as exc:
+            raise ActionError(str(exc)) from exc
+        return ActionContent(title="kabigon loaded content", source_url=url, body=body, content_type="kabigon_load_url")
 
 
 class ActionRouter:
@@ -213,7 +229,7 @@ class ProactiveActionTool:
             if kind == "youtube_summary":
                 content = await self._fetch_youtube_with_fallback(url)
             else:
-                content = await self._fetch_url(url)
+                content = await self._fetch_url_with_fallback(url)
         except ActionError as exc:
             return str(exc)
         except (httpx.HTTPError, OSError, TimeoutError) as exc:
@@ -231,19 +247,58 @@ class ProactiveActionTool:
         try:
             return await self._fetch_youtube(url)
         except ActionError as exc:
-            if self.capabilities.is_available("external_loader.kabigon") and self.external_loader is not None:
-                try:
-                    return await asyncio.wait_for(
-                        self.external_loader.fetch(url), timeout=self.settings.url_timeout_seconds
-                    )
-                except (ActionError, OSError, TimeoutError) as fallback_exc:
-                    raise ActionError(
-                        f"{exc}\n我也嘗試了已啟用的外部 loader fallback，但失敗了: {type(fallback_exc).__name__}。"
-                    ) from fallback_exc
+            try:
+                return await self._fetch_external_loader(url, primary_error=exc)
+            except ActionError as fallback_exc:
+                if self._external_loader_enabled():
+                    raise fallback_exc from exc
+                raise ActionError(
+                    f"{exc}\n我已保留前面的 YouTube 連結，但外部 loader（例如 kabigon）"
+                    "不是目前已啟用的 runtime capability。如果你有字幕文字，可以直接貼上，我會接著整理。"
+                ) from exc
+
+    async def _fetch_url_with_fallback(self, url: str) -> ActionContent:
+        try:
+            return await self._fetch_url(url)
+        except ActionError as exc:
+            if not self._should_try_external_loader_after_action_error(exc):
+                raise
+            return await self._fetch_external_loader(url, primary_error=exc)
+        except (httpx.HTTPError, OSError, TimeoutError) as exc:
+            if not self._external_loader_enabled():
+                raise
+            return await self._fetch_external_loader(url, primary_error=exc)
+
+    async def _fetch_external_loader(self, url: str, *, primary_error: BaseException) -> ActionContent:
+        if not self._external_loader_enabled() or self.external_loader is None:
+            if isinstance(primary_error, ActionError):
+                raise primary_error
+            raise ActionError("我有嘗試讀取內容，但目前抓不到。可能是網站阻擋或網路逾時。") from primary_error
+        try:
+            return await asyncio.wait_for(
+                self.external_loader.fetch(url), timeout=self.settings.external_loader_timeout_seconds
+            )
+        except (ActionError, OSError, TimeoutError) as fallback_exc:
             raise ActionError(
-                f"{exc}\n我已保留前面的 YouTube 連結，但外部 loader（例如 kabigon）"
-                "不是目前已啟用的 runtime capability。如果你有字幕文字，可以直接貼上，我會接著整理。"
-            ) from exc
+                "我有嘗試用內建讀取與 kabigon 讀取，但目前都抓不到。"
+                f"內建讀取失敗原因：{_readable_error(primary_error)}；"
+                f"kabigon 失敗原因：{_readable_error(fallback_exc)}。"
+                "可能是網站阻擋、需要登入/paywall、需要 Playwright browser assets，或網路逾時。"
+            ) from fallback_exc
+
+    def _external_loader_enabled(self) -> bool:
+        return self.capabilities.is_available("external_loader.kabigon") and self.external_loader is not None
+
+    @staticmethod
+    def _should_try_external_loader_after_action_error(exc: ActionError) -> bool:
+        message = str(exc)
+        hard_stop_fragments = (
+            "只能讀取 http 或 https",
+            "沒有有效主機名稱",
+            "localhost、私有網路",
+            "不自動跟隨 redirect",
+        )
+        return not any(fragment in message for fragment in hard_stop_fragments)
 
     async def _fetch_youtube(self, url: str) -> ActionContent:
         video_id = _youtube_video_id(url)
@@ -346,6 +401,16 @@ _RISKY_ACTION_RE = re.compile(
     r"(?:\b(?:delete|buy|purchase|send|deploy|login|sign\s*in)\b|刪除|購買|下單|付款|發送|寄出|部署|登入|修改|提交)",
     re.IGNORECASE,
 )
+
+
+def _readable_error(exc: BaseException) -> str:
+    text = str(exc).strip()
+    if not text:
+        text = type(exc).__name__
+    text = _collapse_whitespace(text)
+    if len(text) > 180:
+        return f"{text[:180]}…"
+    return text
 
 
 def _first_url(text: str) -> str | None:
