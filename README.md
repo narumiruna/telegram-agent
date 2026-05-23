@@ -12,6 +12,8 @@ BOT_TOKEN=your Telegram Bot token
 BOT_WHITELIST=
 # Maximum consecutive replies to other bots in bot-to-bot reply chains. Use 0 to never reply to other bots.
 BOT_MAX_CONSECUTIVE_REPLIES_TO_BOTS=1
+# In groups, keep unaddressed messages as passive context without replying or calling the LLM.
+BOT_GROUP_PASSIVE_CONTEXT_ENABLED=true
 # Agent Skills directory. Leave BOT_ENABLED_SKILLS empty to load every skill under the directory.
 BOT_SKILLS_DIR=.agents/skills
 BOT_ENABLED_SKILLS=
@@ -207,6 +209,8 @@ In private chats, the bot replies to normal text messages. In groups and supergr
 
 1. The message mentions the bot account, for example `@your_bot hello`
 2. The message directly replies to a bot message
+
+When `BOT_GROUP_PASSIVE_CONTEXT_ENABLED=true`, unaddressed group messages are still recorded as passive user-message history for that chat. This does not call the LLM and does not send a reply by itself; it only lets the bot see recent group context the next time it is addressed. Disable it if the group should not be persisted in `.telegramagent/sessions`.
 
 ## SOUL.md and MEMORY.md
 

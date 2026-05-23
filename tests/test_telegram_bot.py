@@ -508,7 +508,7 @@ async def test_proactive_tool_falls_back_to_agent_when_no_action_matches() -> No
 
 
 @pytest.mark.asyncio
-async def test_group_plain_text_is_ignored_unless_addressed() -> None:
+async def test_group_plain_text_is_recorded_as_passive_context_without_reply() -> None:
     telegram = FakeTelegram()
     bot = TelegramBot(telegram=telegram, agent=FakeAgent(), bot_username="fakebot", bot_user_id=42)
 
@@ -525,6 +525,70 @@ async def test_group_plain_text_is_ignored_unless_addressed() -> None:
     )
 
     assert telegram.sent == []
+    assert bot.histories[-100] == [("user", "[群組旁聽訊息 from user_id=456] 大家好")]
+
+
+@pytest.mark.asyncio
+async def test_group_passive_context_can_be_disabled() -> None:
+    telegram = FakeTelegram()
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=FakeAgent(),
+        bot_username="fakebot",
+        bot_user_id=42,
+        group_passive_context_enabled=False,
+    )
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 456},
+                "text": "大家好",
+            },
+        }
+    )
+
+    assert telegram.sent == []
+    assert bot.histories == {}
+
+
+@pytest.mark.asyncio
+async def test_group_passive_context_is_used_when_bot_is_later_addressed() -> None:
+    telegram = FakeTelegram()
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), bot_username="fakebot", bot_user_id=42)
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 456, "username": "alice"},
+                "text": "我想吃牛肉麵",
+            },
+        }
+    )
+    await bot.handle_update(
+        {
+            "update_id": 2,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 789},
+                "text": "@FakeBot 剛剛大家說什麼？",
+            },
+        }
+    )
+
+    assert telegram.sent == [(-100, "AI: 剛剛大家說什麼？ (1)", 11)]
+    assert bot.histories[-100] == [
+        ("user", "[群組旁聽訊息 from @alice] 我想吃牛肉麵"),
+        ("user", "剛剛大家說什麼？"),
+        ("assistant", "AI: 剛剛大家說什麼？ (1)"),
+    ]
 
 
 @pytest.mark.asyncio

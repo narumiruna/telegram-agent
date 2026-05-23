@@ -23,6 +23,14 @@ def test_proactive_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_proactive_allowed_schemes == {"https"}
 
 
+def test_group_passive_context_setting_parse_env(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_GROUP_PASSIVE_CONTEXT_ENABLED", "false")
+
+    settings = Settings()
+
+    assert settings.bot_group_passive_context_enabled is False
+
+
 def test_event_settings_parse_env(monkeypatch) -> None:
     monkeypatch.setenv("BOT_EVENTS_ENABLED", "true")
     monkeypatch.setenv("BOT_EVENTS_DIR", ".custom-events")

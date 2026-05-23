@@ -305,6 +305,7 @@ class TelegramBot:
         bot_username: str | None = None,
         bot_user_id: int | None = None,
         max_consecutive_replies_to_bots: int = 1,
+        group_passive_context_enabled: bool = True,
         topic_end_judge: TopicEndJudge | None = None,
         skill_tool: SkillTool | None = None,
         tools: Sequence[SkillTool] = (),
@@ -321,6 +322,7 @@ class TelegramBot:
         self.bot_username = bot_username
         self.bot_user_id = bot_user_id
         self.max_consecutive_replies_to_bots = max_consecutive_replies_to_bots
+        self.group_passive_context_enabled = group_passive_context_enabled
         self.topic_end_judge = topic_end_judge
         self.skill_tool = skill_tool
         self.tools = list(tools)
@@ -373,6 +375,13 @@ class TelegramBot:
         message_id = message.get("message_id")
 
         if not self._should_respond_to_message(chat=chat, message=message, text=text):
+            self._record_passive_group_context(
+                chat_id=chat_id,
+                message=message,
+                text=text,
+                image_ref=image_ref,
+                user_id=user_id,
+            )
             logger.debug("Ignored unaddressed group message in chat_id={}", chat_id)
             return
 
@@ -545,6 +554,37 @@ class TelegramBot:
             return
         history = self.histories.setdefault(chat_id, [])
         history.extend([("user", user_text), ("assistant", assistant_text)])
+        del history[:-20]
+
+    def _record_passive_group_context(
+        self,
+        *,
+        chat_id: int,
+        message: TelegramMessage,
+        text: str,
+        image_ref: TelegramImageRef | None,
+        user_id: int | None,
+    ) -> None:
+        if not self.group_passive_context_enabled or not self._is_allowed(chat_id=chat_id, user_id=user_id):
+            return
+        if self.bot_user_id is not None and user_id == self.bot_user_id:
+            return
+        passive_text = _passive_group_history_text(message, text=text, image_ref=image_ref)
+        if not passive_text:
+            return
+        message_id = message.get("message_id")
+        if self.session_log is not None:
+            self.session_log.append(
+                chat_id,
+                "user",
+                text=passive_text,
+                role="user",
+                message_id=message_id,
+                metadata={"passive_group_context": True},
+            )
+            return
+        history = self.histories.setdefault(chat_id, [])
+        history.append(("user", passive_text))
         del history[:-20]
 
     def _clear_history(self, chat_id: int) -> None:
@@ -862,6 +902,32 @@ def _history_user_text(text: str, *, images: Sequence[ImageAttachment]) -> str:
     if user_text:
         return f"{user_text}\n[圖片: {image_names}]"
     return f"[圖片: {image_names}]"
+
+
+def _passive_group_history_text(message: TelegramMessage, *, text: str, image_ref: TelegramImageRef | None) -> str:
+    body_parts: list[str] = []
+    if text.strip():
+        body_parts.append(text.strip())
+    if image_ref is not None:
+        body_parts.append(f"[圖片: {image_ref.filename}; 未讀取圖片內容]")
+    body = "\n".join(body_parts).strip()
+    if not body:
+        return ""
+    return f"[群組旁聽訊息 from {_sender_label(message)}] {body}"
+
+
+def _sender_label(message: TelegramMessage) -> str:
+    sender = message.get("from")
+    if not sender:
+        return "unknown"
+    username = sender.get("username")
+    if username:
+        return f"@{username}"
+    sender_id = sender.get("id")
+    if sender_id is not None:
+        return f"user_id={sender_id}"
+    first_name = sender.get("first_name")
+    return first_name or "unknown"
 
 
 def _generated_image_caption(prompt: str) -> str:
