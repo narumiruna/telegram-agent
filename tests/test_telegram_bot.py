@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -989,6 +990,32 @@ async def test_whitelist_rejects_unauthorized_message() -> None:
     )
 
     assert telegram.sent == [(123, "這個機器人目前沒有開放給你使用。", 10)]
+
+
+@pytest.mark.asyncio
+async def test_telegram_client_sends_plain_text_without_parse_mode_and_sanitizes_control_chars() -> None:
+    payloads: list[dict[str, Any]] = []
+    text = (
+        "多行\r\n"
+        "- item\n"
+        "URL https://example.com/a_b?x=1&y=2\n"
+        "```py\nprint('_*[x]')\n```\n"
+        r"_ * [ ] ( ) ~ ` > # + - = | { } . !"
+        "\x00\x08"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.read().decode()))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 99}})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        telegram = TelegramClient("token", http_client=client)
+        message_id = await telegram.send_message(123, text)
+
+    assert message_id == 99
+    assert "parse_mode" not in payloads[0]
+    assert payloads[0]["text"] == text.replace("\r\n", "\n").replace("\x00", "").replace("\x08", "")
 
 
 @pytest.mark.asyncio

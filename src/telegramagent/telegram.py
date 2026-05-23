@@ -196,7 +196,7 @@ class TelegramClient:
 
     async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> int | None:
         last_message_id: int | None = None
-        for chunk in _chunk_text(text):
+        for chunk in _chunk_text(_sanitize_telegram_text(text)):
             payload: dict[str, object] = {
                 "chat_id": chat_id,
                 "text": chunk,
@@ -225,7 +225,7 @@ class TelegramClient:
         payload: dict[str, object] = {"chat_id": chat_id}
         if reply_to_message_id is not None:
             payload["reply_to_message_id"] = reply_to_message_id
-        caption_chunks = _chunk_text(caption, limit=1024) if caption else []
+        caption_chunks = _chunk_text(_sanitize_telegram_text(caption), limit=1024) if caption else []
         if caption_chunks:
             payload["caption"] = caption_chunks[0]
 
@@ -245,7 +245,7 @@ class TelegramClient:
         return last_message_id
 
     async def edit_message_text(self, chat_id: int, message_id: int, text: str) -> None:
-        chunks = _chunk_text(text)
+        chunks = _chunk_text(_sanitize_telegram_text(text))
         await self._request(
             "editMessageText",
             {
@@ -1045,6 +1045,16 @@ def _is_likely_long_running_action(text: str) -> bool:
         or normalized in {"go", "ok", "okay", "有字幕", "抓字幕", "抓抓看", "你就自動做事"}
         or "kabigon" in normalized
     )
+
+
+def _sanitize_telegram_text(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return "".join(character for character in normalized if _is_allowed_telegram_text_character(character))
+
+
+def _is_allowed_telegram_text_character(character: str) -> bool:
+    codepoint = ord(character)
+    return character in {"\n", "\t"} or (codepoint >= 0x20 and not 0xD800 <= codepoint <= 0xDFFF)
 
 
 def _chunk_text(text: str, limit: int = 4096) -> list[str]:
