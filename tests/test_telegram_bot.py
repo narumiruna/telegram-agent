@@ -734,6 +734,7 @@ async def test_chat_agent_uses_pydantic_agent_with_history() -> None:
 
     assert reply == "回覆"
     assert "Telegram 機器人助理" in captured["instructions"]
+    assert "自然、克制地加入少量 emoji" in captured["instructions"]
     assert runnable.prompts == ["問題"]
     assert runnable.message_history_lengths == [2]
 
