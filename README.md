@@ -59,6 +59,14 @@ BOT_YFINANCE_MCP_READ_TIMEOUT_SECONDS=120
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_API_KEY=your API key
 OPENAI_MODEL=gpt-5.4-mini
+
+# Optional Logfire observability. Set LOGFIRE_TOKEN to send traces and logs to Logfire.
+LOGFIRE_ENABLED=true
+LOGFIRE_TOKEN=
+LOGFIRE_ENVIRONMENT=dev
+LOGFIRE_SERVICE_NAME=telegramagent
+# Keep false unless you intentionally want prompts and model responses in Logfire.
+LOGFIRE_INCLUDE_CONTENT=false
 ```
 
 ## Run
@@ -84,6 +92,10 @@ Stop:
 ```bash
 docker compose down
 ```
+
+## Observability
+
+Logfire support is opt-in by token: set `LOGFIRE_TOKEN` to enable Logfire configuration at startup. The bot forwards Loguru logs and instruments HTTPX, Pydantic AI, and MCP calls. Prompt and model-response content is not sent by default; set `LOGFIRE_INCLUDE_CONTENT=true` only if you intentionally want that content in traces.
 
 ## Commands
 

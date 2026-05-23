@@ -26,6 +26,8 @@ from telegramagent.llm import TopicEndAgent
 from telegramagent.mcp import YFinanceMcpConfig
 from telegramagent.mcp import build_yfinance_mcp_toolsets
 from telegramagent.mcp import command_available
+from telegramagent.observability import LogfireConfig
+from telegramagent.observability import configure_logfire
 from telegramagent.session import SessionLog
 from telegramagent.settings import Settings
 from telegramagent.skills import SkillInstaller
@@ -65,6 +67,16 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
     """Start the Telegram bot with long polling."""
     configure_logging(verbose)
     settings = Settings()
+    configure_logfire(
+        LogfireConfig(
+            enabled=settings.logfire_enabled,
+            token=settings.logfire_token,
+            environment=settings.logfire_environment,
+            service_name=settings.logfire_service_name,
+            include_content=settings.logfire_include_content,
+        ),
+        verbose=verbose,
+    )
 
     project_root = Path.cwd()
     soul = load_context_file(

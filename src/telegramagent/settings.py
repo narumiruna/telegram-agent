@@ -60,8 +60,11 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
 
+    logfire_enabled: bool = Field(default=True, alias="LOGFIRE_ENABLED")
     logfire_token: str | None = Field(default=None, alias="LOGFIRE_TOKEN")
     logfire_environment: str | None = Field(default=None, alias="LOGFIRE_ENVIRONMENT")
+    logfire_service_name: str = Field(default="telegramagent", alias="LOGFIRE_SERVICE_NAME")
+    logfire_include_content: bool = Field(default=False, alias="LOGFIRE_INCLUDE_CONTENT")
 
     @field_validator("bot_whitelist", "bot_skill_admins", mode="before")
     @classmethod

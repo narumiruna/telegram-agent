@@ -65,3 +65,19 @@ def test_yfinance_mcp_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_yfinance_mcp_args == ("--from", "yfmcp", "yfmcp")
     assert settings.bot_yfinance_mcp_init_timeout_seconds == 5
     assert settings.bot_yfinance_mcp_read_timeout_seconds == 30
+
+
+def test_logfire_settings_parse_env(monkeypatch) -> None:
+    monkeypatch.setenv("LOGFIRE_ENABLED", "false")
+    monkeypatch.setenv("LOGFIRE_TOKEN", "token")
+    monkeypatch.setenv("LOGFIRE_ENVIRONMENT", "prod")
+    monkeypatch.setenv("LOGFIRE_SERVICE_NAME", "custom-bot")
+    monkeypatch.setenv("LOGFIRE_INCLUDE_CONTENT", "true")
+
+    settings = Settings()
+
+    assert settings.logfire_enabled is False
+    assert settings.logfire_token == "token"
+    assert settings.logfire_environment == "prod"
+    assert settings.logfire_service_name == "custom-bot"
+    assert settings.logfire_include_content is True
