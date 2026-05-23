@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -47,13 +48,25 @@ from telegramagent.telegram import TelegramClient
 app = typer.Typer(help="Run a Telegram AI bot.")
 
 
+_TELEGRAM_BOT_TOKEN_RE = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
+_SENSITIVE_LOG_VALUE_RE = re.compile(
+    r"(?i)\b(token|api[_-]?key|authorization|cookie|set-cookie|password|secret)=([^\s;]+)"
+)
+_BEARER_LOG_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
+
+
 class LoguruInterceptHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             level: str | int = logger.level(record.levelname).name
         except ValueError:
             level = record.levelno
-        logger.opt(exception=record.exc_info, depth=6).log(level, "{}: {}", record.name, record.getMessage())
+        logger.opt(exception=record.exc_info, depth=6).log(
+            level,
+            "{}: {}",
+            record.name,
+            _redact_log_message(record.getMessage()),
+        )
 
 
 def configure_logging(verbose: bool = False) -> None:
@@ -69,6 +82,14 @@ def configure_logging(verbose: bool = False) -> None:
     root_logger = logging.getLogger()
     root_logger.handlers = [LoguruInterceptHandler()]
     root_logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+    for noisy_logger_name in ("httpx", "httpcore", "urllib3"):
+        logging.getLogger(noisy_logger_name).setLevel(logging.WARNING)
+
+
+def _redact_log_message(message: str) -> str:
+    message = _TELEGRAM_BOT_TOKEN_RE.sub("/bot[redacted]", message)
+    message = _SENSITIVE_LOG_VALUE_RE.sub(lambda match: f"{match.group(1)}=[redacted]", message)
+    return _BEARER_LOG_RE.sub("Bearer [redacted]", message)
 
 
 def _yfinance_mcp_unavailable_reason(config: YFinanceMcpConfig, *, available: bool) -> str:
