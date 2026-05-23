@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -51,7 +52,7 @@ class FakeRunnableAgent:
     def __init__(self, output: str = "ok") -> None:
         self.output = output
 
-    async def run(self, user_prompt: str) -> FakeRunResult:
+    async def run(self, user_prompt: str, **kwargs: Any) -> FakeRunResult:
         return FakeRunResult(self.output)
 
 

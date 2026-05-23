@@ -76,6 +76,23 @@ async def test_followup_go_uses_pending_youtube_url_without_asking_again() -> No
 
 
 @pytest.mark.asyncio
+async def test_followup_subtitle_and_kabigon_words_reuse_pending_youtube_url() -> None:
+    agent = FakeAgent()
+    fetcher = FakeTranscriptFetcher()
+    tool = ProactiveActionTool(transcript_fetcher=fetcher)
+
+    await tool.handle("https://www.youtube.com/watch?v=h_7fdZjUKE8", chat_id=123, agent=agent, history=[])
+    await tool.handle("有字幕", chat_id=123, agent=agent, history=[])
+    await tool.handle("你用 kabigon 抓抓看阿", chat_id=123, agent=agent, history=[])
+
+    assert fetcher.calls == [
+        ("h_7fdZjUKE8", ("zh-Hant", "zh-TW", "zh", "ja", "en")),
+        ("h_7fdZjUKE8", ("zh-Hant", "zh-TW", "zh", "ja", "en")),
+        ("h_7fdZjUKE8", ("zh-Hant", "zh-TW", "zh", "ja", "en")),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_youtube_transcript_fetch_is_bounded() -> None:
     agent = FakeAgent()
     tool = ProactiveActionTool(

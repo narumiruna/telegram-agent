@@ -59,9 +59,11 @@ class FakeRunnableAgent:
     def __init__(self, output: str = "回覆") -> None:
         self.output = output
         self.prompts: list[str] = []
+        self.message_history_lengths: list[int] = []
 
-    async def run(self, user_prompt: str) -> FakeRunResult:
+    async def run(self, user_prompt: str, **kwargs: Any) -> FakeRunResult:
         self.prompts.append(user_prompt)
+        self.message_history_lengths.append(len(kwargs.get("message_history") or []))
         return FakeRunResult(self.output)
 
 
@@ -641,7 +643,8 @@ async def test_chat_agent_uses_pydantic_agent_with_history() -> None:
 
     assert reply == "回覆"
     assert "Telegram 機器人助理" in captured["instructions"]
-    assert runnable.prompts == ["近期對話:\nuser: 前題\nassistant: 前答\n\n使用者新訊息:\n問題"]
+    assert runnable.prompts == ["問題"]
+    assert runnable.message_history_lengths == [2]
 
 
 @pytest.mark.asyncio

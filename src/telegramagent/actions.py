@@ -263,7 +263,8 @@ class _TextExtractor(HTMLParser):
 _URL_RE = re.compile(r"https?://[^\s<>()]+", flags=re.IGNORECASE)
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be"}
 _FOLLOWUP_RE = re.compile(
-    r"^(go|開始|執行|繼續|做|自動做|你就自動做事|整理|摘要|好|好呀|ok|okay)\s*[.!！。]*$", re.IGNORECASE
+    r"^(go|開始|執行|繼續|做|自動做|你就自動做事|整理|摘要|好|好呀|ok|okay|有字幕|抓抓看|抓字幕|用\s*kabigon.*)\s*[.!！。]*$",
+    re.IGNORECASE,
 )
 _RISKY_ACTION_RE = re.compile(
     r"(?:\b(?:delete|buy|purchase|send|deploy|login|sign\s*in)\b|刪除|購買|下單|付款|發送|寄出|部署|登入|修改|提交)",
@@ -279,7 +280,11 @@ def _first_url(text: str) -> str | None:
 
 
 def _is_followup_trigger(text: str) -> bool:
-    return _FOLLOWUP_RE.match(text.strip()) is not None
+    stripped = text.strip()
+    lowered = stripped.casefold()
+    return (
+        _FOLLOWUP_RE.match(stripped) is not None or "kabigon" in lowered or "抓字幕" in stripped or "抓抓看" in stripped
+    )
 
 
 def _confirmation_required_reason(text: str) -> str | None:
