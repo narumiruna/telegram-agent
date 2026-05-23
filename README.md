@@ -36,6 +36,14 @@ BOT_PROACTIVE_MAX_EXTRACTED_CHARS=12000
 BOT_PROACTIVE_PENDING_TTL_SECONDS=900
 BOT_PROACTIVE_ALLOWED_SCHEMES=http,https
 
+# File-backed immediate events. External scripts can write JSON files to BOT_EVENTS_DIR/inbox.
+BOT_EVENTS_ENABLED=false
+BOT_EVENTS_DIR=.events
+BOT_EVENTS_SCAN_SECONDS=2
+BOT_EVENTS_MAX_QUEUED_PER_CHAT=5
+BOT_EVENTS_MAX_TEXT_CHARS=4000
+BOT_EVENTS_ARCHIVE_PROCESSED=true
+
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_API_KEY=your API key
 OPENAI_MODEL=gpt-5.4-mini
@@ -76,6 +84,7 @@ docker compose down
 - `/skills list`: list installed Agent Skills
 - `/soul show|reload|path`: inspect or reload `SOUL.md`
 - `/memory show|reload|path`: inspect or reload `MEMORY.md`
+- `/events list|show <name>|cancel <name>|reload`: manage pending file-backed events
 
 You can also send plain text directly to the bot.
 
@@ -96,6 +105,44 @@ Safety limits:
 - If YouTube subtitles are disabled, unavailable, or blocked by YouTube, the bot says so instead of pretending it watched the video.
 
 Disable this behavior with `BOT_PROACTIVE_ENABLED=false`.
+
+## File-Backed Immediate Events
+
+When `BOT_EVENTS_ENABLED=true`, the bot scans `BOT_EVENTS_DIR/inbox/*.json` for immediate events. External scripts can create one JSON file to make the bot send a synthetic message into a chat. This is not a scheduler: `at`, `schedule`, and `timezone` fields are rejected.
+
+Example event file at `.events/inbox/summarize-video.json`:
+
+```json
+{
+  "type": "immediate",
+  "name": "summarize-video",
+  "chat_id": 123456,
+  "text": "請整理 https://youtu.be/iG-hzh9roNw",
+  "reply_mode": "edit-status",
+  "created_by": "external-script"
+}
+```
+
+The bot dispatches it as:
+
+```text
+[EVENT:summarize-video] 請整理 https://youtu.be/iG-hzh9roNw
+```
+
+`reply_mode` is optional:
+
+- `send` (default): send the result as a new message.
+- `edit-status`: first send `處理中…`, then edit that bot-owned status message into the final result. If editing fails, the bot falls back to sending a new message. Telegram only allows editing messages sent by the bot itself.
+
+Safety limits:
+
+- Event names must match `^[a-z0-9-]{1,40}$`.
+- Event text is limited by `BOT_EVENTS_MAX_TEXT_CHARS`.
+- Event text cannot execute management commands such as `/skills`, `/memory`, `/soul`, or `/events`.
+- A scan processes at most `BOT_EVENTS_MAX_QUEUED_PER_CHAT` events per chat; excess files stay in `inbox/` for a later scan.
+- Successful events are moved to `processed/` when `BOT_EVENTS_ARCHIVE_PROCESSED=true`; invalid or failed events are moved to `failed/`.
+
+Docker Compose mounts `./.events:/app/.events` by default, so host scripts can write to `.events/inbox/`.
 
 ## Group Reply Rules
 

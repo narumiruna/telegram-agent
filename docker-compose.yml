@@ -16,5 +16,6 @@ services:
     restart: unless-stopped
     volumes:
       - ./.agents:/app/.agents
+      - ./.events:/app/.events
       - ./SOUL.md:/app/SOUL.md:ro
       - ./MEMORY.md:/app/MEMORY.md:ro

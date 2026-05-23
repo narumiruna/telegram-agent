@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     bot_proactive_allowed_schemes: Annotated[set[str], NoDecode] = Field(
         default_factory=lambda: {"http", "https"}, alias="BOT_PROACTIVE_ALLOWED_SCHEMES"
     )
+    bot_events_enabled: bool = Field(default=False, alias="BOT_EVENTS_ENABLED")
+    bot_events_dir: Path = Field(default=Path(".events"), alias="BOT_EVENTS_DIR")
+    bot_events_scan_seconds: float = Field(default=2.0, gt=0, alias="BOT_EVENTS_SCAN_SECONDS")
+    bot_events_max_queued_per_chat: int = Field(default=5, ge=1, alias="BOT_EVENTS_MAX_QUEUED_PER_CHAT")
+    bot_events_max_text_chars: int = Field(default=4000, ge=1, alias="BOT_EVENTS_MAX_TEXT_CHARS")
+    bot_events_archive_processed: bool = Field(default=True, alias="BOT_EVENTS_ARCHIVE_PROCESSED")
 
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")

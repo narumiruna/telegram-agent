@@ -13,6 +13,11 @@ from telegramagent.actions import ProactiveActionTool
 from telegramagent.context_files import ContextFile
 from telegramagent.context_files import ContextManagementTool
 from telegramagent.context_files import load_context_file
+from telegramagent.events import EventManagementTool
+from telegramagent.events import EventSettings
+from telegramagent.events import EventWatcher
+from telegramagent.events import ImmediateEvent
+from telegramagent.events import event_prompt
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
 from telegramagent.settings import Settings
@@ -37,7 +42,7 @@ def configure_logging(verbose: bool = False) -> None:
 
 
 @app.command()
-def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging.")) -> None:
+def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging.")) -> None:  # noqa: C901
     """Start the Telegram bot with long polling."""
     configure_logging(verbose)
     settings = Settings()
@@ -139,6 +144,26 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         return len(updated_skills)
 
     telegram = TelegramClient(settings.bot_token)
+    event_watcher = EventWatcher(
+        settings=EventSettings(
+            enabled=settings.bot_events_enabled,
+            events_dir=settings.bot_events_dir,
+            scan_seconds=settings.bot_events_scan_seconds,
+            max_queued_per_chat=settings.bot_events_max_queued_per_chat,
+            max_text_chars=settings.bot_events_max_text_chars,
+            archive_processed=settings.bot_events_archive_processed,
+        ),
+        dispatch=lambda event: dispatch_event(event),
+    )
+
+    async def dispatch_event(event: ImmediateEvent) -> None:
+        await bot.dispatch_synthetic_message(
+            chat_id=event.chat_id,
+            text=event_prompt(event),
+            reply_to_message_id=event.reply_to_message_id,
+            reply_mode=event.reply_mode,
+        )
+
     bot = TelegramBot(
         telegram=telegram,
         agent=agent,
@@ -170,12 +195,29 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
                 admins=settings.bot_skill_admins,
                 fallback_admins=settings.bot_whitelist,
             ),
+            EventManagementTool(
+                watcher=event_watcher,
+                admins=settings.bot_skill_admins,
+                fallback_admins=settings.bot_whitelist,
+            ),
         ],
     )
 
+    async def run() -> None:
+        if not settings.bot_events_enabled:
+            await bot.run_forever()
+            return
+        event_task = asyncio.create_task(event_watcher.run_forever())
+        try:
+            await bot.run_forever()
+        finally:
+            event_watcher.stop()
+            await event_task
+
     try:
-        asyncio.run(bot.run_forever())
+        asyncio.run(run())
     except KeyboardInterrupt:
+        event_watcher.stop()
         logger.info("Telegram bot stopped")
 
 

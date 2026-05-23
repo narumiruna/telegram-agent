@@ -71,7 +71,9 @@ class TelegramGateway(Protocol):
 
     async def get_updates(self, *, offset: int | None, poll_timeout: int = 30) -> list[TelegramUpdate]: ...
 
-    async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> None: ...
+    async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> int | None: ...
+
+    async def edit_message_text(self, chat_id: int, message_id: int, text: str) -> None: ...
 
 
 class TelegramApiError(RuntimeError):
@@ -102,7 +104,8 @@ class TelegramClient:
             raise TelegramApiError("Telegram getUpdates did not return a list")
         return cast(list[TelegramUpdate], result)
 
-    async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> None:
+    async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> int | None:
+        last_message_id: int | None = None
         for chunk in _chunk_text(text):
             payload: dict[str, object] = {
                 "chat_id": chat_id,
@@ -111,7 +114,27 @@ class TelegramClient:
             }
             if reply_to_message_id is not None:
                 payload["reply_to_message_id"] = reply_to_message_id
-            await self._request("sendMessage", payload)
+            result = await self._request("sendMessage", payload)
+            if isinstance(result, Mapping):
+                result_mapping = cast(Mapping[str, object], result)
+                message_id = result_mapping.get("message_id")
+                if isinstance(message_id, int):
+                    last_message_id = message_id
+        return last_message_id
+
+    async def edit_message_text(self, chat_id: int, message_id: int, text: str) -> None:
+        chunks = _chunk_text(text)
+        await self._request(
+            "editMessageText",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": chunks[0],
+                "disable_web_page_preview": True,
+            },
+        )
+        for chunk in chunks[1:]:
+            await self.send_message(chat_id, chunk, reply_to_message_id=message_id)
 
     async def _request(self, method: str, payload: dict[str, object] | None = None) -> object:
         if self.http_client is None:
@@ -217,14 +240,45 @@ class TelegramBot:
         await self.telegram.send_message(chat_id, reply, reply_to_message_id=message_id)
 
     async def build_reply(self, chat_id: int, text: str, *, user_id: int | None = None) -> str:
-        for tool in self._management_tools():
-            tool_reply = await tool.handle(text, chat_id=chat_id, user_id=user_id)
-            if tool_reply is not None:
-                return tool_reply
+        return await self._build_reply(chat_id, text, user_id=user_id, allow_management=True)
 
-        command_reply = await self._handle_builtin_command(chat_id=chat_id, text=text, user_id=user_id)
-        if command_reply is not None:
-            return command_reply
+    async def dispatch_synthetic_message(
+        self,
+        *,
+        chat_id: int,
+        text: str,
+        reply_to_message_id: int | None = None,
+        reply_mode: str = "send",
+    ) -> None:
+        status_message_id: int | None = None
+        if reply_mode == "edit-status":
+            status_message_id = await self.telegram.send_message(
+                chat_id,
+                "處理中…",
+                reply_to_message_id=reply_to_message_id,
+            )
+        reply = await self._build_reply(chat_id, text, user_id=None, allow_management=False)
+        if reply_mode == "edit-status" and status_message_id is not None:
+            try:
+                await self.telegram.edit_message_text(chat_id, status_message_id, reply)
+            except httpx.HTTPError, TelegramApiError:
+                logger.exception("Failed to edit synthetic event status message; sending a new message instead")
+                await self.telegram.send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+            return
+        await self.telegram.send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+
+    async def _build_reply(self, chat_id: int, text: str, *, user_id: int | None, allow_management: bool) -> str:
+        if allow_management:
+            for tool in self._management_tools():
+                tool_reply = await tool.handle(text, chat_id=chat_id, user_id=user_id)
+                if tool_reply is not None:
+                    return tool_reply
+
+            command_reply = await self._handle_builtin_command(chat_id=chat_id, text=text, user_id=user_id)
+            if command_reply is not None:
+                return command_reply
+        elif _is_management_command(text):
+            return "Event 訊息不允許執行管理指令。"
 
         proactive_reply = await self._handle_proactive_action(chat_id=chat_id, text=text)
         if proactive_reply is not None:
@@ -368,9 +422,15 @@ def _help_message() -> str:
             "/skills list - 列出已安裝 Agent Skills",
             "/soul show|reload|path - 管理 SOUL.md",
             "/memory show|reload|path - 管理 MEMORY.md",
+            "/events list|show|cancel|reload - 管理 immediate events",
             "也可以直接傳一般文字給我。",
         ]
     )
+
+
+def _is_management_command(text: str) -> bool:
+    command = text.strip().split(maxsplit=1)[0].split("@", maxsplit=1)[0].lower()
+    return command in {"/skills", "/soul", "/memory", "/events", "/start", "/help", "/id", "/reset", "/ask"}
 
 
 def _chunk_text(text: str, limit: int = 4096) -> list[str]:

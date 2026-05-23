@@ -26,6 +26,8 @@ from telegramagent.telegram import TelegramUpdate
 class FakeTelegram:
     def __init__(self) -> None:
         self.sent: list[tuple[int, str, int | None]] = []
+        self.edited: list[tuple[int, int, str]] = []
+        self.next_message_id = 100
 
     async def get_me(self) -> dict[str, object]:
         return {"username": "fakebot"}
@@ -33,8 +35,14 @@ class FakeTelegram:
     async def get_updates(self, *, offset: int | None, poll_timeout: int = 30) -> list[TelegramUpdate]:
         return []
 
-    async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> None:
+    async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> int | None:
         self.sent.append((chat_id, text, reply_to_message_id))
+        message_id = self.next_message_id
+        self.next_message_id += 1
+        return message_id
+
+    async def edit_message_text(self, chat_id: int, message_id: int, text: str) -> None:
+        self.edited.append((chat_id, message_id, text))
 
 
 class FakeAgent:
@@ -160,6 +168,69 @@ async def test_proactive_tool_runs_before_generic_chat_and_updates_history() -> 
     assert await bot.build_reply(123, "https://youtu.be/iG-hzh9roNw") == "主動整理完成"
     assert proactive.calls == [("https://youtu.be/iG-hzh9roNw", 123, [])]
     assert bot.histories[123] == [("user", "https://youtu.be/iG-hzh9roNw"), ("assistant", "主動整理完成")]
+
+
+@pytest.mark.asyncio
+async def test_synthetic_message_blocks_management_commands() -> None:
+    telegram = FakeTelegram()
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent())
+
+    await bot.dispatch_synthetic_message(chat_id=123, text="/skills list", reply_to_message_id=55)
+
+    assert telegram.sent == [(123, "Event 訊息不允許執行管理指令。", 55)]
+    assert bot.histories == {}
+
+
+@pytest.mark.asyncio
+async def test_synthetic_message_edit_status_mode_edits_processing_message() -> None:
+    telegram = FakeTelegram()
+    proactive = FakeProactiveTool(["事件整理完成"])
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), proactive_tool=proactive)
+
+    await bot.dispatch_synthetic_message(
+        chat_id=123,
+        text="[EVENT:job] https://example.com",
+        reply_to_message_id=55,
+        reply_mode="edit-status",
+    )
+
+    assert telegram.sent == [(123, "處理中…", 55)]
+    assert telegram.edited == [(123, 100, "事件整理完成")]
+
+
+@pytest.mark.asyncio
+async def test_synthetic_message_edit_status_mode_falls_back_when_send_returns_no_message_id() -> None:
+    class FakeTelegramNoMessageId(FakeTelegram):
+        async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> int | None:
+            self.sent.append((chat_id, text, reply_to_message_id))
+            return None
+
+    telegram = FakeTelegramNoMessageId()
+    proactive = FakeProactiveTool(["事件整理完成"])
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), proactive_tool=proactive)
+
+    await bot.dispatch_synthetic_message(
+        chat_id=123,
+        text="[EVENT:job] https://example.com",
+        reply_to_message_id=55,
+        reply_mode="edit-status",
+    )
+
+    assert telegram.sent == [(123, "處理中…", 55), (123, "事件整理完成", 55)]
+    assert telegram.edited == []
+
+
+@pytest.mark.asyncio
+async def test_synthetic_message_allows_proactive_and_generic_reply() -> None:
+    telegram = FakeTelegram()
+    proactive = FakeProactiveTool(["事件整理完成"])
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), proactive_tool=proactive)
+
+    await bot.dispatch_synthetic_message(chat_id=123, text="[EVENT:job] https://example.com", reply_to_message_id=None)
+
+    assert proactive.calls == [("[EVENT:job] https://example.com", 123, [])]
+    assert telegram.sent == [(123, "事件整理完成", None)]
+    assert bot.histories[123] == [("user", "[EVENT:job] https://example.com"), ("assistant", "事件整理完成")]
 
 
 @pytest.mark.asyncio
@@ -538,17 +609,22 @@ async def test_telegram_client_calls_bot_api() -> None:
         requests.append((str(request.url), dict(request.headers)))
         if request.url.path.endswith("/getUpdates"):
             return httpx.Response(200, json={"ok": True, "result": [{"update_id": 1}]})
+        if request.url.path.endswith("/sendMessage"):
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 99}})
         return httpx.Response(200, json={"ok": True, "result": {}})
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
         telegram = TelegramClient("token", http_client=client)
         updates = await telegram.get_updates(offset=2, poll_timeout=1)
-        await telegram.send_message(123, "hello")
+        message_id = await telegram.send_message(123, "hello")
+        await telegram.edit_message_text(123, 99, "done")
 
     assert updates == [{"update_id": 1}]
+    assert message_id == 99
     assert requests[0][0] == "https://api.telegram.org/bottoken/getUpdates"
     assert requests[1][0] == "https://api.telegram.org/bottoken/sendMessage"
+    assert requests[2][0] == "https://api.telegram.org/bottoken/editMessageText"
 
 
 @pytest.mark.asyncio

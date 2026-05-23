@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from telegramagent.settings import Settings
 
 
@@ -17,3 +19,21 @@ def test_proactive_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_proactive_max_extracted_chars == 500
     assert settings.bot_proactive_pending_ttl_seconds == 60
     assert settings.bot_proactive_allowed_schemes == {"https"}
+
+
+def test_event_settings_parse_env(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_EVENTS_ENABLED", "true")
+    monkeypatch.setenv("BOT_EVENTS_DIR", ".custom-events")
+    monkeypatch.setenv("BOT_EVENTS_SCAN_SECONDS", "1.5")
+    monkeypatch.setenv("BOT_EVENTS_MAX_QUEUED_PER_CHAT", "2")
+    monkeypatch.setenv("BOT_EVENTS_MAX_TEXT_CHARS", "123")
+    monkeypatch.setenv("BOT_EVENTS_ARCHIVE_PROCESSED", "false")
+
+    settings = Settings()
+
+    assert settings.bot_events_enabled is True
+    assert settings.bot_events_dir == Path(".custom-events")
+    assert settings.bot_events_scan_seconds == 1.5
+    assert settings.bot_events_max_queued_per_chat == 2
+    assert settings.bot_events_max_text_chars == 123
+    assert settings.bot_events_archive_processed is False
