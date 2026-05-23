@@ -993,14 +993,14 @@ async def test_whitelist_rejects_unauthorized_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_telegram_client_sends_plain_text_without_parse_mode_and_sanitizes_control_chars() -> None:
+async def test_telegram_client_formats_commonmark_bold_as_safe_html() -> None:
     payloads: list[dict[str, Any]] = []
     text = (
-        "多行\r\n"
-        "- item\n"
-        "URL https://example.com/a_b?x=1&y=2\n"
-        "```py\nprint('_*[x]')\n```\n"
-        r"_ * [ ] ( ) ~ ` > # + - = | { } . !"
+        "**至少 90 人死亡**\r\n"
+        "中國山西省 **留神峪煤礦** 發生氣體爆炸\n"
+        "URL: https://www.bbc.com/news/articles/c5y0ve18qlko?x=1&y=2\n"
+        "```text\n特殊符號: _ * [ ] ( ) ~ ` > # + - = | { } . !\n```\n"
+        "特殊符號: _ * [ ] ( ) ~ ` > # + - = | { } . !"
         "\x00\x08"
     )
 
@@ -1014,8 +1014,14 @@ async def test_telegram_client_sends_plain_text_without_parse_mode_and_sanitizes
         message_id = await telegram.send_message(123, text)
 
     assert message_id == 99
-    assert "parse_mode" not in payloads[0]
-    assert payloads[0]["text"] == text.replace("\r\n", "\n").replace("\x00", "").replace("\x08", "")
+    assert payloads[0]["parse_mode"] == "HTML"
+    assert "**" not in payloads[0]["text"]
+    assert "<b>至少 90 人死亡</b>" in payloads[0]["text"]
+    assert "中國山西省 <b>留神峪煤礦</b> 發生氣體爆炸" in payloads[0]["text"]
+    assert "https://www.bbc.com/news/articles/c5y0ve18qlko?x=1&amp;y=2" in payloads[0]["text"]
+    assert "<pre>特殊符號: _ * [ ] ( ) ~ ` &gt; # + - = | { } . !\n</pre>" in payloads[0]["text"]
+    assert "\x00" not in payloads[0]["text"]
+    assert "\x08" not in payloads[0]["text"]
 
 
 @pytest.mark.asyncio

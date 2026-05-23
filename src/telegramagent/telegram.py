@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import re
 from collections.abc import Mapping
 from collections.abc import Sequence
@@ -199,7 +200,8 @@ class TelegramClient:
         for chunk in _chunk_text(_sanitize_telegram_text(text)):
             payload: dict[str, object] = {
                 "chat_id": chat_id,
-                "text": chunk,
+                "text": _format_telegram_html(chunk),
+                "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             }
             if reply_to_message_id is not None:
@@ -227,7 +229,8 @@ class TelegramClient:
             payload["reply_to_message_id"] = reply_to_message_id
         caption_chunks = _chunk_text(_sanitize_telegram_text(caption), limit=1024) if caption else []
         if caption_chunks:
-            payload["caption"] = caption_chunks[0]
+            payload["caption"] = _format_telegram_html(caption_chunks[0])
+            payload["parse_mode"] = "HTML"
 
         result = await self._request_multipart(
             "sendPhoto",
@@ -251,7 +254,8 @@ class TelegramClient:
             {
                 "chat_id": chat_id,
                 "message_id": message_id,
-                "text": chunks[0],
+                "text": _format_telegram_html(chunks[0]),
+                "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
         )
@@ -1047,9 +1051,41 @@ def _is_likely_long_running_action(text: str) -> bool:
     )
 
 
+_FENCED_CODE_RE = re.compile(r"```(?:([^\n`]*)\n)?([\s\S]*?)```")
+_INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*", flags=re.DOTALL)
+
+
 def _sanitize_telegram_text(text: str) -> str:
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     return "".join(character for character in normalized if _is_allowed_telegram_text_character(character))
+
+
+def _format_telegram_html(text: str) -> str:
+    parts: list[str] = []
+    cursor = 0
+    for match in _FENCED_CODE_RE.finditer(text):
+        parts.append(_format_inline_telegram_html(text[cursor : match.start()]))
+        parts.append(f"<pre>{html.escape(match.group(2), quote=False)}</pre>")
+        cursor = match.end()
+    parts.append(_format_inline_telegram_html(text[cursor:]))
+    return "".join(parts)
+
+
+def _format_inline_telegram_html(text: str) -> str:
+    parts: list[str] = []
+    cursor = 0
+    for match in _INLINE_CODE_RE.finditer(text):
+        parts.append(_format_bold_telegram_html(text[cursor : match.start()]))
+        parts.append(f"<code>{html.escape(match.group(1), quote=False)}</code>")
+        cursor = match.end()
+    parts.append(_format_bold_telegram_html(text[cursor:]))
+    return "".join(parts)
+
+
+def _format_bold_telegram_html(text: str) -> str:
+    escaped = html.escape(text, quote=False)
+    return _BOLD_RE.sub(lambda match: f"<b>{match.group(1)}</b>", escaped)
 
 
 def _is_allowed_telegram_text_character(character: str) -> bool:
