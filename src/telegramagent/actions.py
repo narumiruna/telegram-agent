@@ -114,6 +114,8 @@ async def extract_url_context(
     except (ActionError, httpx.HTTPError, OSError, TimeoutError) as primary_exc:
         try:
             body = await load_url_with_kabigon(url, timeout_seconds=timeout_seconds, max_chars=max_chars)
+            if source_type == "x_post" and _looks_like_x_blocker_page(body):
+                raise KabigonLoadError("kabigon 讀到的是 X 的 JavaScript/browser unsupported 頁面，不是貼文內容。")
         except KabigonLoadError as fallback_exc:
             return _failed_url_context(
                 url,
@@ -183,6 +185,8 @@ class KabigonExternalLoader:
             body = await load_url_with_kabigon(url, timeout_seconds=self.timeout_seconds, max_chars=self.max_chars)
         except KabigonLoadError as exc:
             raise ActionError(str(exc)) from exc
+        if _is_x_status_url(url) and _looks_like_x_blocker_page(body):
+            raise ActionError("kabigon 讀到的是 X 的 JavaScript/browser unsupported 頁面，不是貼文內容。")
         return ActionContent(title="kabigon loaded content", source_url=url, body=body, content_type="kabigon_load_url")
 
 
@@ -417,6 +421,8 @@ class ProactiveActionTool:
         text = _html_to_text(raw_text) if "text/html" in content_type else raw_text
         text = _collapse_whitespace(html.unescape(text))[: self.settings.max_extracted_chars]
         title = _html_title(raw_text) or parsed.netloc
+        if _is_x_status_url(url) and _looks_like_x_blocker_page(text, title=title):
+            raise ActionError("X 回傳的是 JavaScript/browser unsupported 頁面，不是貼文內容。")
         if not text:
             raise ActionError("這個頁面沒有讀到可摘要的文字內容。")
         return ActionContent(title=title, source_url=url, body=text, content_type="web_page")
@@ -452,6 +458,13 @@ class _TextExtractor(HTMLParser):
 _URL_RE = re.compile(r"https?://[^\s<>()]+", flags=re.IGNORECASE)
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be"}
 _X_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}
+_X_BLOCKER_PHRASES = (
+    "javascript is not available",
+    "javascript is disabled in this browser",
+    "enable javascript or switch to a supported browser",
+    "switch to a supported browser to continue using x.com",
+    "continue using x.com",
+)
 _SENSITIVE_ERROR_RE = re.compile(r"(?i)\b(token|api[_-]?key|authorization|cookie|set-cookie|password|secret)=([^\s;]+)")
 _BEARER_ERROR_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _FOLLOWUP_RE = re.compile(
@@ -531,6 +544,16 @@ def _x_status_parts(url: str) -> tuple[str, str] | None:
         return None
     path_parts = [part for part in urlparse(url).path.split("/") if part]
     return path_parts[0], path_parts[2]
+
+
+def _looks_like_x_blocker_page(
+    text: str | None,
+    *,
+    title: str | None = None,
+    description: str | None = None,
+) -> bool:
+    combined = " ".join(part for part in (title, description, text) if part).casefold()
+    return bool(combined) and any(phrase in combined for phrase in _X_BLOCKER_PHRASES)
 
 
 def _latest_url_from_history(history: Sequence[tuple[str, str]]) -> str | None:
@@ -780,6 +803,9 @@ def _url_context_from_response(
         text = _collapse_whitespace(html.unescape(_html_to_text(raw_text)))[:max_chars]
     else:
         text = _collapse_whitespace(html.unescape(raw_text))[:max_chars]
+
+    if source_type == "x_post" and _looks_like_x_blocker_page(text, title=title, description=description):
+        raise ActionError("X 回傳的是 JavaScript/browser unsupported 頁面，不是貼文內容。")
 
     if source_type == "x_post" and author is None:
         x_parts = _x_status_parts(final_url) or _x_status_parts(url)

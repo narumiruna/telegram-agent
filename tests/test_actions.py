@@ -267,6 +267,46 @@ async def test_generic_url_uses_kabigon_fallback_when_builtin_fetch_cannot_extra
 
 
 @pytest.mark.asyncio
+async def test_x_url_uses_kabigon_fallback_when_builtin_fetch_returns_browser_blocker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://x.com/IEObserve/status/2058190539988898008?s=20"
+
+    async def allow_host(host: str) -> None:
+        assert host == "x.com"
+
+    monkeypatch.setattr("telegramagent.actions._assert_public_host", allow_host)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == url
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            text=(
+                "<html><title>X</title><body>"
+                "JavaScript is not available. "
+                "Please enable JavaScript or switch to a supported browser to continue using x.com."
+                "</body></html>"
+            ),
+        )
+
+    external_loader = FakeExternalLoader()
+    tool = ProactiveActionTool(
+        http_client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        capabilities=CapabilityRegistry([Capability("external_loader.kabigon", True, "test fallback")]),
+        external_loader=external_loader,
+    )
+    agent = FakeAgent()
+
+    reply = await tool.handle(url, chat_id=123, agent=agent, history=[])
+
+    assert reply == "整理完成"
+    assert external_loader.calls == [url]
+    assert "外部 loader 內容" in agent.prompts[0]
+    assert "JavaScript is not available" not in agent.prompts[0]
+
+
+@pytest.mark.asyncio
 async def test_generic_url_blocks_localhost() -> None:
     tool = ProactiveActionTool()
     agent = FakeAgent()
@@ -434,6 +474,41 @@ async def test_extract_url_context_reads_webpage_metadata(monkeypatch: pytest.Mo
     assert "Article heading Main text" in context.text
     assert "navigation" not in context.text
     assert "footer" not in context.text
+
+
+@pytest.mark.asyncio
+async def test_extract_url_context_uses_kabigon_when_x_fetch_returns_browser_blocker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://x.com/IEObserve/status/2058190539988898008?s=20"
+
+    async def fetch(url: str, *, timeout_seconds: float, max_bytes: int, max_redirects: int = 3):
+        return (
+            url,
+            FetchedResponse(
+                200,
+                headers={"content-type": "text/html; charset=utf-8"},
+                content=(
+                    b"<html><title>X</title><body>"
+                    b"JavaScript is not available. "
+                    b"Please enable JavaScript or switch to a supported browser to continue using x.com."
+                    b"</body></html>"
+                ),
+            ),
+        )
+
+    async def load(url: str, *, timeout_seconds: float, max_chars: int) -> str:
+        return "這是 kabigon 擷取到的 X 貼文內容。"
+
+    monkeypatch.setattr("telegramagent.actions._fetch_public_url_follow_redirects", fetch)
+    monkeypatch.setattr("telegramagent.actions.load_url_with_kabigon", load)
+
+    context = await extract_url_context(url)
+
+    assert context.source_type == "x_post"
+    assert context.extraction_status == "success"
+    assert context.author == "@IEObserve"
+    assert context.text == "這是 kabigon 擷取到的 X 貼文內容。"
 
 
 @pytest.mark.asyncio
