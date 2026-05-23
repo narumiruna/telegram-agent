@@ -93,6 +93,24 @@ def test_yfinance_mcp_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_yfinance_mcp_read_timeout_seconds == 30
 
 
+def test_container_tool_settings_parse_env(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_CONTAINER_TOOLS_ENABLED", "true")
+    monkeypatch.setenv("BOT_CONTAINER_TOOLS_ROOT", "/app")
+    monkeypatch.setenv("BOT_CONTAINER_TOOLS_TIMEOUT_SECONDS", "3.5")
+    monkeypatch.setenv("BOT_CONTAINER_TOOLS_MAX_OUTPUT_CHARS", "500")
+    monkeypatch.setenv("BOT_CONTAINER_TOOLS_MAX_READ_CHARS", "600")
+    monkeypatch.setenv("BOT_CONTAINER_TOOLS_MAX_RESULTS", "7")
+
+    settings = Settings()
+
+    assert settings.bot_container_tools_enabled is True
+    assert settings.bot_container_tools_root == Path("/app")
+    assert settings.bot_container_tools_timeout_seconds == 3.5
+    assert settings.bot_container_tools_max_output_chars == 500
+    assert settings.bot_container_tools_max_read_chars == 600
+    assert settings.bot_container_tools_max_results == 7
+
+
 def test_logfire_settings_parse_env(monkeypatch) -> None:
     monkeypatch.setenv("LOGFIRE_ENABLED", "false")
     monkeypatch.setenv("LOGFIRE_TOKEN", "token")

@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     bot_yfinance_mcp_read_timeout_seconds: float = Field(
         default=120.0, gt=0, alias="BOT_YFINANCE_MCP_READ_TIMEOUT_SECONDS"
     )
+    bot_container_tools_enabled: bool = Field(default=False, alias="BOT_CONTAINER_TOOLS_ENABLED")
+    bot_container_tools_root: Path = Field(default=Path(), alias="BOT_CONTAINER_TOOLS_ROOT")
+    bot_container_tools_timeout_seconds: float = Field(default=10.0, gt=0, alias="BOT_CONTAINER_TOOLS_TIMEOUT_SECONDS")
+    bot_container_tools_max_output_chars: int = Field(
+        default=12000, ge=100, alias="BOT_CONTAINER_TOOLS_MAX_OUTPUT_CHARS"
+    )
+    bot_container_tools_max_read_chars: int = Field(default=20000, ge=100, alias="BOT_CONTAINER_TOOLS_MAX_READ_CHARS")
+    bot_container_tools_max_results: int = Field(default=200, ge=1, alias="BOT_CONTAINER_TOOLS_MAX_RESULTS")
 
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")

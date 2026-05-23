@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
+from typing import Any
 
 import typer
 from loguru import logger
@@ -13,6 +14,9 @@ from telegramagent.actions import PendingActionStore
 from telegramagent.actions import ProactiveActionTool
 from telegramagent.capabilities import Capability
 from telegramagent.capabilities import CapabilityRegistry
+from telegramagent.container_tools import ContainerToolConfig
+from telegramagent.container_tools import build_container_tools
+from telegramagent.container_tools import is_running_in_container
 from telegramagent.context_files import ContextFile
 from telegramagent.context_files import ContextManagementTool
 from telegramagent.context_files import load_context_file
@@ -69,6 +73,32 @@ def _image_generation_unavailable_reason(settings: Settings) -> str:
     if not settings.openai_api_key:
         return "OPENAI_API_KEY not configured"
     return ""
+
+
+def _container_tools_from_settings(
+    settings: Settings, *, project_root: Path, in_container: bool | None = None
+) -> tuple[tuple[Any, ...], Capability]:
+    description = "Docker-only local tools: bash, edit, find, grep, ls, read, write"
+    if not settings.bot_container_tools_enabled:
+        return (), Capability("container_tools", False, description, "disabled")
+
+    detected = is_running_in_container() if in_container is None else in_container
+    if not detected:
+        return (), Capability("container_tools", False, description, "not running in Docker/container")
+
+    root = settings.bot_container_tools_root
+    if not root.is_absolute():
+        root = project_root / root
+    tools = build_container_tools(
+        ContainerToolConfig(
+            root=root,
+            timeout_seconds=settings.bot_container_tools_timeout_seconds,
+            max_output_chars=settings.bot_container_tools_max_output_chars,
+            max_read_chars=settings.bot_container_tools_max_read_chars,
+            max_results=settings.bot_container_tools_max_results,
+        )
+    )
+    return tools, Capability("container_tools", True, description)
 
 
 @app.command()
@@ -140,6 +170,10 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
             _image_generation_unavailable_reason(settings),
         )
     )
+    container_tools, container_tools_capability = _container_tools_from_settings(settings, project_root=project_root)
+    capabilities.set(container_tools_capability)
+    if container_tools:
+        logger.info("Enabled {} Docker-only container tool(s)", len(container_tools))
     agent = ChatAgent(
         api_key=settings.openai_api_key,
         model=settings.openai_model,
@@ -150,6 +184,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         capability_summary=capabilities.summary(),
         kabigon_tool_timeout_seconds=settings.bot_kabigon_timeout_seconds,
         mcp_toolsets=yfinance_mcp_toolsets,
+        tools=container_tools,
     )
     topic_end_judge = TopicEndAgent(
         api_key=settings.openai_api_key,

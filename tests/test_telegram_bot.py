@@ -1165,6 +1165,7 @@ async def test_chat_agent_injects_runtime_capabilities_into_pydantic_instruction
 @pytest.mark.asyncio
 async def test_chat_agent_registers_kabigon_load_url_tool_and_mcp_toolsets(monkeypatch) -> None:
     captured: dict[str, Any] = {}
+    sentinel_tool = object()
     sentinel_toolset = object()
 
     class FakePydanticAgent:
@@ -1186,11 +1187,12 @@ async def test_chat_agent_registers_kabigon_load_url_tool_and_mcp_toolsets(monke
 
     monkeypatch.setattr("telegramagent.llm.PydanticAgent", FakePydanticAgent)
 
-    agent = ChatAgent(api_key="key", model="model", mcp_toolsets=[sentinel_toolset])
+    agent = ChatAgent(api_key="key", model="model", mcp_toolsets=[sentinel_toolset], tools=[sentinel_tool])
     reply = await agent.reply("問題")
 
     assert reply == "ok"
-    assert [getattr(tool, "__name__", "") for tool in captured["tools"]] == ["kabigon_load_url"]
+    assert getattr(captured["tools"][0], "__name__", "") == "kabigon_load_url"
+    assert captured["tools"][1] is sentinel_tool
     assert captured["toolsets"] == (sentinel_toolset,)
     assert captured["tool_timeout"] == 180
 

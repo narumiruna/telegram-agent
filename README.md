@@ -68,6 +68,15 @@ BOT_YFINANCE_MCP_ARGS=
 BOT_YFINANCE_MCP_INIT_TIMEOUT_SECONDS=10
 BOT_YFINANCE_MCP_READ_TIMEOUT_SECONDS=120
 
+# Docker-only local container tools for the chat model. A container runtime must also be detected.
+# Filesystem tools stay inside BOT_CONTAINER_TOOLS_ROOT; bash runs there but can affect container state.
+BOT_CONTAINER_TOOLS_ENABLED=true
+BOT_CONTAINER_TOOLS_ROOT=.
+BOT_CONTAINER_TOOLS_TIMEOUT_SECONDS=10
+BOT_CONTAINER_TOOLS_MAX_OUTPUT_CHARS=12000
+BOT_CONTAINER_TOOLS_MAX_READ_CHARS=20000
+BOT_CONTAINER_TOOLS_MAX_RESULTS=200
+
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_API_KEY=your API key
 OPENAI_MODEL=gpt-5.4-mini
@@ -194,6 +203,8 @@ The proactive runtime has a small task queue:
 - `/tasks list`, `/tasks show <id>`, and `/tasks cancel <id>` expose task state.
 
 Runtime capabilities are explicit. Built-in web fetch, YouTube transcript extraction, Telegram image input, optional image generation, file-backed events, `kabigon.api.load_url` URL extraction, and Yahoo Finance MCP tools are available by default. The chat agent registers a Pydantic AI tool named `kabigon_load_url`, so the model can call kabigon directly for supported public HTTP(S) URLs. It also registers the `yfmcp` MCP toolset when `BOT_YFINANCE_MCP_ENABLED=true`, allowing stock, ETF, options, financial statement, holder, sector, market-news, and price-chart lookups through Yahoo Finance data. When yfmcp returns chart images, the bot sends those image artifacts to Telegram after the text reply. Financial responses are informational only and should not be treated as investment advice. Some kabigon loaders may need extra runtime assets such as Playwright browsers, depending on the URL type. Agent Skills alone still do not make a tool executable; a capability, Pydantic AI tool, or MCP toolset must be wired in runtime code.
+
+Docker Compose enables Docker-only local container tools by default with `BOT_CONTAINER_TOOLS_ENABLED=true` and `BOT_CONTAINER_TOOLS_ROOT=/app`. These register Pydantic AI tools named `bash`, `edit`, `find`, `grep`, `ls`, `read`, and `write` only when the runtime also detects that it is inside a container. Local `uv run telegramagent` keeps them disabled by default. The filesystem tools are sandboxed to `BOT_CONTAINER_TOOLS_ROOT`, and all tools have timeout/output/read/result limits. The `bash` tool runs with that root as its working directory but can execute arbitrary non-interactive commands inside the container, so it can still mutate container files or mounted state directories. Tool results may be sent to the model provider, so do not ask the bot to read secrets unless you accept that exposure. Writes to the image-layer `/app` are not durable across rebuilds; mounted paths keep their normal Docker persistence. Set `BOT_CONTAINER_TOOLS_ENABLED=false` and restart to disable them.
 
 Docker Compose mounts `./.telegramagent:/app/.telegramagent` by default so session logs survive container restarts.
 

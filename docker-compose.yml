@@ -12,6 +12,8 @@ services:
     user: "0:0"
     environment:
       HOME: /tmp
+      BOT_CONTAINER_TOOLS_ENABLED: ${BOT_CONTAINER_TOOLS_ENABLED:-true}
+      BOT_CONTAINER_TOOLS_ROOT: ${BOT_CONTAINER_TOOLS_ROOT:-/app}
     init: true
     restart: unless-stopped
     volumes:

@@ -112,6 +112,7 @@ class ChatAgent:
         capability_summary: str = "",
         kabigon_tool_timeout_seconds: float = 180.0,
         mcp_toolsets: Sequence[Any] = (),
+        tools: Sequence[Any] = (),
     ) -> None:
         self.client = OpenAIChatClient(api_key=api_key, model=model, base_url=base_url, http_client=http_client)
         self.skills = skills or []
@@ -121,6 +122,7 @@ class ChatAgent:
         self.agent_factory = agent_factory
         self.kabigon_tool_timeout_seconds = kabigon_tool_timeout_seconds
         self.mcp_toolsets = tuple(mcp_toolsets)
+        self.tools = tuple(tools)
         self.agent = self._create_agent(api_key=api_key, model=model, base_url=base_url, agent_factory=agent_factory)
 
     @property
@@ -193,7 +195,7 @@ class ChatAgent:
         return PydanticAgent(
             pydantic_model,
             instructions=instructions,
-            tools=[cast(Any, kabigon_load_url)],
+            tools=[cast(Any, kabigon_load_url), *self.tools],
             toolsets=cast(Any, self.mcp_toolsets),
             tool_timeout=self.kabigon_tool_timeout_seconds,
         )
