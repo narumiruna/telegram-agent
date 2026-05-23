@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 
 import httpx
@@ -17,6 +18,17 @@ class FakeAgent:
     async def reply(self, prompt: str, *, history: Sequence[tuple[str, str]]) -> str:
         self.prompts.append(prompt)
         return "整理完成"
+
+
+class FailingAgent:
+    async def reply(self, prompt: str, *, history: Sequence[tuple[str, str]]) -> str:
+        raise httpx.ConnectError("LLM down")
+
+
+class SlowTranscriptFetcher:
+    async def fetch(self, video_id: str, *, languages: Sequence[str]) -> ActionContent:
+        await asyncio.sleep(1)
+        raise AssertionError("unreachable")
 
 
 class FakeTranscriptFetcher:
@@ -61,6 +73,46 @@ async def test_followup_go_uses_pending_youtube_url_without_asking_again() -> No
         ("iG-hzh9roNw", ("zh-Hant", "zh-TW", "zh", "ja", "en")),
         ("iG-hzh9roNw", ("zh-Hant", "zh-TW", "zh", "ja", "en")),
     ]
+
+
+@pytest.mark.asyncio
+async def test_youtube_transcript_fetch_is_bounded() -> None:
+    agent = FakeAgent()
+    tool = ProactiveActionTool(
+        settings=ActionSettings(url_timeout_seconds=0.01),
+        transcript_fetcher=SlowTranscriptFetcher(),
+    )
+
+    reply = await tool.handle("https://youtu.be/iG-hzh9roNw", chat_id=123, agent=agent, history=[])
+
+    assert reply is not None
+    assert "目前抓不到" in reply
+    assert agent.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_agent_failure_after_successful_fetch_returns_readable_error() -> None:
+    fetcher = FakeTranscriptFetcher()
+    tool = ProactiveActionTool(transcript_fetcher=fetcher)
+
+    reply = await tool.handle("https://youtu.be/iG-hzh9roNw", chat_id=123, agent=FailingAgent(), history=[])
+
+    assert reply == "AI 服務暫時無法使用, 請稍後再試。"
+
+
+@pytest.mark.asyncio
+async def test_invalid_youtube_url_is_not_remembered_for_followup() -> None:
+    agent = FakeAgent()
+    fetcher = FakeTranscriptFetcher()
+    tool = ProactiveActionTool(transcript_fetcher=fetcher)
+
+    first_reply = await tool.handle("https://www.youtube.com/@some-channel", chat_id=123, agent=agent, history=[])
+    second_reply = await tool.handle("go", chat_id=123, agent=agent, history=[])
+
+    assert first_reply is not None
+    assert "YouTube 連結格式" in first_reply
+    assert second_reply is None
+    assert fetcher.calls == []
 
 
 @pytest.mark.asyncio
@@ -187,10 +239,13 @@ async def test_risky_action_requires_confirmation() -> None:
     tool = ProactiveActionTool()
     agent = FakeAgent()
 
-    reply = await tool.handle("delete https://example.com/account", chat_id=123, agent=agent, history=[])
+    english_reply = await tool.handle("delete https://example.com/account", chat_id=123, agent=agent, history=[])
+    chinese_reply = await tool.handle("請幫我付款 https://example.com/checkout", chat_id=123, agent=agent, history=[])
 
-    assert reply is not None
-    assert "不會自動執行有副作用" in reply
+    assert english_reply is not None
+    assert "不會自動執行有副作用" in english_reply
+    assert chinese_reply is not None
+    assert "不會自動執行有副作用" in chinese_reply
     assert agent.prompts == []
 
 

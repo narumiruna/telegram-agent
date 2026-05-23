@@ -5,6 +5,7 @@ import html
 import ipaddress
 import re
 import socket
+import ssl
 import time
 from collections.abc import Callable
 from collections.abc import Sequence
@@ -13,6 +14,7 @@ from html.parser import HTMLParser
 from typing import Protocol
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
+from urllib.parse import urlunparse
 
 import httpx
 from loguru import logger
@@ -41,6 +43,20 @@ class ActionContent:
     source_url: str
     body: str
     content_type: str
+
+
+@dataclass(frozen=True)
+class FetchedResponse:
+    status_code: int
+    headers: dict[str, str]
+    content: bytes
+
+    @property
+    def text(self) -> str:
+        content_type = self.headers.get("content-type", "")
+        match = re.search(r"charset=([^;\s]+)", content_type, flags=re.IGNORECASE)
+        encoding = match.group(1) if match is not None else "utf-8"
+        return self.content.decode(encoding, errors="replace")
 
 
 class Agent(Protocol):
@@ -111,7 +127,16 @@ class ProactiveActionTool:
             confirmation = _confirmation_required_reason(text)
             if confirmation is not None:
                 return confirmation
-            kind = "youtube_summary" if _is_youtube_url(url) else "url_summary"
+            if _is_youtube_url(url):
+                if _youtube_video_id(url) is None:
+                    self.pending.clear(chat_id)
+                    return (
+                        "這個 YouTube 連結格式我讀不到，"
+                        "請貼一般的 youtube.com/watch、youtube.com/shorts 或 youtu.be 連結。"
+                    )
+                kind = "youtube_summary"
+            else:
+                kind = "url_summary"
             self.pending.remember(chat_id, kind=kind, url=url)
             return await self._execute(kind=kind, url=url, agent=agent, history=history)
 
@@ -138,18 +163,25 @@ class ProactiveActionTool:
                 content = await self._fetch_url(url)
         except ActionError as exc:
             return str(exc)
-        except (httpx.HTTPError, OSError) as exc:
+        except (httpx.HTTPError, OSError, TimeoutError) as exc:
             logger.warning("Proactive action failed with {}", type(exc).__name__)
             return "我有嘗試讀取內容，但目前抓不到。可能是網站阻擋、網路逾時，或影片沒有可用字幕。"
 
         prompt = _build_summary_prompt(content, max_chars=self.settings.max_extracted_chars)
-        return await agent.reply(prompt, history=history)
+        try:
+            return await agent.reply(prompt, history=history)
+        except httpx.HTTPError:
+            logger.exception("LLM request failed after proactive action")
+            return "AI 服務暫時無法使用, 請稍後再試。"
 
     async def _fetch_youtube(self, url: str) -> ActionContent:
         video_id = _youtube_video_id(url)
         if video_id is None:
             raise ActionError("這個 YouTube 連結格式我讀不到，請貼一般的 youtube.com/watch 或 youtu.be 連結。")
-        content = await self.transcript_fetcher.fetch(video_id, languages=self.settings.youtube_languages)
+        content = await asyncio.wait_for(
+            self.transcript_fetcher.fetch(video_id, languages=self.settings.youtube_languages),
+            timeout=self.settings.url_timeout_seconds,
+        )
         if len(content.body) > self.settings.max_extracted_chars:
             return ActionContent(
                 title=content.title,
@@ -166,18 +198,26 @@ class ProactiveActionTool:
         host = parsed.hostname
         if host is None:
             raise ActionError("這個連結沒有有效主機名稱，我沒辦法自動讀取。")
-        await _assert_public_host(host)
-
         if self.http_client_factory is None:
-            async with httpx.AsyncClient(timeout=self.settings.url_timeout_seconds, follow_redirects=False) as client:
-                response = await client.get(url)
+            response = await _fetch_public_url(
+                url,
+                timeout_seconds=self.settings.url_timeout_seconds,
+                max_bytes=self.settings.max_extracted_chars * 8,
+            )
         else:
+            await _assert_public_host(host)
             async with self.http_client_factory() as client:
-                response = await client.get(url)
+                httpx_response = await client.get(url)
+            response = FetchedResponse(
+                status_code=httpx_response.status_code,
+                headers={key.casefold(): value for key, value in httpx_response.headers.items()},
+                content=httpx_response.content,
+            )
 
         if 300 <= response.status_code < 400:
             raise ActionError("這個連結會重新導向。為了避免 SSRF/跳轉風險，我先不自動跟隨 redirect。")
-        response.raise_for_status()
+        if response.status_code >= 400:
+            raise ActionError(f"這個連結回傳 HTTP {response.status_code}，我目前讀不到內容。")
         content_type = response.headers.get("content-type", "")
         if "text/html" not in content_type and "text/plain" not in content_type:
             raise ActionError("這個連結不是可摘要的文字或 HTML 內容，我先不自動讀取。")
@@ -226,7 +266,7 @@ _FOLLOWUP_RE = re.compile(
     r"^(go|開始|執行|繼續|做|自動做|你就自動做事|整理|摘要|好|好呀|ok|okay)\s*[.!！。]*$", re.IGNORECASE
 )
 _RISKY_ACTION_RE = re.compile(
-    r"\b(delete|buy|purchase|send|deploy|login|sign\s*in|刪除|購買|下單|付款|發送|寄出|部署|登入|修改|提交)\b",
+    r"(?:\b(?:delete|buy|purchase|send|deploy|login|sign\s*in)\b|刪除|購買|下單|付款|發送|寄出|部署|登入|修改|提交)",
     re.IGNORECASE,
 )
 
@@ -271,19 +311,121 @@ def _youtube_video_id(url: str) -> str | None:
     return None
 
 
+async def _fetch_public_url(url: str, *, timeout_seconds: float, max_bytes: int) -> FetchedResponse:
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if host is None:
+        raise ActionError("這個連結沒有有效主機名稱，我沒辦法自動讀取。")
+    addresses = await _resolve_public_addresses(host)
+    address = addresses[0]
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    target = urlunparse(("", "", parsed.path or "/", parsed.params, parsed.query, ""))
+    host_header = host if parsed.port is None else f"{host}:{parsed.port}"
+    request = (
+        f"GET {target} HTTP/1.1\r\n"
+        f"Host: {host_header}\r\n"
+        "User-Agent: telegram-agent/0.1\r\n"
+        "Accept: text/html,text/plain;q=0.9,*/*;q=0.1\r\n"
+        "Accept-Encoding: identity\r\n"
+        "Connection: close\r\n\r\n"
+    ).encode()
+
+    ssl_context = ssl.create_default_context() if parsed.scheme == "https" else None
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            reader, writer = await asyncio.open_connection(
+                address,
+                port,
+                ssl=ssl_context,
+                server_hostname=host if ssl_context is not None else None,
+            )
+            try:
+                writer.write(request)
+                await writer.drain()
+                raw_headers = await reader.readuntil(b"\r\n\r\n")
+                status_code, headers = _parse_response_headers(raw_headers)
+                body = await _read_limited_body(reader, headers=headers, max_bytes=max_bytes)
+            finally:
+                writer.close()
+                await writer.wait_closed()
+    except asyncio.LimitOverrunError as exc:
+        raise ActionError("這個頁面的 HTTP headers 太大了，我先不自動讀取。") from exc
+    except asyncio.IncompleteReadError as exc:
+        raise ActionError("這個連結回應不完整，我目前讀不到內容。") from exc
+
+    return FetchedResponse(status_code=status_code, headers=headers, content=body)
+
+
 async def _assert_public_host(host: str) -> None:
+    await _resolve_public_addresses(host)
+
+
+async def _resolve_public_addresses(host: str) -> list[str]:
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise ActionError("這個連結的主機名稱解析失敗，我沒辦法自動讀取。") from exc
 
-    addresses = {info[4][0] for info in infos}
+    addresses = sorted({info[4][0] for info in infos})
     if not addresses:
         raise ActionError("這個連結沒有解析到可用 IP，我沒辦法自動讀取。")
     for address in addresses:
         ip = ipaddress.ip_address(address)
         if not ip.is_global:
             raise ActionError("基於安全限制，我不會自動讀取 localhost、私有網路或雲端 metadata 位址。")
+    return addresses
+
+
+def _parse_response_headers(raw_headers: bytes) -> tuple[int, dict[str, str]]:
+    header_text = raw_headers.decode("iso-8859-1")
+    lines = header_text.split("\r\n")
+    status_parts = lines[0].split(maxsplit=2)
+    if len(status_parts) < 2 or not status_parts[1].isdigit():
+        raise ActionError("這個連結回傳了無效 HTTP 回應，我目前讀不到內容。")
+    headers: dict[str, str] = {}
+    for line in lines[1:]:
+        if not line or ":" not in line:
+            continue
+        key, value = line.split(":", maxsplit=1)
+        headers[key.strip().casefold()] = value.strip()
+    return int(status_parts[1]), headers
+
+
+async def _read_limited_body(reader: asyncio.StreamReader, *, headers: dict[str, str], max_bytes: int) -> bytes:
+    if headers.get("transfer-encoding", "").casefold() == "chunked":
+        return await _read_chunked_body(reader, max_bytes=max_bytes)
+
+    content_length = headers.get("content-length")
+    if content_length is not None and content_length.isdigit() and int(content_length) > max_bytes:
+        raise ActionError("這個頁面太大了，我先不自動讀取，避免 Telegram bot 卡住。")
+
+    body = bytearray()
+    while True:
+        chunk = await reader.read(min(8192, max_bytes + 1 - len(body)))
+        if not chunk:
+            break
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            raise ActionError("這個頁面太大了，我先不自動讀取，避免 Telegram bot 卡住。")
+    return bytes(body)
+
+
+async def _read_chunked_body(reader: asyncio.StreamReader, *, max_bytes: int) -> bytes:
+    body = bytearray()
+    while True:
+        size_line = await reader.readline()
+        size_text = size_line.split(b";", maxsplit=1)[0].strip()
+        try:
+            size = int(size_text, 16)
+        except ValueError as exc:
+            raise ActionError("這個連結回傳了無效 chunked 回應，我目前讀不到內容。") from exc
+        if size == 0:
+            break
+        if len(body) + size > max_bytes:
+            raise ActionError("這個頁面太大了，我先不自動讀取，避免 Telegram bot 卡住。")
+        body.extend(await reader.readexactly(size))
+        await reader.readexactly(2)
+    return bytes(body)
 
 
 def _html_to_text(raw_html: str) -> str:
