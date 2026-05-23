@@ -29,6 +29,13 @@ BOT_MEMORY_PATH=MEMORY.md
 BOT_MEMORY_REQUIRED=false
 BOT_MEMORY_MAX_CHARS=12000
 
+# Proactive mode executes safe default actions for URLs and short follow-ups like "go".
+BOT_PROACTIVE_ENABLED=true
+BOT_PROACTIVE_URL_TIMEOUT_SECONDS=15
+BOT_PROACTIVE_MAX_EXTRACTED_CHARS=12000
+BOT_PROACTIVE_PENDING_TTL_SECONDS=900
+BOT_PROACTIVE_ALLOWED_SCHEMES=http,https
+
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_API_KEY=your API key
 OPENAI_MODEL=gpt-5.4-mini
@@ -71,6 +78,24 @@ docker compose down
 - `/memory show|reload|path`: inspect or reload `MEMORY.md`
 
 You can also send plain text directly to the bot.
+
+## Proactive URL Handling
+
+When proactive mode is enabled, the bot does not only suggest work for supported links. It executes a safe default action:
+
+- YouTube links: fetch available subtitles/transcripts and summarize them.
+- HTTP(S) text or HTML links: fetch bounded page text and summarize it.
+- Short follow-ups such as `go`, `開始`, `繼續`, or `你就自動做事`: reuse the most recent pending URL/action in that chat for `BOT_PROACTIVE_PENDING_TTL_SECONDS` seconds.
+
+Safety limits:
+
+- Only `http` and `https` URLs are supported.
+- Localhost, private networks, link-local addresses, and cloud metadata IPs are blocked.
+- Redirects are not followed automatically.
+- Large or non-text responses are rejected.
+- If YouTube subtitles are disabled, unavailable, or blocked by YouTube, the bot says so instead of pretending it watched the video.
+
+Disable this behavior with `BOT_PROACTIVE_ENABLED=false`.
 
 ## Group Reply Rules
 

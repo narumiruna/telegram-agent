@@ -7,6 +7,9 @@ from pathlib import Path
 import typer
 from loguru import logger
 
+from telegramagent.actions import ActionSettings
+from telegramagent.actions import PendingActionStore
+from telegramagent.actions import ProactiveActionTool
 from telegramagent.context_files import ContextFile
 from telegramagent.context_files import ContextManagementTool
 from telegramagent.context_files import load_context_file
@@ -73,6 +76,16 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         base_url=settings.openai_base_url,
     )
     skill_installer = SkillInstaller(project_root=project_root)
+    proactive_tool = ProactiveActionTool(
+        settings=ActionSettings(
+            enabled=settings.bot_proactive_enabled,
+            url_timeout_seconds=settings.bot_proactive_url_timeout_seconds,
+            max_extracted_chars=settings.bot_proactive_max_extracted_chars,
+            pending_ttl_seconds=settings.bot_proactive_pending_ttl_seconds,
+            allowed_schemes=frozenset(settings.bot_proactive_allowed_schemes),
+        ),
+        pending=PendingActionStore(ttl_seconds=settings.bot_proactive_pending_ttl_seconds),
+    )
 
     def installed_skill_names() -> set[str]:
         return {
@@ -139,6 +152,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
             reload_skills=reload_skills,
             installed_skill_names=installed_skill_names,
         ),
+        proactive_tool=proactive_tool,
         tools=[
             ContextManagementTool(
                 command_name="soul",

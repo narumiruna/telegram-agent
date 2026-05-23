@@ -45,6 +45,17 @@ class SkillTool(Protocol):
     async def handle(self, text: str, *, chat_id: int, user_id: int | None) -> str | None: ...
 
 
+class ProactiveTool(Protocol):
+    async def handle(
+        self,
+        text: str,
+        *,
+        chat_id: int,
+        agent: Agent,
+        history: Sequence[tuple[str, str]],
+    ) -> str | None: ...
+
+
 class TopicEndJudge(Protocol):
     async def should_end_topic(
         self,
@@ -133,6 +144,7 @@ class TelegramBot:
         topic_end_judge: TopicEndJudge | None = None,
         skill_tool: SkillTool | None = None,
         tools: Sequence[SkillTool] = (),
+        proactive_tool: ProactiveTool | None = None,
     ) -> None:
         self.telegram = telegram
         self.agent = agent
@@ -143,6 +155,7 @@ class TelegramBot:
         self.topic_end_judge = topic_end_judge
         self.skill_tool = skill_tool
         self.tools = list(tools)
+        self.proactive_tool = proactive_tool
         self.bot_reply_streaks: dict[int, int] = {}
         self.histories: dict[int, list[tuple[str, str]]] = {}
 
@@ -212,6 +225,10 @@ class TelegramBot:
         command_reply = await self._handle_builtin_command(chat_id=chat_id, text=text, user_id=user_id)
         if command_reply is not None:
             return command_reply
+
+        proactive_reply = await self._handle_proactive_action(chat_id=chat_id, text=text)
+        if proactive_reply is not None:
+            return proactive_reply
         return await self._ask_agent(chat_id, text.strip())
 
     def _management_tools(self) -> list[SkillTool]:
@@ -219,6 +236,16 @@ class TelegramBot:
         if self.skill_tool is not None:
             tools.insert(0, self.skill_tool)
         return tools
+
+    async def _handle_proactive_action(self, *, chat_id: int, text: str) -> str | None:
+        if self.proactive_tool is None:
+            return None
+        history = self.histories.setdefault(chat_id, [])
+        reply = await self.proactive_tool.handle(text.strip(), chat_id=chat_id, agent=self.agent, history=history)
+        if reply is not None:
+            history.extend([("user", text.strip()), ("assistant", reply)])
+            del history[:-20]
+        return reply
 
     async def _handle_builtin_command(self, *, chat_id: int, text: str, user_id: int | None) -> str | None:
         command, _, argument = text.partition(" ")

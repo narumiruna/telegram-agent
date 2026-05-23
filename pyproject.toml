@@ -13,6 +13,7 @@ dependencies    = [
   "pydantic-ai>=1.101.0",
   "pydantic-settings>=2.14.1",
   "typer>=0.25.1",
+  "youtube-transcript-api>=1.2.4",
 ]
 
 [project.scripts]
@@ -74,7 +75,9 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**.py" = ["ANN", "TRY", "PERF"]
+"tests/**.py"                  = ["ANN", "TRY", "PERF"]
+"src/telegramagent/actions.py" = ["RUF001"]
+"src/telegramagent/llm.py"     = ["RUF001"]
 
 [tool.ruff.lint.isort]
 force-single-line = true

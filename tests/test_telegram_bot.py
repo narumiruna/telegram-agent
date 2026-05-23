@@ -83,6 +83,23 @@ class FakeSkillInstaller:
         return self.result
 
 
+class FakeProactiveTool:
+    def __init__(self, replies: Sequence[str | None]) -> None:
+        self.replies = list(replies)
+        self.calls: list[tuple[str, int, Sequence[tuple[str, str]]]] = []
+
+    async def handle(
+        self,
+        text: str,
+        *,
+        chat_id: int,
+        agent: object,
+        history: Sequence[tuple[str, str]],
+    ) -> str | None:
+        self.calls.append((text, chat_id, [*history]))
+        return self.replies.pop(0)
+
+
 class FakeTopicEndJudge:
     def __init__(self, decisions: Sequence[bool]) -> None:
         self.decisions = list(decisions)
@@ -133,6 +150,25 @@ async def test_plain_text_uses_agent_and_keeps_history() -> None:
 
     assert await bot.build_reply(123, "你好") == "AI: 你好 (0)"
     assert await bot.build_reply(123, "/ask 第二題") == "AI: 第二題 (2)"
+
+
+@pytest.mark.asyncio
+async def test_proactive_tool_runs_before_generic_chat_and_updates_history() -> None:
+    proactive = FakeProactiveTool(["主動整理完成"])
+    bot = TelegramBot(telegram=FakeTelegram(), agent=FakeAgent(), proactive_tool=proactive)
+
+    assert await bot.build_reply(123, "https://youtu.be/iG-hzh9roNw") == "主動整理完成"
+    assert proactive.calls == [("https://youtu.be/iG-hzh9roNw", 123, [])]
+    assert bot.histories[123] == [("user", "https://youtu.be/iG-hzh9roNw"), ("assistant", "主動整理完成")]
+
+
+@pytest.mark.asyncio
+async def test_proactive_tool_falls_back_to_agent_when_no_action_matches() -> None:
+    proactive = FakeProactiveTool([None])
+    bot = TelegramBot(telegram=FakeTelegram(), agent=FakeAgent(), proactive_tool=proactive)
+
+    assert await bot.build_reply(123, "你好") == "AI: 你好 (0)"
+    assert proactive.calls == [("你好", 123, [])]
 
 
 @pytest.mark.asyncio

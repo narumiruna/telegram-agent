@@ -146,7 +146,11 @@ class ChatAgent:
 
 
 def _chat_instructions(*, skills: list[AgentSkill], soul: ContextFile | None, memory: ContextFile | None) -> str:
-    sections = ["你是一個 Telegram 機器人助理。請用繁體中文簡潔、有幫助地回答。"]
+    sections = [
+        "你是一個 Telegram 機器人助理。請用繁體中文簡潔、有幫助地回答。"
+        "如果使用者要求你自動處理、讀取、整理或查詢，只有在工具結果或系統訊息明確提供內容時，"
+        "才可以說你已經讀取或正在根據內容整理；如果沒有工具結果，不要假裝會在背景工作。"
+    ]
     soul_instructions = format_context_for_instructions(soul)
     if soul_instructions:
         sections.append(soul_instructions)

@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     bot_memory_path: Path = Field(default=Path("MEMORY.md"), alias="BOT_MEMORY_PATH")
     bot_memory_required: bool = Field(default=False, alias="BOT_MEMORY_REQUIRED")
     bot_memory_max_chars: int = Field(default=12000, ge=1, alias="BOT_MEMORY_MAX_CHARS")
+    bot_proactive_enabled: bool = Field(default=True, alias="BOT_PROACTIVE_ENABLED")
+    bot_proactive_url_timeout_seconds: float = Field(default=15.0, gt=0, alias="BOT_PROACTIVE_URL_TIMEOUT_SECONDS")
+    bot_proactive_max_extracted_chars: int = Field(default=12000, ge=100, alias="BOT_PROACTIVE_MAX_EXTRACTED_CHARS")
+    bot_proactive_pending_ttl_seconds: int = Field(default=900, ge=1, alias="BOT_PROACTIVE_PENDING_TTL_SECONDS")
+    bot_proactive_allowed_schemes: Annotated[set[str], NoDecode] = Field(
+        default_factory=lambda: {"http", "https"}, alias="BOT_PROACTIVE_ALLOWED_SCHEMES"
+    )
 
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
@@ -42,6 +49,15 @@ class Settings(BaseSettings):
             return set()
         if isinstance(value, str):
             return {int(item.strip()) for item in value.split(",") if item.strip()}
+        return value
+
+    @field_validator("bot_proactive_allowed_schemes", mode="before")
+    @classmethod
+    def parse_allowed_schemes(cls, value: object) -> set[str] | object:
+        if value is None or value == "":
+            return {"http", "https"}
+        if isinstance(value, str):
+            return {item.strip().casefold() for item in value.split(",") if item.strip()}
         return value
 
     @field_validator("bot_enabled_skills", mode="before")
