@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,15 @@ from telegramagent.telegram import TelegramClient
 app = typer.Typer(help="Run a Telegram AI bot.")
 
 
+class LoguruInterceptHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level: str | int = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+        logger.opt(exception=record.exc_info, depth=6).log(level, "{}: {}", record.name, record.getMessage())
+
+
 def configure_logging(verbose: bool = False) -> None:
     logger.remove()
     logger.add(
@@ -55,6 +65,10 @@ def configure_logging(verbose: bool = False) -> None:
         backtrace=False,
         diagnose=False,
     )
+    logging.captureWarnings(True)
+    root_logger = logging.getLogger()
+    root_logger.handlers = [LoguruInterceptHandler()]
+    root_logger.setLevel(logging.DEBUG if verbose else logging.INFO)
 
 
 def _yfinance_mcp_unavailable_reason(config: YFinanceMcpConfig, *, available: bool) -> str:
