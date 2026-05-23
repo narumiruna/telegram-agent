@@ -1,164 +1,335 @@
-# telegramagent
+# telegramagent 🤖
 
-A simple Telegram AI bot that uses Telegram Bot API long polling and replies through an OpenAI-compatible Chat Completions API.
+Telegram AI bot powered by the Telegram Bot API, Pydantic AI, and an OpenAI-compatible Chat Completions endpoint.
 
-## Configuration
+It can chat in private messages, behave politely in groups, read replied messages, enrich URLs with extracted content,
+summarize links, understand Telegram images, generate images, publish long replies to Telegraph, and expose optional
+runtime tools such as kabigon, Yahoo Finance MCP, and container-local file tools.
 
-Create a `.env` file:
+## ✨ Highlights
+
+- **Telegram-native behavior**: private chat replies, group mention handling, reply-to-bot handling, and bot-loop guards.
+- **Reply context**: when mentioned in a group reply, the bot includes the replied message sender, type, date, text/caption,
+  and URL context in the LLM prompt.
+- **URL enrichment**: HTTP(S), YouTube, X/Twitter, and general webpages are fetched or loaded through kabigon when possible.
+- **Image input/output**: Telegram photos can be sent to a vision-capable model; `/image` can call an image-generation
+  endpoint when enabled.
+- **Long replies**: replies over Telegram's practical limit are published to Telegraph and replaced with a link.
+- **Durable context**: `SOUL.md`, `MEMORY.md`, and per-chat session logs survive restarts.
+- **Agent Skills**: local `.agents/skills/*/SKILL.md` files are loaded as model instructions.
+- **Docker-ready**: Compose includes mounted runtime state, Playwright browser assets, and optional container tools.
+
+## 🧱 Architecture
+
+```text
+Telegram updates
+  -> telegramagent.telegram
+  -> command / image / reply-context / proactive URL routing
+  -> telegramagent.llm via Pydantic AI
+  -> OpenAI-compatible API
+  -> Telegram response
+```
+
+Important modules:
+
+| Area | File |
+| --- | --- |
+| CLI and app wiring | `src/telegramagent/cli.py` |
+| Telegram Bot API client and handlers | `src/telegramagent/telegram.py` |
+| LLM agent wiring | `src/telegramagent/llm.py` |
+| Proactive URL and YouTube handling | `src/telegramagent/actions.py` |
+| Configuration | `src/telegramagent/settings.py` |
+| Telegraph publishing | `src/telegramagent/telegraph_pages.py` |
+| Tests | `tests/` |
+
+## 🚀 Quick Start
+
+Install dependencies:
+
+```bash
+uv sync
+```
+
+Create a local `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Set at least:
 
 ```env
 BOT_TOKEN=your Telegram Bot token
-# Optional: comma-separated chat_id or user_id values. Leave empty to allow everyone.
-BOT_WHITELIST=
-# Maximum consecutive replies to other bots in bot-to-bot reply chains. Use 0 to never reply to other bots.
-BOT_MAX_CONSECUTIVE_REPLIES_TO_BOTS=1
-# In groups, keep unaddressed messages as passive context without replying or calling the LLM.
-BOT_GROUP_PASSIVE_CONTEXT_ENABLED=true
-# Agent Skills directory. Leave BOT_ENABLED_SKILLS empty to load every skill under the directory.
-BOT_SKILLS_DIR=.agents/skills
-BOT_ENABLED_SKILLS=
-# Optional: chat_id or user_id values allowed to manage skills and context files from Telegram.
-# Empty means BOT_WHITELIST is reused.
-BOT_SKILL_ADMINS=
-
-# SOUL.md is the bot identity/persona file.
-BOT_SOUL_PATH=SOUL.md
-BOT_SOUL_REQUIRED=false
-BOT_SOUL_MAX_CHARS=8000
-
-# MEMORY.md is durable context loaded into the bot instructions.
-BOT_MEMORY_PATH=MEMORY.md
-BOT_MEMORY_REQUIRED=false
-BOT_MEMORY_MAX_CHARS=12000
-
-# Proactive mode executes safe default actions for URLs and short follow-ups like "go".
-BOT_PROACTIVE_ENABLED=true
-BOT_PROACTIVE_URL_TIMEOUT_SECONDS=15
-BOT_KABIGON_TIMEOUT_SECONDS=180
-BOT_PROACTIVE_MAX_EXTRACTED_CHARS=12000
-BOT_PROACTIVE_PENDING_TTL_SECONDS=900
-BOT_PROACTIVE_ALLOWED_SCHEMES=http,https
-
-# File-backed immediate events. External scripts can write JSON files to BOT_EVENTS_DIR/inbox.
-BOT_EVENTS_ENABLED=false
-BOT_EVENTS_DIR=.events
-BOT_EVENTS_SCAN_SECONDS=2
-BOT_EVENTS_MAX_QUEUED_PER_CHAT=5
-BOT_EVENTS_MAX_TEXT_CHARS=4000
-BOT_EVENTS_ARCHIVE_PROCESSED=true
-
-# Durable proactive runtime state and task queue limits.
-BOT_SESSION_LOG_DIR=.telegramagent/sessions
-BOT_TASKS_MAX_CONCURRENT_PER_CHAT=1
-
-# Image input/output.
-# Image input sends Telegram photos/image documents to the chat model; use a vision-capable model/provider.
-BOT_IMAGE_INPUT_ENABLED=true
-BOT_IMAGE_MAX_BYTES=8000000
-# Image output uses the OpenAI-compatible /images/generations endpoint and is off by default.
-BOT_IMAGE_GENERATION_ENABLED=false
-BOT_IMAGE_GENERATION_MODEL=gpt-image-1
-BOT_IMAGE_GENERATION_SIZE=1024x1024
-BOT_IMAGE_GENERATION_TIMEOUT_SECONDS=120
-
-# Yahoo Finance MCP tools. Enabled by default through the installed yfmcp command.
-BOT_YFINANCE_MCP_ENABLED=true
-BOT_YFINANCE_MCP_COMMAND=yfmcp
-BOT_YFINANCE_MCP_ARGS=
-BOT_YFINANCE_MCP_INIT_TIMEOUT_SECONDS=10
-BOT_YFINANCE_MCP_READ_TIMEOUT_SECONDS=120
-
-# Docker-only local container tools for the chat model. A container runtime must also be detected.
-# Filesystem tools stay inside BOT_CONTAINER_TOOLS_ROOT; bash runs there but can affect container state.
-BOT_CONTAINER_TOOLS_ENABLED=true
-BOT_CONTAINER_TOOLS_ROOT=.
-BOT_CONTAINER_TOOLS_TIMEOUT_SECONDS=10
-BOT_CONTAINER_TOOLS_MAX_OUTPUT_CHARS=12000
-BOT_CONTAINER_TOOLS_MAX_READ_CHARS=20000
-BOT_CONTAINER_TOOLS_MAX_RESULTS=200
-
-OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_API_KEY=your API key
 OPENAI_MODEL=gpt-5.4-mini
-
-# Optional Logfire observability. Set LOGFIRE_TOKEN to send traces and logs to Logfire.
-LOGFIRE_ENABLED=true
-LOGFIRE_TOKEN=
-LOGFIRE_ENVIRONMENT=dev
-LOGFIRE_SERVICE_NAME=telegramagent
-# Keep false unless you intentionally want prompts and model responses in Logfire.
-LOGFIRE_INCLUDE_CONTENT=false
 ```
 
-## Run
+Run locally:
 
 ```bash
 uv run telegramagent
 ```
 
-Or run the bot with Docker Compose, loading environment variables from `.env`:
+Run with Docker Compose:
 
 ```bash
 docker compose up -d --build
-```
-
-Follow logs:
-
-```bash
 docker compose logs -f telegramagent
 ```
 
-Stop:
+Stop Docker Compose:
 
 ```bash
 docker compose down
 ```
 
-## Observability
+## ⚙️ Configuration
 
-Logfire support is opt-in by token: set `LOGFIRE_TOKEN` to enable Logfire configuration at startup. The bot forwards Loguru logs and instruments HTTPX, Pydantic AI, and MCP calls. Prompt and model-response content is not sent by default; set `LOGFIRE_INCLUDE_CONTENT=true` only if you intentionally want that content in traces.
+All runtime settings are environment variables. Start from `.env.example`; the most common settings are below.
 
-## Commands
+### Telegram
 
-- `/start`: show an introduction
-- `/help`: show help
-- `/id`: show the current chat/user ID, useful for allowlist configuration
-- `/reset`: clear conversation memory for the current chat
-- `/ask <question>`: ask the AI assistant
-- `/image <prompt>`: generate an image through the configured OpenAI-compatible `/images/generations` endpoint
-- `/skills add <package>`: install Agent Skills in the local project through `npx`
-- `/skills list`: list installed Agent Skills
-- `/soul show|reload|path`: inspect or reload `SOUL.md`
-- `/memory show|reload|path`: inspect or reload `MEMORY.md`
-- `/events list|show <name>|cancel <name>|reload`: manage pending file-backed events
-- `/tasks list|show <id>|cancel <id>`: inspect or cancel proactive runtime tasks
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOT_TOKEN` | empty | Telegram Bot API token from BotFather. |
+| `BOT_WHITELIST` | empty | Comma-separated chat IDs or user IDs allowed to use the bot. Empty allows everyone. |
+| `BOT_MAX_CONSECUTIVE_REPLIES_TO_BOTS` | `1` | Safety limit for bot-to-bot reply chains. Use `0` to never reply to bots. |
+| `BOT_GROUP_PASSIVE_CONTEXT_ENABLED` | `true` | Store unaddressed group messages as passive context without replying. |
 
-You can also send plain text directly to the bot.
+### Model
 
-## Proactive URL Handling
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible API base URL. |
+| `OPENAI_API_KEY` | empty | API key for the configured provider. |
+| `OPENAI_MODEL` | `gpt-5.4-mini` | Chat model used for replies. |
 
-When proactive mode is enabled, the bot does not only suggest work for supported links. It executes a safe default action:
+### Context
 
-- YouTube links: fetch available subtitles/transcripts and summarize them.
-- HTTP(S) links: try the bounded built-in text/HTML fetcher first, then fall back to `kabigon.api.load_url` for supported public URLs when built-in extraction fails.
-- Short follow-ups such as `go`, `開始`, `繼續`, or `你就自動做事`: reuse the most recent pending URL/action in that chat for `BOT_PROACTIVE_PENDING_TTL_SECONDS` seconds.
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOT_SOUL_PATH` | `SOUL.md` | Persona and voice instructions. |
+| `BOT_MEMORY_PATH` | `MEMORY.md` | Durable user/project memory loaded into instructions. |
+| `BOT_SESSION_LOG_DIR` | `.telegramagent/sessions` | Per-chat JSONL history used after restarts. |
+| `BOT_SKILLS_DIR` | `.agents/skills` | Directory for Agent Skills. |
+| `BOT_ENABLED_SKILLS` | empty | Comma-separated skill names. Empty loads every skill. |
+| `BOT_SKILL_ADMINS` | empty | Users/chats allowed to manage skills/context files. Empty reuses `BOT_WHITELIST`. |
 
-Safety limits:
+### URL Handling
 
-- Only `http` and `https` URLs are supported.
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOT_PROACTIVE_ENABLED` | `true` | Automatically handle safe URL actions and short follow-ups like `go`. |
+| `BOT_PROACTIVE_URL_TIMEOUT_SECONDS` | `15` | Built-in URL fetch timeout. |
+| `BOT_KABIGON_TIMEOUT_SECONDS` | `180` | kabigon fallback timeout. |
+| `BOT_PROACTIVE_MAX_EXTRACTED_CHARS` | `12000` | Max content sent into URL-summary prompts. |
+| `BOT_PROACTIVE_PENDING_TTL_SECONDS` | `900` | How long follow-up actions can reuse a pending URL. |
+| `BOT_PROACTIVE_ALLOWED_SCHEMES` | `http,https` | URL schemes accepted by the proactive router. |
+
+### Images
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOT_IMAGE_INPUT_ENABLED` | `true` | Allow Telegram photos/image documents as model input. |
+| `BOT_IMAGE_MAX_BYTES` | `8000000` | Reject larger image downloads. |
+| `BOT_IMAGE_GENERATION_ENABLED` | `false` | Enable `/image <prompt>`. |
+| `BOT_IMAGE_GENERATION_MODEL` | `gpt-image-1` | Image generation model. |
+| `BOT_IMAGE_GENERATION_SIZE` | `1024x1024` | Image generation size. |
+
+### Optional Integrations
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOT_YFINANCE_MCP_ENABLED` | `true` | Register Yahoo Finance MCP tools through `yfmcp`. |
+| `BOT_EVENTS_ENABLED` | `false` | Enable file-backed immediate events. |
+| `BOT_CONTAINER_TOOLS_ENABLED` | `true` in Compose | Register Docker-only local tools when running inside a container. |
+| `LOGFIRE_ENABLED` | `true` | Configure Logfire when `LOGFIRE_TOKEN` is set. |
+| `LOGFIRE_INCLUDE_CONTENT` | `false` | Include prompts/model content in traces only when explicitly enabled. |
+
+## 💬 Telegram Behavior
+
+### Private Chats
+
+In private chats, the bot replies to normal text, commands, images, and supported proactive URL actions.
+
+### Groups and Supergroups
+
+To avoid interrupting group conversations, the bot replies only when:
+
+1. The message mentions the bot, for example `@your_bot 你怎麼看？`
+2. The message directly replies to a bot message
+
+When `BOT_GROUP_PASSIVE_CONTEXT_ENABLED=true`, unaddressed group messages are stored as passive context without calling
+the LLM. The next addressed message can then use recent group context.
+
+### Reply Context 🧵
+
+When a group message mentions the bot while replying to another message, the prompt includes:
+
+- replied message sender
+- message type (`text`, `photo`, `video`, `document`, `sticker`, `voice`, and so on)
+- message date when available
+- text or caption when available
+- readable placeholder for non-text messages
+- URLs found in the replied message and current message
+- extracted URL context when URL enrichment succeeds
+
+If the current message is only the bot mention, the bot is instructed to respond directly to the replied content instead
+of asking what to do.
+
+## 🔗 URL Handling
+
+When proactive mode is enabled, supported links are handled directly instead of asking the user what to do.
+
+| URL type | Behavior |
+| --- | --- |
+| YouTube | Fetch available transcripts/subtitles, then summarize. |
+| X/Twitter status URLs | Try source-aware kabigon/browser extraction; detect and reject X browser-blocker pages. |
+| General HTTP(S) pages | Use bounded built-in text/HTML fetch first, then kabigon fallback. |
+| Follow-ups | `go`, `開始`, `繼續`, `抓抓看`, and similar triggers reuse the most recent pending URL. |
+
+Safety rules:
+
+- Only public `http` and `https` URLs are accepted.
 - Localhost, private networks, link-local addresses, and cloud metadata IPs are blocked.
-- Redirects are not followed automatically.
-- Large built-in responses are rejected before fallback; kabigon results are truncated to `BOT_PROACTIVE_MAX_EXTRACTED_CHARS`.
-- If built-in fetch and kabigon both fail, the bot reports that honestly instead of pretending it read the page.
-- If YouTube subtitles are disabled, unavailable, or blocked by YouTube, the bot tries kabigon fallback and says so if both paths fail.
+- Built-in fetch has timeout and max-size limits.
+- Large extracted content is truncated before it is sent to the model.
+- Fetch failures are reported honestly; the bot should not pretend it read content it did not read.
 
-Disable this behavior with `BOT_PROACTIVE_ENABLED=false`.
+### X/Twitter Notes
 
-## File-Backed Immediate Events
+Telegram link previews do not expose the preview card title/body through Bot API message fields. For X/Twitter links,
+the bot must fetch the target URL itself. Some X pages return a browser blocker page such as "JavaScript is not
+available"; these are treated as extraction failures and trigger kabigon/browser fallback.
 
-When `BOT_EVENTS_ENABLED=true`, the bot scans `BOT_EVENTS_DIR/inbox/*.json` for immediate events. External scripts can create one JSON file to make the bot send a synthetic message into a chat. This is not a scheduler: `at`, `schedule`, and `timezone` fields are rejected.
+The Docker image installs Playwright Chromium and its Debian runtime dependencies so kabigon's browser-based loaders can
+run inside the container.
 
-Example event file at `.events/inbox/summarize-video.json`:
+## 🧠 Context Files
+
+The bot can load two always-on context files before Agent Skills:
+
+1. `SOUL.md`: identity, voice, values, and hard boundaries
+2. `MEMORY.md`: durable user preferences, project context, gotchas, and open threads
+
+Instruction order:
+
+```text
+core rules -> SOUL.md -> MEMORY.md -> Agent Skills -> conversation history -> user message
+```
+
+Start from templates:
+
+```bash
+cp SOUL.md.example SOUL.md
+cp MEMORY.md.example MEMORY.md
+```
+
+Reload at runtime:
+
+```text
+/soul reload
+/memory reload
+```
+
+Keep these files safe. Do not store API keys, bot tokens, cookies, private URLs, passwords, or sensitive personal data.
+
+## 🧩 Agent Skills
+
+Skills are loaded from:
+
+```text
+.agents/skills/<skill-name>/SKILL.md
+```
+
+Minimal skill:
+
+```md
+---
+name: chat-style
+description: Telegram reply style. Use when replying to Telegram messages.
+---
+
+# Chat Style
+
+- Use Traditional Chinese.
+- Keep replies short.
+```
+
+Load only selected skills:
+
+```env
+BOT_ENABLED_SKILLS=chat-style,other-skill
+```
+
+Install skills from Telegram:
+
+```text
+/skills add vercel-labs/agent-skills --skill commit
+/skills list
+```
+
+Natural-language install requests are also supported:
+
+```text
+安裝 narumiruna/skills 的 skills 所有
+```
+
+This becomes a non-interactive `npx --yes skills@1.5.7 add ... --agent universal --yes --copy` command. Compose mounts
+`./.agents:/app/.agents`, so installed skills persist across container rebuilds.
+
+Skills are instructions only. They do not make scripts/tools executable unless runtime code also wires a capability,
+Pydantic AI tool, or MCP toolset.
+
+## 🛠 Commands
+
+| Command | Description |
+| --- | --- |
+| `/start` | Show an introduction. |
+| `/help` | Show help. |
+| `/id` | Show current chat/user ID for allowlist setup. |
+| `/reset` | Clear conversation memory for the current chat. |
+| `/ask <question>` | Ask the AI assistant directly. |
+| `/image <prompt>` | Generate an image when image output is enabled. |
+| `/skills add <package>` | Install Agent Skills with `npx`. |
+| `/skills list` | List installed Agent Skills. |
+| `/soul show\|reload\|path` | Inspect or reload `SOUL.md`. |
+| `/memory show\|reload\|path` | Inspect or reload `MEMORY.md`. |
+| `/events list\|show <name>\|cancel <name>\|reload` | Manage file-backed events. |
+| `/tasks list\|show <id>\|cancel <id>` | Inspect or cancel proactive runtime tasks. |
+
+## 🖼 Image Input and Output
+
+Image input:
+
+- Users can send Telegram photos or image documents.
+- Captions are preserved as the user prompt.
+- The configured chat model/provider must support vision.
+- Oversized images are rejected before model submission.
+
+Image output:
+
+- Disabled by default.
+- Enable `BOT_IMAGE_GENERATION_ENABLED=true`.
+- Use `/image <prompt>`.
+- Requires an OpenAI-compatible `/images/generations` endpoint.
+
+## 📣 Telegraph Long Replies
+
+Telegram messages over the configured long-message threshold are published to Telegraph, and the Telegram reply becomes
+the Telegraph URL. This keeps long model replies readable while avoiding Telegram chunk spam.
+
+The publisher sanitizes content to Telegraph's supported HTML subset before creating the page.
+
+## 📁 File-Backed Immediate Events
+
+When `BOT_EVENTS_ENABLED=true`, the bot scans:
+
+```text
+BOT_EVENTS_DIR/inbox/*.json
+```
+
+Example `.events/inbox/summarize-video.json`:
 
 ```json
 {
@@ -177,145 +348,116 @@ The bot dispatches it as:
 [EVENT:summarize-video] 請整理 https://youtu.be/iG-hzh9roNw
 ```
 
-`reply_mode` is optional:
+`reply_mode` values:
 
-- `send` (default): send the result as a new message.
-- `edit-status`: first send `處理中…`, then edit that bot-owned status message into the final result. If editing fails, the bot falls back to sending a new message. Telegram only allows editing messages sent by the bot itself.
+- `send`: send the result as a new message.
+- `edit-status`: send `處理中…`, then edit that bot-owned status message into the final result.
 
-Safety limits:
+Event safety:
 
 - Event names must match `^[a-z0-9-]{1,40}$`.
-- Event text is limited by `BOT_EVENTS_MAX_TEXT_CHARS`.
-- Event text cannot execute management commands such as `/skills`, `/memory`, `/soul`, or `/events`.
-- A scan processes at most `BOT_EVENTS_MAX_QUEUED_PER_CHAT` events per chat; excess files stay in `inbox/` for a later scan.
-- Successful events are moved to `processed/` when `BOT_EVENTS_ARCHIVE_PROCESSED=true`; invalid or failed events are moved to `failed/`.
+- Event text is length-limited.
+- Event text cannot execute management commands.
+- Successful events can be archived to `processed/`; invalid or failed events go to `failed/`.
 
-Docker Compose mounts `./.events:/app/.events` by default, so host scripts can write to `.events/inbox/`.
+Compose mounts `./.events:/app/.events`, so host scripts can write event files without rebuilding the image.
 
-## Proactive Runtime State
+## 🧰 Docker-Only Container Tools
 
-The bot stores durable per-chat JSONL session logs under `BOT_SESSION_LOG_DIR` (default `.telegramagent/sessions`). These logs let it reconstruct recent context after a restart, including previously shared URLs, synthetic event messages, and assistant replies. Runtime state directories are git-ignored.
-
-The proactive runtime has a small task queue:
-
-- `BOT_TASKS_MAX_CONCURRENT_PER_CHAT` limits concurrent proactive work per chat.
-- Long-running proactive work can send `處理中…` and then edit that bot-owned status message into the final result.
-- `/tasks list`, `/tasks show <id>`, and `/tasks cancel <id>` expose task state.
-
-Runtime capabilities are explicit. Built-in web fetch, YouTube transcript extraction, Telegram image input, optional image generation, file-backed events, `kabigon.api.load_url` URL extraction, Telegraph publishing for replies over 2000 characters, and Yahoo Finance MCP tools are available by default. The chat agent registers a Pydantic AI tool named `kabigon_load_url`, so the model can call kabigon directly for supported public HTTP(S) URLs. It also registers the `yfmcp` MCP toolset when `BOT_YFINANCE_MCP_ENABLED=true`, allowing stock, ETF, options, financial statement, holder, sector, market-news, and price-chart lookups through Yahoo Finance data. When yfmcp returns chart images, the bot sends those image artifacts to Telegram after the text reply. Financial responses are informational only and should not be treated as investment advice. Some kabigon loaders may need extra runtime assets such as Playwright browsers, depending on the URL type. Agent Skills alone still do not make a tool executable; a capability, Pydantic AI tool, or MCP toolset must be wired in runtime code.
-
-Docker Compose enables Docker-only local container tools by default with `BOT_CONTAINER_TOOLS_ENABLED=true` and `BOT_CONTAINER_TOOLS_ROOT=/app`. These register Pydantic AI tools named `bash`, `edit`, `find`, `grep`, `ls`, `read`, and `write` only when the runtime also detects that it is inside a container. Local `uv run telegramagent` keeps them disabled by default. The filesystem tools are sandboxed to `BOT_CONTAINER_TOOLS_ROOT`, and all tools have timeout/output/read/result limits. The `bash` tool runs with that root as its working directory but can execute arbitrary non-interactive commands inside the container, so it can still mutate container files or mounted state directories. Tool results may be sent to the model provider, so do not ask the bot to read secrets unless you accept that exposure. Writes to the image-layer `/app` are not durable across rebuilds; mounted paths keep their normal Docker persistence. Set `BOT_CONTAINER_TOOLS_ENABLED=false` and restart to disable them.
-
-Docker Compose mounts `./.telegramagent:/app/.telegramagent` by default so session logs survive container restarts.
-
-## Image Input and Output
-
-When `BOT_IMAGE_INPUT_ENABLED=true`, users can send Telegram photos or image documents with an optional caption. The bot downloads the image through Telegram `getFile` and sends it to the chat model as multimodal input. The configured `OPENAI_MODEL` and provider must support vision; otherwise the bot will honestly report the provider/model limitation. Images larger than `BOT_IMAGE_MAX_BYTES` are rejected before model submission.
-
-Image output is explicit and off by default. Set `BOT_IMAGE_GENERATION_ENABLED=true` and use `/image <prompt>` to call the configured OpenAI-compatible `/images/generations` endpoint with `BOT_IMAGE_GENERATION_MODEL` and `BOT_IMAGE_GENERATION_SIZE`. Providers that do not implement that endpoint will return an error instead of pretending an image was generated.
-
-## Group Reply Rules
-
-In private chats, the bot replies to normal text messages. In groups and supergroups, to avoid interrupting the conversation, it only replies in either of these cases:
-
-1. The message mentions the bot account, for example `@your_bot hello`
-2. The message directly replies to a bot message
-
-When `BOT_GROUP_PASSIVE_CONTEXT_ENABLED=true`, unaddressed group messages are still recorded as passive user-message history for that chat. This does not call the LLM and does not send a reply by itself; it only lets the bot see recent group context the next time it is addressed. Disable it if the group should not be persisted in `.telegramagent/sessions`.
-
-## SOUL.md and MEMORY.md
-
-The bot can load two always-on context files before Agent Skills:
-
-1. `SOUL.md`: who the bot is — identity, worldview, voice, values, and hard boundaries
-2. `MEMORY.md`: what the bot should remember — durable user preferences, relationship context, facts, gotchas, and open threads
-
-The instruction order is:
+Docker Compose enables optional local tools for the chat model:
 
 ```text
-core rules -> SOUL.md -> MEMORY.md -> Agent Skills -> conversation history -> user message
+bash, edit, find, grep, ls, read, write
 ```
 
-Start from the templates:
+These tools are registered only when the runtime detects it is inside a container and
+`BOT_CONTAINER_TOOLS_ENABLED=true`.
+
+Important limits:
+
+- Filesystem tools are scoped to `BOT_CONTAINER_TOOLS_ROOT`.
+- `bash` runs in that root but can mutate container files or mounted state.
+- Tool output is bounded by timeout/read/result limits.
+- Tool results may be sent to the model provider.
+- Writes to image-layer `/app` are not durable across rebuilds; mounted volumes persist.
+
+Disable them with:
+
+```env
+BOT_CONTAINER_TOOLS_ENABLED=false
+```
+
+## 📊 Yahoo Finance MCP
+
+When `BOT_YFINANCE_MCP_ENABLED=true`, the bot registers the `yfmcp` MCP toolset for stock, ETF, options, financial
+statement, holder, sector, news, and price-chart lookups.
+
+Financial responses are informational only and are not investment advice.
+
+## 🔭 Observability
+
+Set `LOGFIRE_TOKEN` to enable Logfire at startup. The bot forwards Loguru logs and instruments HTTPX, Pydantic AI, and
+MCP calls.
+
+Prompt/model-response content is not sent by default. Enable content capture only when you intentionally want it:
+
+```env
+LOGFIRE_INCLUDE_CONTENT=true
+```
+
+Stdlib logging is routed through Loguru. Noisy HTTP/OpenAI debug loggers are suppressed by default, and common token-like
+values are redacted before forwarding.
+
+## 🧪 Development
+
+Common commands:
 
 ```bash
-cp SOUL.md.example SOUL.md
-cp MEMORY.md.example MEMORY.md
+uv sync
+uv run telegramagent
+docker compose up -d --build
+docker compose logs -f telegramagent
 ```
 
-Keep `SOUL.md` short. A good soul file is usually 150–400 words; 800+ words should be treated as a warning sign. Put task procedures in Agent Skills, not in SOUL.md.
+Quality gate:
 
-`MEMORY.md` should be factual, compact, and safe to load every turn. Do not store API keys, tokens, passwords, cookies, private URLs, or sensitive personal data in it.
-
-Reload context files at runtime:
-
-```text
-/soul reload
-/memory reload
+```bash
+uv run ruff format --check
+uv run ruff check .
+uv run ty check .
+uv run pytest -q tests
 ```
 
-Docker users can edit host files and mount them into the container. If you want live host edits without rebuilding the image, uncomment or add these Compose volumes:
+The `justfile` also provides aggregate recipes:
+
+```bash
+just all
+just test
+just lint
+just type
+```
+
+Note: `just lint` applies Ruff fixes.
+
+## 🔒 Security Notes
+
+- Never commit `.env`, bot tokens, API keys, cookies, or private URLs.
+- Keep `SOUL.md` and `MEMORY.md` free of secrets.
+- URL fetching blocks private/local network targets.
+- Risky side-effect actions should require explicit confirmation.
+- Container tools can expose file contents to the model provider; keep secrets outside mounted tool roots.
+
+## 📦 Docker Volumes
+
+Compose mounts these paths by default:
 
 ```yaml
+- ./.agents:/app/.agents
+- ./.events:/app/.events
+- ./.telegramagent:/app/.telegramagent
 - ./SOUL.md:/app/SOUL.md:ro
 - ./MEMORY.md:/app/MEMORY.md:ro
 ```
 
-## Agent Skills
-
-The bot uses a Pydantic AI Agent to answer messages and loads Agent Skills as instructions at startup.
-
-Default skills directory:
-
-```text
-.agents/skills/<skill-name>/SKILL.md
-```
-
-Example:
-
-```md
----
-name: chat-style
-description: Telegram reply style. Use when replying to Telegram messages.
----
-
-# Chat Style
-
-- Use Traditional Chinese.
-- Keep replies short.
-```
-
-Set `BOT_ENABLED_SKILLS=chat-style,other-skill` to load only selected skills. Leave it empty to load all skills under `BOT_SKILLS_DIR`.
-
-Skills are currently injected as Pydantic AI instructions. The bot does not execute scripts bundled inside skills.
-
-You can also install skills from Telegram:
-
-```text
-/skills add vercel-labs/agent-skills --skill commit
-/skills list
-```
-
-Natural-language install requests are also supported, for example:
-
-```text
-安裝 narumiruna/skills 的 skills 所有
-```
-
-This is converted to:
-
-```bash
-npx --yes skills@1.5.7 add narumiruna/skills --skill '*' --agent universal --yes --copy
-```
-
-`/skills add` runs `npx --yes skills@1.5.7 add ... --yes --copy` in the project directory where the bot is running, then reloads skills after installation. By default it adds `--agent universal`, so it writes only to `.agents/skills`, which is the directory the bot reads, instead of installing into every agent directory. Before reinstalling, it detects already installed skills; use `--force` to force reinstall.
-
-The Docker image includes `git` / `nodejs` / `npm` / `npx`. Compose mounts local `./.agents` into the container so installed skills persist, and runs as root inside the container to avoid bind-mount permission failures during skill installation.
-
-## Bot-to-Bot Topic Ending
-
-When the incoming message is from another Telegram bot, the program first asks a topic-ending judge agent whether it should silently stop the conversation:
-
-- If the conversation is only a closing acknowledgement or repeated agreement such as `好` / `好的` / `了解`, the bot stops replying to avoid infinite bot-to-bot loops.
-- If the other bot asks a clear new question or provides new information, the judge can allow the bot to continue replying.
-- `BOT_MAX_CONSECUTIVE_REPLIES_TO_BOTS` is a safety limit. Even if the judge does not stop the topic, replies stop after this limit is exceeded.
+This keeps skills, events, and session logs durable while allowing `SOUL.md` and `MEMORY.md` edits without rebuilding the
+image.
