@@ -197,11 +197,11 @@ class TelegramClient:
 
     async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> int | None:
         last_message_id: int | None = None
-        for chunk in _chunk_text(_sanitize_telegram_text(text)):
+        for chunk in _telegram_html_chunks(text):
             payload: dict[str, object] = {
                 "chat_id": chat_id,
-                "text": _format_telegram_html(chunk),
-                "parse_mode": "HTML",
+                "text": chunk,
+                "parse_mode": _TELEGRAM_PARSE_MODE,
                 "disable_web_page_preview": True,
             }
             if reply_to_message_id is not None:
@@ -227,10 +227,10 @@ class TelegramClient:
         payload: dict[str, object] = {"chat_id": chat_id}
         if reply_to_message_id is not None:
             payload["reply_to_message_id"] = reply_to_message_id
-        caption_chunks = _chunk_text(_sanitize_telegram_text(caption), limit=1024) if caption else []
+        caption_chunks = _telegram_html_chunks(caption, limit=1024) if caption else []
         if caption_chunks:
-            payload["caption"] = _format_telegram_html(caption_chunks[0])
-            payload["parse_mode"] = "HTML"
+            payload["caption"] = caption_chunks[0]
+            payload["parse_mode"] = _TELEGRAM_PARSE_MODE
 
         result = await self._request_multipart(
             "sendPhoto",
@@ -248,14 +248,14 @@ class TelegramClient:
         return last_message_id
 
     async def edit_message_text(self, chat_id: int, message_id: int, text: str) -> None:
-        chunks = _chunk_text(_sanitize_telegram_text(text))
+        chunks = _telegram_html_chunks(text)
         await self._request(
             "editMessageText",
             {
                 "chat_id": chat_id,
                 "message_id": message_id,
-                "text": _format_telegram_html(chunks[0]),
-                "parse_mode": "HTML",
+                "text": chunks[0],
+                "parse_mode": _TELEGRAM_PARSE_MODE,
                 "disable_web_page_preview": True,
             },
         )
@@ -1051,9 +1051,15 @@ def _is_likely_long_running_action(text: str) -> bool:
     )
 
 
+_TELEGRAM_PARSE_MODE = "HTML"
 _FENCED_CODE_RE = re.compile(r"```(?:([^\n`]*)\n)?([\s\S]*?)```")
 _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*", flags=re.DOTALL)
+
+
+def _telegram_html_chunks(text: str, *, limit: int = 4096) -> list[str]:
+    sanitized = _sanitize_telegram_text(text)
+    return [_format_telegram_html(chunk) for chunk in _chunk_text(sanitized, limit=limit)]
 
 
 def _sanitize_telegram_text(text: str) -> str:
