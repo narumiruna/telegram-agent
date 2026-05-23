@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     bot_events_archive_processed: bool = Field(default=True, alias="BOT_EVENTS_ARCHIVE_PROCESSED")
     bot_session_log_dir: Path = Field(default=Path(".telegramagent/sessions"), alias="BOT_SESSION_LOG_DIR")
     bot_tasks_max_concurrent_per_chat: int = Field(default=1, ge=1, alias="BOT_TASKS_MAX_CONCURRENT_PER_CHAT")
+    bot_image_input_enabled: bool = Field(default=True, alias="BOT_IMAGE_INPUT_ENABLED")
+    bot_image_max_bytes: int = Field(default=8_000_000, ge=1, alias="BOT_IMAGE_MAX_BYTES")
+    bot_image_generation_enabled: bool = Field(default=False, alias="BOT_IMAGE_GENERATION_ENABLED")
+    bot_image_generation_model: str = Field(default="gpt-image-1", alias="BOT_IMAGE_GENERATION_MODEL")
+    bot_image_generation_size: str = Field(default="1024x1024", alias="BOT_IMAGE_GENERATION_SIZE")
+    bot_image_generation_timeout_seconds: float = Field(
+        default=120.0, gt=0, alias="BOT_IMAGE_GENERATION_TIMEOUT_SECONDS"
+    )
     bot_yfinance_mcp_enabled: bool = Field(default=True, alias="BOT_YFINANCE_MCP_ENABLED")
     bot_yfinance_mcp_command: str = Field(default="yfmcp", alias="BOT_YFINANCE_MCP_COMMAND")
     bot_yfinance_mcp_args: Annotated[tuple[str, ...], NoDecode] = Field(

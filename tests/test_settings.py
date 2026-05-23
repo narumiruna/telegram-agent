@@ -51,6 +51,24 @@ def test_proactive_runtime_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_tasks_max_concurrent_per_chat == 3
 
 
+def test_image_settings_parse_env(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_IMAGE_INPUT_ENABLED", "false")
+    monkeypatch.setenv("BOT_IMAGE_MAX_BYTES", "12345")
+    monkeypatch.setenv("BOT_IMAGE_GENERATION_ENABLED", "true")
+    monkeypatch.setenv("BOT_IMAGE_GENERATION_MODEL", "image-model")
+    monkeypatch.setenv("BOT_IMAGE_GENERATION_SIZE", "512x512")
+    monkeypatch.setenv("BOT_IMAGE_GENERATION_TIMEOUT_SECONDS", "30")
+
+    settings = Settings()
+
+    assert settings.bot_image_input_enabled is False
+    assert settings.bot_image_max_bytes == 12345
+    assert settings.bot_image_generation_enabled is True
+    assert settings.bot_image_generation_model == "image-model"
+    assert settings.bot_image_generation_size == "512x512"
+    assert settings.bot_image_generation_timeout_seconds == 30
+
+
 def test_yfinance_mcp_settings_parse_env(monkeypatch) -> None:
     monkeypatch.setenv("BOT_YFINANCE_MCP_ENABLED", "false")
     monkeypatch.setenv("BOT_YFINANCE_MCP_COMMAND", "uvx")

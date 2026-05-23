@@ -49,6 +49,16 @@ BOT_EVENTS_ARCHIVE_PROCESSED=true
 BOT_SESSION_LOG_DIR=.telegramagent/sessions
 BOT_TASKS_MAX_CONCURRENT_PER_CHAT=1
 
+# Image input/output.
+# Image input sends Telegram photos/image documents to the chat model; use a vision-capable model/provider.
+BOT_IMAGE_INPUT_ENABLED=true
+BOT_IMAGE_MAX_BYTES=8000000
+# Image output uses the OpenAI-compatible /images/generations endpoint and is off by default.
+BOT_IMAGE_GENERATION_ENABLED=false
+BOT_IMAGE_GENERATION_MODEL=gpt-image-1
+BOT_IMAGE_GENERATION_SIZE=1024x1024
+BOT_IMAGE_GENERATION_TIMEOUT_SECONDS=120
+
 # Yahoo Finance MCP tools. Enabled by default through the installed yfmcp command.
 BOT_YFINANCE_MCP_ENABLED=true
 BOT_YFINANCE_MCP_COMMAND=yfmcp
@@ -104,6 +114,7 @@ Logfire support is opt-in by token: set `LOGFIRE_TOKEN` to enable Logfire config
 - `/id`: show the current chat/user ID, useful for allowlist configuration
 - `/reset`: clear conversation memory for the current chat
 - `/ask <question>`: ask the AI assistant
+- `/image <prompt>`: generate an image through the configured OpenAI-compatible `/images/generations` endpoint
 - `/skills add <package>`: install Agent Skills in the local project with `npx skills add <package> --yes --copy`
 - `/skills list`: list installed Agent Skills
 - `/soul show|reload|path`: inspect or reload `SOUL.md`
@@ -180,9 +191,15 @@ The proactive runtime has a small task queue:
 - Long-running proactive work can send `處理中…` and then edit that bot-owned status message into the final result.
 - `/tasks list`, `/tasks show <id>`, and `/tasks cancel <id>` expose task state.
 
-Runtime capabilities are explicit. Built-in web fetch, YouTube transcript extraction, file-backed events, `kabigon.api.load_url` URL extraction, and Yahoo Finance MCP tools are available by default. The chat agent registers a Pydantic AI tool named `kabigon_load_url`, so the model can call kabigon directly for supported public HTTP(S) URLs. It also registers the `yfmcp` MCP toolset when `BOT_YFINANCE_MCP_ENABLED=true`, allowing stock, ETF, options, financial statement, holder, sector, and market-news lookups through Yahoo Finance data. Financial responses are informational only and should not be treated as investment advice. Some kabigon loaders may need extra runtime assets such as Playwright browsers, depending on the URL type. Agent Skills alone still do not make a tool executable; a capability, Pydantic AI tool, or MCP toolset must be wired in runtime code.
+Runtime capabilities are explicit. Built-in web fetch, YouTube transcript extraction, Telegram image input, optional image generation, file-backed events, `kabigon.api.load_url` URL extraction, and Yahoo Finance MCP tools are available by default. The chat agent registers a Pydantic AI tool named `kabigon_load_url`, so the model can call kabigon directly for supported public HTTP(S) URLs. It also registers the `yfmcp` MCP toolset when `BOT_YFINANCE_MCP_ENABLED=true`, allowing stock, ETF, options, financial statement, holder, sector, and market-news lookups through Yahoo Finance data. Financial responses are informational only and should not be treated as investment advice. Some kabigon loaders may need extra runtime assets such as Playwright browsers, depending on the URL type. Agent Skills alone still do not make a tool executable; a capability, Pydantic AI tool, or MCP toolset must be wired in runtime code.
 
 Docker Compose mounts `./.telegramagent:/app/.telegramagent` by default so session logs survive container restarts.
+
+## Image Input and Output
+
+When `BOT_IMAGE_INPUT_ENABLED=true`, users can send Telegram photos or image documents with an optional caption. The bot downloads the image through Telegram `getFile` and sends it to the chat model as multimodal input. The configured `OPENAI_MODEL` and provider must support vision; otherwise the bot will honestly report the provider/model limitation. Images larger than `BOT_IMAGE_MAX_BYTES` are rejected before model submission.
+
+Image output is explicit and off by default. Set `BOT_IMAGE_GENERATION_ENABLED=true` and use `/image <prompt>` to call the configured OpenAI-compatible `/images/generations` endpoint with `BOT_IMAGE_GENERATION_MODEL` and `BOT_IMAGE_GENERATION_SIZE`. Providers that do not implement that endpoint will return an error instead of pretending an image was generated.
 
 ## Group Reply Rules
 

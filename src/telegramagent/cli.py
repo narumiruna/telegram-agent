@@ -21,6 +21,7 @@ from telegramagent.events import EventSettings
 from telegramagent.events import EventWatcher
 from telegramagent.events import ImmediateEvent
 from telegramagent.events import event_prompt
+from telegramagent.images import OpenAIImageGenerator
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
 from telegramagent.mcp import YFinanceMcpConfig
@@ -60,6 +61,14 @@ def _yfinance_mcp_unavailable_reason(config: YFinanceMcpConfig, *, available: bo
     if not command_available(config.command):
         return f"command not found: {config.command}"
     return "not configured"
+
+
+def _image_generation_unavailable_reason(settings: Settings) -> str:
+    if not settings.bot_image_generation_enabled:
+        return "disabled"
+    if not settings.openai_api_key:
+        return "OPENAI_API_KEY not configured"
+    return ""
 
 
 @app.command()
@@ -115,6 +124,22 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
             _yfinance_mcp_unavailable_reason(yfinance_mcp_config, available=bool(yfinance_mcp_toolsets)),
         )
     )
+    capabilities.set(
+        Capability(
+            "image_input.telegram",
+            settings.bot_image_input_enabled,
+            "Telegram photo/image-document input passed to the chat model; requires a vision-capable model/provider",
+            "disabled" if not settings.bot_image_input_enabled else "",
+        )
+    )
+    capabilities.set(
+        Capability(
+            "image_output.openai",
+            settings.bot_image_generation_enabled and bool(settings.openai_api_key),
+            "OpenAI-compatible /images/generations image output via /image",
+            _image_generation_unavailable_reason(settings),
+        )
+    )
     agent = ChatAgent(
         api_key=settings.openai_api_key,
         model=settings.openai_model,
@@ -130,6 +155,17 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         api_key=settings.openai_api_key,
         model=settings.openai_model,
         base_url=settings.openai_base_url,
+    )
+    image_generator = (
+        OpenAIImageGenerator(
+            api_key=settings.openai_api_key,
+            model=settings.bot_image_generation_model,
+            base_url=settings.openai_base_url,
+            size=settings.bot_image_generation_size,
+            timeout_seconds=settings.bot_image_generation_timeout_seconds,
+        )
+        if settings.bot_image_generation_enabled and settings.openai_api_key
+        else None
     )
     skill_installer = SkillInstaller(project_root=project_root)
     proactive_tool = ProactiveActionTool(
@@ -241,6 +277,9 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         proactive_tool=proactive_tool,
         session_log=session_log,
         task_queue=task_queue,
+        image_input_enabled=settings.bot_image_input_enabled,
+        image_max_bytes=settings.bot_image_max_bytes,
+        image_generator=image_generator,
         tools=[
             ContextManagementTool(
                 command_name="soul",

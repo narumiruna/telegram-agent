@@ -11,16 +11,19 @@ from typing import cast
 
 import httpx
 from pydantic_ai import Agent as PydanticAgent
+from pydantic_ai.messages import BinaryContent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.messages import TextPart
+from pydantic_ai.messages import UserContent
 from pydantic_ai.messages import UserPromptPart
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from telegramagent.context_files import ContextFile
 from telegramagent.context_files import format_context_for_instructions
+from telegramagent.images import ImageAttachment
 from telegramagent.kabigon_tool import kabigon_load_url
 from telegramagent.skills import AgentSkill
 from telegramagent.skills import format_skills_for_instructions
@@ -76,7 +79,12 @@ class OpenAIChatClient:
 
 
 class RunnableAgent(Protocol):
-    def run(self, user_prompt: str, *, message_history: Sequence[ModelMessage] | None = None) -> Awaitable[object]: ...
+    def run(
+        self,
+        user_prompt: str | Sequence[UserContent],
+        *,
+        message_history: Sequence[ModelMessage] | None = None,
+    ) -> Awaitable[object]: ...
 
 
 AgentFactory = Callable[[str], RunnableAgent]
@@ -114,11 +122,19 @@ class ChatAgent:
     def is_configured(self) -> bool:
         return self.client.is_configured
 
-    async def reply(self, prompt: str, *, history: Sequence[tuple[str, str]] = ()) -> str:
+    async def reply(
+        self,
+        prompt: str,
+        *,
+        history: Sequence[tuple[str, str]] = (),
+        images: Sequence[ImageAttachment] = (),
+    ) -> str:
         if not self.client.is_configured:
+            if images:
+                return f"我有收到圖片，但目前還沒設定 OPENAI_API_KEY，所以不能讀圖。文字內容：\n\n{prompt}"
             return f"我目前還沒設定 OPENAI_API_KEY, 所以先原樣回覆:\n\n{prompt}"
 
-        result = await self.agent.run(prompt, message_history=_message_history(history))
+        result = await self.agent.run(_user_prompt(prompt, images), message_history=_message_history(history))
         output = getattr(result, "output", result)
         if not isinstance(output, str) or not output.strip():
             return "模型沒有回覆內容, 請稍後再試。"
@@ -176,6 +192,7 @@ def _chat_instructions(
         "如果使用者提到『剛剛那個』、『不是丟過了』或要求沿用前文 URL，不要要求重新貼連結。"
         "如果使用者要求你自動處理、讀取、整理或查詢，只有在工具結果或系統訊息明確提供內容時，"
         "才可以說你已經讀取或正在根據內容整理；如果沒有工具結果，不要假裝會在背景工作。"
+        "如果使用者傳圖片且 runtime 已提供圖片內容，請直接根據圖片回答；若模型或供應商無法辨識圖片，請明確說明限制。"
         "Agent Skills 是操作說明，不代表你在 Telegram runtime 真的有該工具；"
         "只有 runtime capabilities、Pydantic AI tools 或已啟用 MCP toolsets 中列出的工具才是真的可執行。"
         "使用股票與金融資料時，明確說明僅供資訊參考，不構成投資建議。"
@@ -192,6 +209,17 @@ def _chat_instructions(
     if skill_instructions:
         sections.append(skill_instructions)
     return "\n\n".join(sections)
+
+
+def _user_prompt(prompt: str, images: Sequence[ImageAttachment]) -> str | list[UserContent]:
+    if not images:
+        return prompt
+
+    parts: list[UserContent] = [prompt.strip() or "請閱讀這張圖片，描述重點並回答使用者可能想知道的內容。"]
+    for index, image in enumerate(images, start=1):
+        parts.append(f"圖片 {index}: {image.filename}")
+        parts.append(BinaryContent(data=image.data, media_type=image.media_type, identifier=image.filename))
+    return parts
 
 
 def _message_history(history: Sequence[tuple[str, str]]) -> list[ModelMessage]:

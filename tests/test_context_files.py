@@ -52,7 +52,7 @@ class FakeRunnableAgent:
     def __init__(self, output: str = "ok") -> None:
         self.output = output
 
-    async def run(self, user_prompt: str, **kwargs: Any) -> FakeRunResult:
+    async def run(self, user_prompt: Any, **kwargs: Any) -> FakeRunResult:
         return FakeRunResult(self.output)
 
 

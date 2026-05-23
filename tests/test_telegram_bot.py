@@ -12,6 +12,8 @@ from telegramagent.actions import ActionContent
 from telegramagent.actions import ProactiveActionTool
 from telegramagent.context_files import ContextManagementTool
 from telegramagent.context_files import load_context_file
+from telegramagent.images import GeneratedImage
+from telegramagent.images import ImageAttachment
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
 from telegramagent.session import SessionLog
@@ -24,13 +26,18 @@ from telegramagent.skills import load_agent_skills
 from telegramagent.tasks import TaskQueue
 from telegramagent.telegram import TelegramBot
 from telegramagent.telegram import TelegramClient
+from telegramagent.telegram import TelegramFile
 from telegramagent.telegram import TelegramUpdate
 
 
 class FakeTelegram:
     def __init__(self) -> None:
         self.sent: list[tuple[int, str, int | None]] = []
+        self.sent_photos: list[tuple[int, bytes, str | None, str, str, int | None]] = []
         self.edited: list[tuple[int, int, str]] = []
+        self.files: dict[str, TelegramFile] = {}
+        self.file_contents: dict[str, bytes] = {}
+        self.downloaded_paths: list[str] = []
         self.next_message_id = 100
 
     async def get_me(self) -> dict[str, object]:
@@ -39,8 +46,30 @@ class FakeTelegram:
     async def get_updates(self, *, offset: int | None, poll_timeout: int = 30) -> list[TelegramUpdate]:
         return []
 
+    async def get_file(self, file_id: str) -> TelegramFile:
+        return self.files.get(file_id, {"file_id": file_id, "file_path": f"photos/{file_id}.jpg"})
+
+    async def download_file(self, file_path: str) -> bytes:
+        self.downloaded_paths.append(file_path)
+        return self.file_contents.get(file_path, b"image-bytes")
+
     async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> int | None:
         self.sent.append((chat_id, text, reply_to_message_id))
+        message_id = self.next_message_id
+        self.next_message_id += 1
+        return message_id
+
+    async def send_photo(
+        self,
+        chat_id: int,
+        photo: bytes,
+        *,
+        caption: str | None = None,
+        filename: str = "image.png",
+        media_type: str = "image/png",
+        reply_to_message_id: int | None = None,
+    ) -> int | None:
+        self.sent_photos.append((chat_id, photo, caption, filename, media_type, reply_to_message_id))
         message_id = self.next_message_id
         self.next_message_id += 1
         return message_id
@@ -50,8 +79,42 @@ class FakeTelegram:
 
 
 class FakeAgent:
-    async def reply(self, prompt: str, *, history: Sequence[tuple[str, str]]) -> str:
+    async def reply(
+        self,
+        prompt: str,
+        *,
+        history: Sequence[tuple[str, str]],
+        images: Sequence[ImageAttachment] = (),
+    ) -> str:
+        if images:
+            return f"AI: {prompt} ({len(history)}, images={len(images)})"
         return f"AI: {prompt} ({len(history)})"
+
+
+class FakeVisionAgent:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, Sequence[tuple[str, str]], list[ImageAttachment]]] = []
+
+    async def reply(
+        self,
+        prompt: str,
+        *,
+        history: Sequence[tuple[str, str]],
+        images: Sequence[ImageAttachment] = (),
+    ) -> str:
+        image_list = [*images]
+        self.calls.append((prompt, [*history], image_list))
+        return f"vision: {prompt} ({len(image_list)})"
+
+
+class FakeImageGenerator:
+    def __init__(self, image: GeneratedImage) -> None:
+        self.image = image
+        self.prompts: list[str] = []
+
+    async def generate(self, prompt: str) -> GeneratedImage:
+        self.prompts.append(prompt)
+        return self.image
 
 
 class FakeRunResult:
@@ -62,10 +125,10 @@ class FakeRunResult:
 class FakeRunnableAgent:
     def __init__(self, output: str = "回覆") -> None:
         self.output = output
-        self.prompts: list[str] = []
+        self.prompts: list[Any] = []
         self.message_history_lengths: list[int] = []
 
-    async def run(self, user_prompt: str, **kwargs: Any) -> FakeRunResult:
+    async def run(self, user_prompt: Any, **kwargs: Any) -> FakeRunResult:
         self.prompts.append(user_prompt)
         self.message_history_lengths.append(len(kwargs.get("message_history") or []))
         return FakeRunResult(self.output)
@@ -298,6 +361,115 @@ async def test_session_log_restores_url_for_kabigon_followup_after_restart(tmp_p
 
     assert first_fetcher.calls == ["h_7fdZjUKE8"]
     assert second_fetcher.calls == ["h_7fdZjUKE8"]
+
+
+@pytest.mark.asyncio
+async def test_handle_update_downloads_photo_and_passes_image_to_agent() -> None:
+    telegram = FakeTelegram()
+    telegram.files["large"] = {"file_id": "large", "file_path": "photos/large.jpg", "file_size": 11}
+    telegram.file_contents["photos/large.jpg"] = b"large-image"
+    agent = FakeVisionAgent()
+    bot = TelegramBot(telegram=telegram, agent=agent)
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 456},
+                "caption": "這張圖在幹嘛？",
+                "photo": [
+                    {"file_id": "small", "width": 100, "height": 100, "file_size": 3},
+                    {"file_id": "large", "width": 800, "height": 600, "file_size": 11},
+                ],
+            },
+        }
+    )
+
+    assert telegram.downloaded_paths == ["photos/large.jpg"]
+    assert telegram.sent == [(123, "vision: 這張圖在幹嘛？ (1)", 10)]
+    assert len(agent.calls) == 1
+    prompt, history, images = agent.calls[0]
+    assert prompt == "這張圖在幹嘛？"
+    assert history == []
+    assert images == [ImageAttachment(data=b"large-image", media_type="image/jpeg", filename="telegram-photo.jpg")]
+    assert bot.histories[123] == [
+        ("user", "這張圖在幹嘛？\n[圖片: telegram-photo.jpg]"),
+        ("assistant", "vision: 這張圖在幹嘛？ (1)"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_handle_update_rejects_oversized_photo_before_download() -> None:
+    telegram = FakeTelegram()
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), image_max_bytes=5)
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 456},
+                "caption": "看圖",
+                "photo": [{"file_id": "large", "width": 800, "height": 600, "file_size": 6}],
+            },
+        }
+    )
+
+    assert telegram.downloaded_paths == []
+    assert telegram.sent == [(123, "這張圖片太大了，我先不讀取；請改傳較小的圖片。", 10)]
+
+
+@pytest.mark.asyncio
+async def test_image_command_sends_generated_photo() -> None:
+    telegram = FakeTelegram()
+    generator = FakeImageGenerator(GeneratedImage(data=b"png", media_type="image/png", filename="cat.png"))
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), image_generator=generator)
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 456},
+                "text": "/image 一隻橘貓在鍵盤上睡覺",
+            },
+        }
+    )
+
+    assert generator.prompts == ["一隻橘貓在鍵盤上睡覺"]
+    assert telegram.sent == [(123, "產生圖片中…", 10)]
+    assert telegram.sent_photos == [
+        (123, b"png", "已根據提示產生圖片：\n一隻橘貓在鍵盤上睡覺", "cat.png", "image/png", 10)
+    ]
+    assert telegram.edited == [(123, 100, "圖片已產生。")]
+    assert bot.histories[123] == [("user", "/image 一隻橘貓在鍵盤上睡覺"), ("assistant", "[已產生圖片]")]
+
+
+@pytest.mark.asyncio
+async def test_image_command_requires_generator() -> None:
+    telegram = FakeTelegram()
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent())
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 456},
+                "text": "/image 一隻貓",
+            },
+        }
+    )
+
+    assert telegram.sent == [
+        (123, "圖片生成功能目前未啟用；請設定 OPENAI_API_KEY 並啟用 BOT_IMAGE_GENERATION_ENABLED。", 10)
+    ]
+    assert telegram.sent_photos == []
 
 
 @pytest.mark.asyncio
@@ -737,6 +909,28 @@ async def test_chat_agent_uses_pydantic_agent_with_history() -> None:
     assert "自然、克制地加入少量 emoji" in captured["instructions"]
     assert runnable.prompts == ["問題"]
     assert runnable.message_history_lengths == [2]
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_passes_images_as_binary_user_content() -> None:
+    runnable = FakeRunnableAgent("已看圖")
+
+    def factory(instructions: str) -> FakeRunnableAgent:
+        return runnable
+
+    agent = ChatAgent(api_key="key", model="model", agent_factory=factory)
+    reply = await agent.reply(
+        "請描述圖片",
+        images=[ImageAttachment(data=b"image-bytes", media_type="image/png", filename="sample.png")],
+    )
+
+    assert reply == "已看圖"
+    prompt = runnable.prompts[0]
+    assert isinstance(prompt, list)
+    assert prompt[0] == "請描述圖片"
+    assert prompt[1] == "圖片 1: sample.png"
+    assert prompt[2].data == b"image-bytes"
+    assert prompt[2].media_type == "image/png"
 
 
 @pytest.mark.asyncio
