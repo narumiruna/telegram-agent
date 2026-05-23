@@ -117,7 +117,7 @@ Logfire support is opt-in by token: set `LOGFIRE_TOKEN` to enable Logfire config
 - `/reset`: clear conversation memory for the current chat
 - `/ask <question>`: ask the AI assistant
 - `/image <prompt>`: generate an image through the configured OpenAI-compatible `/images/generations` endpoint
-- `/skills add <package>`: install Agent Skills in the local project with `npx skills add <package> --yes --copy`
+- `/skills add <package>`: install Agent Skills in the local project through `npx`
 - `/skills list`: list installed Agent Skills
 - `/soul show|reload|path`: inspect or reload `SOUL.md`
 - `/memory show|reload|path`: inspect or reload `MEMORY.md`
@@ -294,10 +294,10 @@ Natural-language install requests are also supported, for example:
 This is converted to:
 
 ```bash
-npx skills add narumiruna/skills --skill '*' --agent universal --yes --copy
+npx --yes skills@1.5.7 add narumiruna/skills --skill '*' --agent universal --yes --copy
 ```
 
-`/skills add` runs `npx skills add ... --yes --copy` in the project directory where the bot is running, then reloads skills after installation. By default it adds `--agent universal`, so it writes only to `.agents/skills`, which is the directory the bot reads, instead of installing into every agent directory. Before reinstalling, it detects already installed skills; use `--force` to force reinstall.
+`/skills add` runs `npx --yes skills@1.5.7 add ... --yes --copy` in the project directory where the bot is running, then reloads skills after installation. By default it adds `--agent universal`, so it writes only to `.agents/skills`, which is the directory the bot reads, instead of installing into every agent directory. Before reinstalling, it detects already installed skills; use `--force` to force reinstall.
 
 The Docker image includes `git` / `nodejs` / `npm` / `npx`. Compose mounts local `./.agents` into the container so installed skills persist, and runs as root inside the container to avoid bind-mount permission failures during skill installation.
 

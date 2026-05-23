@@ -41,9 +41,12 @@ class SkillInstallerProtocol(Protocol):
 
 
 class SkillInstaller:
-    def __init__(self, *, project_root: Path, timeout_seconds: int = 180) -> None:
+    def __init__(
+        self, *, project_root: Path, timeout_seconds: int = 180, command_prefix: Sequence[str] | None = None
+    ) -> None:
         self.project_root = project_root
         self.timeout_seconds = timeout_seconds
+        self.command_prefix = tuple(command_prefix or _default_skills_command_prefix())
 
     async def add(self, args: str) -> SkillInstallResult:
         parts = shlex.split(args)
@@ -55,22 +58,25 @@ class SkillInstaller:
             return SkillInstallResult(command=[], exit_code=2, output="第一個參數必須是 skill package。")
 
         normalized_parts = _normalize_add_args(parts)
-        command = ["npx", "skills", "add", *normalized_parts]
-        if "--yes" not in command and "-y" not in command:
+        command = [*self.command_prefix, "add", *normalized_parts]
+        if "--yes" not in normalized_parts and "-y" not in normalized_parts:
             command.append("--yes")
-        if "--copy" not in command:
+        if "--copy" not in normalized_parts:
             command.append("--copy")
 
         return await self._run(command)
 
     async def list(self) -> SkillInstallResult:
-        return await self._run(["npx", "skills", "list", "--json"])
+        return await self._run([*self.command_prefix, "list", "--json"])
 
     async def _run(self, command: Sequence[str]) -> SkillInstallResult:
         try:
             env = os.environ.copy()
             env.setdefault("HOME", "/tmp")
             env.setdefault("npm_config_cache", "/tmp/.npm")
+            env.setdefault("npm_config_update_notifier", "false")
+            env.setdefault("npm_config_fund", "false")
+            env.setdefault("npm_config_audit", "false")
             env["NO_COLOR"] = "1"
             process = await asyncio.create_subprocess_exec(
                 *command,
@@ -165,6 +171,13 @@ class SkillManagementTool:
 
     def usage(self) -> str:
         return "用法:\n/skills add <package> [npx skills add options]\n/skills list"
+
+
+_SKILLS_NPX_PACKAGE = "skills@1.5.7"
+
+
+def _default_skills_command_prefix() -> tuple[str, ...]:
+    return ("npx", "--yes", _SKILLS_NPX_PACKAGE)
 
 
 def _normalize_add_args(parts: list[str]) -> list[str]:

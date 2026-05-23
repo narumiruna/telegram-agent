@@ -170,8 +170,8 @@ class FakeRunnableAgent:
 
 
 class FakeCommandSkillInstaller(SkillInstaller):
-    def __init__(self, project_root: Path) -> None:
-        super().__init__(project_root=project_root)
+    def __init__(self, project_root: Path, command_prefix: Sequence[str] = ("npx", "--yes", "skills@1.5.7")) -> None:
+        super().__init__(project_root=project_root, command_prefix=command_prefix)
         self.commands: list[list[str]] = []
 
     async def _run(self, command: Sequence[str]) -> SkillInstallResult:
@@ -934,7 +934,8 @@ def test_skill_installer_builds_non_interactive_npx_add_command(tmp_path: Path) 
     assert installer.commands == [
         [
             "npx",
-            "skills",
+            "--yes",
+            "skills@1.5.7",
             "add",
             "owner/repo",
             "--skill",
@@ -954,7 +955,19 @@ def test_skill_installer_installs_all_skills_only_for_universal_agent(tmp_path: 
 
     assert result.ok
     assert installer.commands == [
-        ["npx", "skills", "add", "owner/repo", "--skill", "*", "--agent", "universal", "--yes", "--copy"]
+        [
+            "npx",
+            "--yes",
+            "skills@1.5.7",
+            "add",
+            "owner/repo",
+            "--skill",
+            "*",
+            "--agent",
+            "universal",
+            "--yes",
+            "--copy",
+        ]
     ]
 
 
