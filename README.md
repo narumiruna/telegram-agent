@@ -4,7 +4,7 @@ Telegram AI bot powered by the Telegram Bot API, Pydantic AI, and an OpenAI-comp
 
 It can chat in private messages, behave politely in groups, read replied messages, enrich URLs with extracted content,
 summarize links, understand Telegram images, generate images, publish long replies to Telegraph, and expose optional
-runtime tools such as kabigon, Gurume, Yahoo Finance MCP, and container-local file tools.
+runtime tools such as kabigon, Yahoo Finance MCP, and container-local file tools.
 
 ## ✨ Highlights
 
@@ -141,9 +141,6 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `BOT_YFINANCE_MCP_ENABLED` | `true` | Register Yahoo Finance MCP tools through `yfmcp`. |
-| `BOT_GURUME_TOOLS_ENABLED` | `true` | Register Tabelog restaurant tools through Gurume's direct Python API. |
-| `BOT_GURUME_TOOLS_TIMEOUT_SECONDS` | `30` | Timeout for each Gurume-backed Tabelog request. |
-| `BOT_GURUME_TOOLS_MAX_RESULTS` | `20` | Max restaurant search results returned to the model. |
 | `BOT_EVENTS_ENABLED` | `false` | Enable file-backed immediate events. |
 | `BOT_CONTAINER_TOOLS_ENABLED` | `true` in Compose | Register Docker-only local tools when running inside a container. |
 | `LOGFIRE_ENABLED` | `true` | Configure Logfire when `LOGFIRE_TOKEN` is set. |
@@ -397,15 +394,6 @@ When `BOT_YFINANCE_MCP_ENABLED=true`, the bot registers the `yfmcp` MCP toolset 
 statement, holder, sector, news, and price-chart lookups.
 
 Financial responses are informational only and are not investment advice.
-
-## 🍽️ Gurume Restaurant Tools
-
-When `BOT_GURUME_TOOLS_ENABLED=true`, the bot registers direct Gurume tools for Tabelog restaurant search, restaurant
-details, cuisine listing, and area/keyword suggestions.
-
-```env
-BOT_GURUME_TOOLS_ENABLED=false
-```
 
 ## 🔭 Observability
 

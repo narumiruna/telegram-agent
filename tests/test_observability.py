@@ -128,13 +128,11 @@ def test_redact_httpx_request_span_removes_non_secret_query_values() -> None:
 
     _redact_httpx_request_span(
         span,
-        FakeRequest("https://tabelog.com/rst/rstsearch?SrtT=rt&PG=1&sa=%E4%B8%89%E9%87%8D%E7%B8%A3"),
+        FakeRequest("https://example.com/search?sort=ranking&page=1&q=%E4%B8%89%E9%87%8D%E7%B8%A3"),
     )
 
-    assert (
-        span.attributes["http.url"] == "https://tabelog.com/rst/rstsearch?SrtT=[redacted]&PG=[redacted]&sa=[redacted]"
-    )
-    assert span.attributes["http.target"] == "/rst/rstsearch?SrtT=[redacted]&PG=[redacted]&sa=[redacted]"
-    assert span.attributes["url.path"] == "/rst/rstsearch"
-    assert span.attributes["url.query"] == "SrtT=[redacted]&PG=[redacted]&sa=[redacted]"
+    assert span.attributes["http.url"] == "https://example.com/search?sort=[redacted]&page=[redacted]&q=[redacted]"
+    assert span.attributes["http.target"] == "/search?sort=[redacted]&page=[redacted]&q=[redacted]"
+    assert span.attributes["url.path"] == "/search"
+    assert span.attributes["url.query"] == "sort=[redacted]&page=[redacted]&q=[redacted]"
     assert "%E4%B8%89" not in str(span.attributes)
