@@ -102,6 +102,27 @@ async def test_gurume_search_tool_returns_structured_validation_errors() -> None
 
 
 @pytest.mark.asyncio
+async def test_gurume_search_tool_reports_tabelog_403_as_forbidden(monkeypatch) -> None:
+    async def fake_search(self: SearchRequest) -> SearchResponse:
+        return SearchResponse(
+            status=SearchStatus.ERROR,
+            error_message=(
+                "Client error '403 Forbidden' for url 'https://tabelog.com/rst/rstsearch?SrtT=rt&PG=1&sa=test'"
+            ),
+        )
+
+    monkeypatch.setattr(SearchRequest, "search", fake_search)
+    runtime = GurumeToolRuntime(GurumeToolConfig(timeout_seconds=1))
+
+    result = await runtime.tabelog_search_restaurants(area="test")
+
+    assert result["status"] == "error"
+    assert result["error"]["code"] == "upstream_forbidden"
+    assert result["error"]["retryable"] is False
+    assert result["error"]["message"] == "Tabelog search was blocked with HTTP 403."
+
+
+@pytest.mark.asyncio
 async def test_gurume_suggestion_tools_return_serializable_items(monkeypatch) -> None:
     async def fake_area_suggestions(query: str, request_timeout: float = 10.0) -> list[AreaSuggestion]:
         assert query == "Tokyo"

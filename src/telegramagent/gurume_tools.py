@@ -180,12 +180,10 @@ class GurumeToolRuntime:
 
         if response.status == SearchStatus.ERROR:
             return _search_error_output(
-                error=_tool_error(
-                    code="upstream_unavailable",
-                    message="Tabelog search returned an error response.",
-                    retryable=True,
-                    suggested_action="Validate area and cuisine inputs, then retry later.",
+                error=_upstream_tool_error(
+                    operation="search",
                     detail=response.error_message,
+                    suggested_action="Validate area and cuisine inputs, then retry later.",
                 ),
                 area=normalized_area,
                 keyword=normalized_keyword,
@@ -318,12 +316,10 @@ class GurumeToolRuntime:
                 fetch_menu=fetch_menu,
                 fetch_courses=fetch_courses,
                 max_review_pages=max_review_pages,
-                error=_tool_error(
-                    code="upstream_unavailable",
-                    message="Tabelog detail fetch failed.",
-                    retryable=True,
-                    suggested_action="Verify the restaurant URL and retry later.",
+                error=_upstream_tool_error(
+                    operation="detail fetch",
                     detail=str(exc),
+                    suggested_action="Verify the restaurant URL and retry later.",
                 ),
             )
         return _restaurant_detail_to_dict(
@@ -733,6 +729,24 @@ def _tool_error(
         "suggested_action": suggested_action,
         "detail": detail,
     }
+
+
+def _upstream_tool_error(*, operation: str, detail: str | None, suggested_action: str) -> dict[str, Any]:
+    if detail and ("403" in detail or "Forbidden" in detail):
+        return _tool_error(
+            code="upstream_forbidden",
+            message=f"Tabelog {operation} was blocked with HTTP 403.",
+            retryable=False,
+            suggested_action="Tell the user Tabelog blocked this server-side request; do not retry immediately.",
+            detail=detail,
+        )
+    return _tool_error(
+        code="upstream_unavailable",
+        message=f"Tabelog {operation} returned an error response.",
+        retryable=True,
+        suggested_action=suggested_action,
+        detail=detail,
+    )
 
 
 def _serialize_value(value: object) -> object:

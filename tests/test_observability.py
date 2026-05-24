@@ -102,7 +102,7 @@ class FakeRequest:
         self.url = httpx.URL(url)
 
 
-def test_redact_httpx_request_span_removes_telegram_token_and_sensitive_query_values() -> None:
+def test_redact_httpx_request_span_removes_telegram_token_and_query_values() -> None:
     span = FakeSpan()
 
     _redact_httpx_request_span(
@@ -110,10 +110,31 @@ def test_redact_httpx_request_span_removes_telegram_token_and_sensitive_query_va
         FakeRequest("https://api.telegram.org/bot123456:secret-token/getUpdates?token=secret&safe=yes"),
     )
 
-    assert span.attributes["http.url"] == "https://api.telegram.org/bot[redacted]/getUpdates?token=[redacted]&safe=yes"
+    assert (
+        span.attributes["http.url"]
+        == "https://api.telegram.org/bot[redacted]/getUpdates?token=[redacted]&safe=[redacted]"
+    )
     assert span.attributes["url.full"] == span.attributes["http.url"]
-    assert span.attributes["http.target"] == "/bot[redacted]/getUpdates?token=[redacted]&safe=yes"
+    assert span.attributes["http.target"] == "/bot[redacted]/getUpdates?token=[redacted]&safe=[redacted]"
     assert span.attributes["url.path"] == "/bot[redacted]/getUpdates"
-    assert span.attributes["url.query"] == "token=[redacted]&safe=yes"
+    assert span.attributes["url.query"] == "token=[redacted]&safe=[redacted]"
     assert "secret-token" not in str(span.attributes)
     assert "token=secret" not in str(span.attributes)
+    assert "safe=yes" not in str(span.attributes)
+
+
+def test_redact_httpx_request_span_removes_non_secret_query_values() -> None:
+    span = FakeSpan()
+
+    _redact_httpx_request_span(
+        span,
+        FakeRequest("https://tabelog.com/rst/rstsearch?SrtT=rt&PG=1&sa=%E4%B8%89%E9%87%8D%E7%B8%A3"),
+    )
+
+    assert (
+        span.attributes["http.url"] == "https://tabelog.com/rst/rstsearch?SrtT=[redacted]&PG=[redacted]&sa=[redacted]"
+    )
+    assert span.attributes["http.target"] == "/rst/rstsearch?SrtT=[redacted]&PG=[redacted]&sa=[redacted]"
+    assert span.attributes["url.path"] == "/rst/rstsearch"
+    assert span.attributes["url.query"] == "SrtT=[redacted]&PG=[redacted]&sa=[redacted]"
+    assert "%E4%B8%89" not in str(span.attributes)

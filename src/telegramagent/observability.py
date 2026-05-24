@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -8,10 +7,8 @@ import httpx
 import logfire
 from loguru import logger
 
-_TELEGRAM_BOT_TOKEN_RE = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
-_SENSITIVE_QUERY_VALUE_RE = re.compile(
-    r"(?i)(^|[?&])((?:token|api[_-]?key|authorization|cookie|set-cookie|password|secret)=)[^&]+"
-)
+_TELEGRAM_BOT_TOKEN_MARKER = "/bot"
+_REDACTED_QUERY_VALUE = "[redacted]"
 
 
 @dataclass(frozen=True)
@@ -84,8 +81,30 @@ def _set_redacted_url_attributes(span: _Span, url: httpx.URL) -> None:
 
 
 def _redact_url_text(value: str) -> str:
-    return _redact_query_values(_TELEGRAM_BOT_TOKEN_RE.sub("/bot[redacted]", value))
+    safe_value = _redact_telegram_bot_token(value)
+    path, separator, query = safe_value.partition("?")
+    if not separator:
+        return path
+    return f"{path}?{_redact_query_values(query)}"
 
 
 def _redact_query_values(value: str) -> str:
-    return _SENSITIVE_QUERY_VALUE_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}[redacted]", value)
+    if not value:
+        return ""
+    redacted_parts = []
+    for part in value.split("&"):
+        key, separator, _raw_value = part.partition("=")
+        redacted_parts.append(f"{key}{separator}{_REDACTED_QUERY_VALUE}" if separator else key)
+    return "&".join(redacted_parts)
+
+
+def _redact_telegram_bot_token(value: str) -> str:
+    marker_index = value.find(_TELEGRAM_BOT_TOKEN_MARKER)
+    if marker_index == -1:
+        return value
+    token_start = marker_index + len(_TELEGRAM_BOT_TOKEN_MARKER)
+    token_end_candidates = [
+        index for index in (value.find("/", token_start), value.find("?", token_start)) if index != -1
+    ]
+    token_end = min(token_end_candidates) if token_end_candidates else len(value)
+    return f"{value[:marker_index]}/bot[redacted]{value[token_end:]}"
