@@ -27,6 +27,8 @@ from telegramagent.events import EventSettings
 from telegramagent.events import EventWatcher
 from telegramagent.events import ImmediateEvent
 from telegramagent.events import event_prompt
+from telegramagent.gurume_tools import GurumeToolConfig
+from telegramagent.gurume_tools import build_gurume_tools
 from telegramagent.images import OpenAIImageGenerator
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
@@ -136,6 +138,19 @@ def _container_tools_from_settings(
     return tools, Capability("container_tools", True, description)
 
 
+def _gurume_tools_from_settings(settings: Settings) -> tuple[tuple[Any, ...], Capability]:
+    description = "Tabelog Japanese restaurant search via direct gurume Python API"
+    if not settings.bot_gurume_tools_enabled:
+        return (), Capability("tools.gurume", False, description, "disabled")
+    tools = build_gurume_tools(
+        GurumeToolConfig(
+            timeout_seconds=settings.bot_gurume_tools_timeout_seconds,
+            max_results=settings.bot_gurume_tools_max_results,
+        )
+    )
+    return tools, Capability("tools.gurume", True, description)
+
+
 @app.command()
 def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging.")) -> None:  # noqa: C901
     """Start the Telegram bot with long polling."""
@@ -209,6 +224,10 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
     capabilities.set(container_tools_capability)
     if container_tools:
         logger.info("Enabled {} Docker-only container tool(s)", len(container_tools))
+    gurume_tools, gurume_tools_capability = _gurume_tools_from_settings(settings)
+    capabilities.set(gurume_tools_capability)
+    if gurume_tools:
+        logger.info("Enabled {} Gurume restaurant tool(s)", len(gurume_tools))
     agent = ChatAgent(
         api_key=settings.openai_api_key,
         model=settings.openai_model,
@@ -219,7 +238,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         capability_summary=capabilities.summary(),
         kabigon_tool_timeout_seconds=settings.bot_kabigon_timeout_seconds,
         mcp_toolsets=yfinance_mcp_toolsets,
-        tools=container_tools,
+        tools=(*gurume_tools, *container_tools),
     )
     topic_end_judge = TopicEndAgent(
         api_key=settings.openai_api_key,

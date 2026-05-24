@@ -93,6 +93,24 @@ def test_yfinance_mcp_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_yfinance_mcp_read_timeout_seconds == 30
 
 
+def test_gurume_tool_settings_parse_env(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_GURUME_TOOLS_ENABLED", "false")
+    monkeypatch.setenv("BOT_GURUME_TOOLS_TIMEOUT_SECONDS", "3.5")
+    monkeypatch.setenv("BOT_GURUME_TOOLS_MAX_RESULTS", "7")
+
+    settings = Settings()
+
+    assert settings.bot_gurume_tools_enabled is False
+    assert settings.bot_gurume_tools_timeout_seconds == 3.5
+    assert settings.bot_gurume_tools_max_results == 7
+
+
+def test_gurume_tools_are_enabled_by_default() -> None:
+    settings = Settings.model_validate({})
+
+    assert settings.bot_gurume_tools_enabled is True
+
+
 def test_container_tool_settings_parse_env(monkeypatch) -> None:
     monkeypatch.setenv("BOT_CONTAINER_TOOLS_ENABLED", "true")
     monkeypatch.setenv("BOT_CONTAINER_TOOLS_ROOT", "/app")

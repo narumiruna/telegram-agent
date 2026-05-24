@@ -7,6 +7,7 @@ requires-python = ">=3.14"
 authors         = [{ name = "narumi", email = "toucans-cutouts0f@icloud.com" }]
 dependencies    = [
   "fastmcp>=3.3.1",
+  "gurume>=0.0.9",
   "httpx>=0.28.1",
   "kabigon>=0.19.4",
   "logfire>=4.33.0",
