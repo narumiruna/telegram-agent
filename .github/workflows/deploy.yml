@@ -1,0 +1,44 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Prepare environment file
+        run: |
+          install -m 600 /dev/null .env
+          {
+            echo "BOT_TOKEN=${{secrets.BOT_TOKEN}}"
+            echo "BOT_WHITELIST=${{vars.BOT_WHITELIST}}"
+            echo "OPENAI_BASE_URL=${{secrets.OPENAI_BASE_URL}}"
+            echo "OPENAI_API_KEY=${{secrets.OPENAI_API_KEY}}"
+            echo "OPENAI_MODEL=${{vars.OPENAI_MODEL}}"
+            echo "LOGFIRE_TOKEN=${{secrets.LOGFIRE_TOKEN}}"
+            echo "LOGFIRE_ENVIRONMENT=${{vars.LOGFIRE_ENVIRONMENT}}"
+            echo "FIRECRAWL_API_KEY=${{secrets.FIRECRAWL_API_KEY}}"
+          } >> .env
+
+      - name: Deploy with Docker Compose
+        run: |
+          docker compose up -d --build --remove-orphans
+
+      - name: Remove environment file
+        if: always()
+        run: rm -f .env
