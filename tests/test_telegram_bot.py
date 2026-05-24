@@ -1328,7 +1328,7 @@ async def test_telegram_client_publishes_messages_over_1000_chars_to_telegraph()
             "chat_id": 123,
             "text": "https://telegra.ph/long-reply",
             "parse_mode": "HTML",
-            "disable_web_page_preview": True,
+            "disable_web_page_preview": False,
             "reply_to_message_id": 55,
         }
     ]
@@ -1375,7 +1375,7 @@ async def test_telegram_client_edits_long_messages_to_telegraph_url() -> None:
             "message_id": 99,
             "text": "https://telegra.ph/status",
             "parse_mode": "HTML",
-            "disable_web_page_preview": True,
+            "disable_web_page_preview": False,
         }
     ]
 

@@ -255,7 +255,7 @@ class TelegramClient:
                 "chat_id": chat_id,
                 "text": chunk,
                 "parse_mode": _TELEGRAM_PARSE_MODE,
-                "disable_web_page_preview": True,
+                "disable_web_page_preview": False,
             }
             if reply_to_message_id is not None:
                 payload["reply_to_message_id"] = reply_to_message_id
@@ -310,7 +310,7 @@ class TelegramClient:
                 "message_id": message_id,
                 "text": chunks[0],
                 "parse_mode": _TELEGRAM_PARSE_MODE,
-                "disable_web_page_preview": True,
+                "disable_web_page_preview": False,
             },
         )
         for chunk in chunks[1:]:
