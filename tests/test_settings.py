@@ -93,10 +93,10 @@ def test_yfinance_mcp_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_yfinance_mcp_read_timeout_seconds == 30
 
 
-def test_gurume_mcp_settings_default_to_disabled() -> None:
+def test_gurume_mcp_settings_default_to_enabled() -> None:
     settings = Settings.model_validate({})
 
-    assert settings.bot_gurume_mcp_enabled is False
+    assert settings.bot_gurume_mcp_enabled is True
     assert settings.bot_gurume_mcp_command == "gurume"
     assert settings.bot_gurume_mcp_args == ("mcp",)
     assert settings.bot_gurume_mcp_init_timeout_seconds == 10

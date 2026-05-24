@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     bot_yfinance_mcp_read_timeout_seconds: float = Field(
         default=120.0, gt=0, alias="BOT_YFINANCE_MCP_READ_TIMEOUT_SECONDS"
     )
-    bot_gurume_mcp_enabled: bool = Field(default=False, alias="BOT_GURUME_MCP_ENABLED")
+    bot_gurume_mcp_enabled: bool = Field(default=True, alias="BOT_GURUME_MCP_ENABLED")
     bot_gurume_mcp_command: str = Field(default="gurume", alias="BOT_GURUME_MCP_COMMAND")
     bot_gurume_mcp_args: Annotated[tuple[str, ...], NoDecode] = Field(default=("mcp",), alias="BOT_GURUME_MCP_ARGS")
     bot_gurume_mcp_init_timeout_seconds: float = Field(default=10.0, gt=0, alias="BOT_GURUME_MCP_INIT_TIMEOUT_SECONDS")

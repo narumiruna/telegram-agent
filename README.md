@@ -141,7 +141,7 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `BOT_YFINANCE_MCP_ENABLED` | `true` | Register Yahoo Finance MCP tools through `yfmcp`. |
-| `BOT_GURUME_MCP_ENABLED` | `false` | Register Gurume MCP tools through `gurume mcp` for Japanese restaurant search. |
+| `BOT_GURUME_MCP_ENABLED` | `true` | Register Gurume MCP tools through `gurume mcp` for Japanese restaurant search. |
 | `BOT_EVENTS_ENABLED` | `false` | Enable file-backed immediate events. |
 | `BOT_CONTAINER_TOOLS_ENABLED` | `true` in Compose | Register Docker-only local tools when running inside a container. |
 | `LOGFIRE_ENABLED` | `true` | Configure Logfire when `LOGFIRE_TOKEN` is set. |
@@ -398,9 +398,9 @@ Financial responses are informational only and are not investment advice.
 
 ## 🍽️ Gurume MCP
 
-Set `BOT_GURUME_MCP_ENABLED=true` to register Gurume's MCP toolset for Japanese restaurant search through Tabelog.
-By default, the bot starts it with `gurume mcp`; override `BOT_GURUME_MCP_COMMAND` and `BOT_GURUME_MCP_ARGS` when using
-`uvx` or another launcher.
+Gurume's MCP toolset is enabled by default for Japanese restaurant search through Tabelog. By default, the bot starts it
+with `gurume mcp`; set `BOT_GURUME_MCP_ENABLED=false` to disable it, or override `BOT_GURUME_MCP_COMMAND` and
+`BOT_GURUME_MCP_ARGS` when using `uvx` or another launcher.
 
 ## 🔭 Observability
 
