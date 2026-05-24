@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import httpx
+
 from telegramagent.observability import LogfireConfig
+from telegramagent.observability import _redact_httpx_async_request_span
+from telegramagent.observability import _redact_httpx_request_span
 from telegramagent.observability import configure_logfire
 
 
@@ -77,7 +81,39 @@ def test_configure_logfire_sets_integrations(monkeypatch) -> None:
         "capture_headers": False,
         "capture_request_body": False,
         "capture_response_body": False,
+        "request_hook": _redact_httpx_request_span,
+        "async_request_hook": _redact_httpx_async_request_span,
     }
     assert fake_logfire.calls[2][1] == {"include_content": True}
     assert fake_logger.add_calls == [{"sink": "fake-sink", "format": "{message}", "level": "DEBUG"}]
     assert fake_logger.info_calls
+
+
+class FakeSpan:
+    def __init__(self) -> None:
+        self.attributes = {}
+
+    def set_attribute(self, key: str, value: str) -> None:
+        self.attributes[key] = value
+
+
+class FakeRequest:
+    def __init__(self, url: str) -> None:
+        self.url = httpx.URL(url)
+
+
+def test_redact_httpx_request_span_removes_telegram_token_and_sensitive_query_values() -> None:
+    span = FakeSpan()
+
+    _redact_httpx_request_span(
+        span,
+        FakeRequest("https://api.telegram.org/bot123456:secret-token/getUpdates?token=secret&safe=yes"),
+    )
+
+    assert span.attributes["http.url"] == "https://api.telegram.org/bot[redacted]/getUpdates?token=[redacted]&safe=yes"
+    assert span.attributes["url.full"] == span.attributes["http.url"]
+    assert span.attributes["http.target"] == "/bot[redacted]/getUpdates?token=[redacted]&safe=yes"
+    assert span.attributes["url.path"] == "/bot[redacted]/getUpdates"
+    assert span.attributes["url.query"] == "token=[redacted]&safe=yes"
+    assert "secret-token" not in str(span.attributes)
+    assert "token=secret" not in str(span.attributes)
