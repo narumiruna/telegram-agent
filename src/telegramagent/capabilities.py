@@ -39,8 +39,10 @@ class CapabilityRegistry:
 def default_capabilities() -> list[Capability]:
     kabigon_api_available = _package_available("kabigon")
     yfmcp_available = _package_available("yfmcp")
+    gurume_available = _package_available("gurume")
     kabigon_path = shutil.which("kabigon") or shutil.which("uvx")
     yfmcp_path = shutil.which("yfmcp")
+    gurume_path = shutil.which("gurume")
     return [
         Capability("web_fetch", True, "bounded HTTP(S) text/HTML fetching with SSRF guards"),
         Capability("youtube_transcript", True, "YouTube subtitle/transcript extraction with timeout"),
@@ -63,6 +65,12 @@ def default_capabilities() -> list[Capability]:
             "Yahoo Finance market data MCP tools via yfmcp",
             _yfinance_reason(package_available=yfmcp_available, command_available=yfmcp_path is not None),
         ),
+        Capability(
+            "mcp.gurume",
+            gurume_available and gurume_path is not None,
+            "Japanese restaurant search MCP tools via gurume mcp",
+            _gurume_reason(package_available=gurume_available, command_available=gurume_path is not None),
+        ),
     ]
 
 
@@ -79,4 +87,12 @@ def _yfinance_reason(*, package_available: bool, command_available: bool) -> str
         return "yfmcp package not installed"
     if not command_available:
         return "yfmcp executable not found"
+    return ""
+
+
+def _gurume_reason(*, package_available: bool, command_available: bool) -> str:
+    if not package_available:
+        return "gurume package not installed"
+    if not command_available:
+        return "gurume executable not found"
     return ""

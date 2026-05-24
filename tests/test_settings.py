@@ -93,6 +93,32 @@ def test_yfinance_mcp_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_yfinance_mcp_read_timeout_seconds == 30
 
 
+def test_gurume_mcp_settings_default_to_disabled() -> None:
+    settings = Settings.model_validate({})
+
+    assert settings.bot_gurume_mcp_enabled is False
+    assert settings.bot_gurume_mcp_command == "gurume"
+    assert settings.bot_gurume_mcp_args == ("mcp",)
+    assert settings.bot_gurume_mcp_init_timeout_seconds == 10
+    assert settings.bot_gurume_mcp_read_timeout_seconds == 120
+
+
+def test_gurume_mcp_settings_parse_env(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_GURUME_MCP_ENABLED", "true")
+    monkeypatch.setenv("BOT_GURUME_MCP_COMMAND", "uvx")
+    monkeypatch.setenv("BOT_GURUME_MCP_ARGS", "--from gurume gurume mcp")
+    monkeypatch.setenv("BOT_GURUME_MCP_INIT_TIMEOUT_SECONDS", "6")
+    monkeypatch.setenv("BOT_GURUME_MCP_READ_TIMEOUT_SECONDS", "45")
+
+    settings = Settings()
+
+    assert settings.bot_gurume_mcp_enabled is True
+    assert settings.bot_gurume_mcp_command == "uvx"
+    assert settings.bot_gurume_mcp_args == ("--from", "gurume", "gurume", "mcp")
+    assert settings.bot_gurume_mcp_init_timeout_seconds == 6
+    assert settings.bot_gurume_mcp_read_timeout_seconds == 45
+
+
 def test_container_tool_settings_parse_env(monkeypatch) -> None:
     monkeypatch.setenv("BOT_CONTAINER_TOOLS_ENABLED", "true")
     monkeypatch.setenv("BOT_CONTAINER_TOOLS_ROOT", "/app")
