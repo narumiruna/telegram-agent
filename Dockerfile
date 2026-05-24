@@ -18,7 +18,8 @@ ADD . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv run --no-sync playwright install chromium
+    uv run --no-sync playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
 
 FROM python:${PYTHON_VERSION}-slim-${DEBIAN_VERSION}
 
