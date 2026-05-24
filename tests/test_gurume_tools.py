@@ -18,6 +18,7 @@ from gurume.suggest import KeywordSuggestion
 
 from telegramagent.gurume_tools import GurumeToolConfig
 from telegramagent.gurume_tools import GurumeToolRuntime
+from telegramagent.gurume_tools import build_gurume_tools
 
 
 @pytest.mark.asyncio
@@ -29,8 +30,24 @@ async def test_gurume_search_tool_calls_search_request_and_caps_results(monkeypa
         return SearchResponse(
             status=SearchStatus.SUCCESS,
             restaurants=[
-                Restaurant(name="A", url="https://tabelog.com/tokyo/A0001/A000101/1/", rating=4.1),
-                Restaurant(name="B", url="https://tabelog.com/tokyo/A0001/A000101/2/", rating=3.9),
+                Restaurant(
+                    name="A",
+                    url="https://tabelog.com/tokyo/A0001/A000101/1/",
+                    rating=4.1,
+                    address="full address should stay out of search results",
+                    phone="03-0000-0000",
+                    description="long detail text should stay out of search results",
+                    image_urls=["https://example.com/image.jpg"],
+                ),
+                Restaurant(
+                    name="B",
+                    url="https://tabelog.com/tokyo/A0001/A000101/2/",
+                    rating=3.9,
+                    address="full address should stay out of search results",
+                    phone="03-0000-0000",
+                    description="long detail text should stay out of search results",
+                    image_urls=["https://example.com/image.jpg"],
+                ),
             ],
             meta=SearchMeta(
                 total_count=2,
@@ -55,6 +72,16 @@ async def test_gurume_search_tool_calls_search_request_and_caps_results(monkeypa
     assert result["limit"] == 1
     assert result["returned_count"] == 1
     assert result["items"][0]["name"] == "A"
+    assert set(result["items"][0]) == {
+        "name",
+        "rating",
+        "review_count",
+        "area",
+        "genres",
+        "url",
+        "lunch_price",
+        "dinner_price",
+    }
     assert result["has_more"] is True
     assert result["meta"]["current_page"] == 1
     assert "5 -> 1" in result["warnings"][0]
@@ -150,3 +177,15 @@ async def test_gurume_detail_tool_rejects_non_tabelog_url() -> None:
 
     assert result["status"] == "error"
     assert result["error"]["code"] == "invalid_parameters"
+
+
+def test_gurume_tool_descriptions_prefer_suggestions_before_search() -> None:
+    tools = {tool.name: tool for tool in build_gurume_tools(GurumeToolConfig())}
+    search_description = tools["tabelog_search_restaurants"].description
+    area_description = tools["tabelog_get_area_suggestions"].description
+
+    assert search_description is not None
+    assert area_description is not None
+    assert "Before this tool" in search_description
+    assert "tabelog_get_area_suggestions" in search_description
+    assert "before restaurant search" in area_description

@@ -213,6 +213,7 @@ def _chat_instructions(
         "如果使用者傳圖片且 runtime 已提供圖片內容，請直接根據圖片回答；若模型或供應商無法辨識圖片，請明確說明限制。"
         "Agent Skills 是操作說明，不代表你在 Telegram runtime 真的有該工具；"
         "只有 runtime capabilities、Pydantic AI tools 或已啟用 MCP toolsets 中列出的工具才是真的可執行。"
+        "使用 Gurume/Tabelog 餐廳工具時，遇到地區或料理關鍵字先用 suggestions/list tools 驗證，再執行餐廳搜尋。"
         "使用股票與金融資料時，明確說明僅供資訊參考，不構成投資建議。"
     ]
     soul_instructions = format_context_for_instructions(soul)

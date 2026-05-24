@@ -58,7 +58,7 @@ class GurumeToolRuntime:
         reservation_time: str | None = None,
         party_size: int | None = None,
     ) -> dict[str, Any]:
-        """Search Tabelog restaurants with optional area, cuisine, keyword, and reservation filters."""
+        """Search Tabelog restaurants after validating ambiguous area and keyword inputs with suggestion tools."""
         normalized_area = _blank_to_none(area)
         normalized_keyword = _blank_to_none(keyword)
         normalized_cuisine = _blank_to_none(cuisine)
@@ -200,7 +200,7 @@ class GurumeToolRuntime:
                 warnings=warnings,
             )
 
-        items = [_restaurant_to_dict(restaurant) for restaurant in response.restaurants[:capped_limit]]
+        items = [_restaurant_search_result_to_dict(restaurant) for restaurant in response.restaurants[:capped_limit]]
         return {
             "status": _search_status(response),
             "items": items,
@@ -431,7 +431,12 @@ def build_gurume_tools(config: GurumeToolConfig) -> tuple[Tool[Any], ...]:
         Tool(
             runtime.tabelog_search_restaurants,
             name="tabelog_search_restaurants",
-            description="Search Tabelog restaurants using Gurume's direct Python API.",
+            description=(
+                "Search Tabelog restaurants with compact results. Before this tool, call "
+                "tabelog_get_area_suggestions for ambiguous locations and tabelog_get_keyword_suggestions or "
+                "tabelog_list_cuisines for cuisine-like keywords. Use tabelog_get_restaurant_details only after "
+                "choosing a result URL."
+            ),
         ),
         Tool(
             runtime.tabelog_get_restaurant_details,
@@ -446,12 +451,12 @@ def build_gurume_tools(config: GurumeToolConfig) -> tuple[Tool[Any], ...]:
         Tool(
             runtime.tabelog_get_area_suggestions,
             name="tabelog_get_area_suggestions",
-            description="Get Tabelog area or station suggestions for a location query.",
+            description="Use before restaurant search to validate a user-provided Tabelog area or station query.",
         ),
         Tool(
             runtime.tabelog_get_keyword_suggestions,
             name="tabelog_get_keyword_suggestions",
-            description="Get Tabelog keyword suggestions for cuisine or restaurant queries.",
+            description="Use before restaurant search to validate cuisine-like keywords or restaurant-name queries.",
         ),
     )
 
@@ -638,6 +643,19 @@ def _search_error_output(
 
 def _restaurant_to_dict(restaurant: Restaurant) -> dict[str, Any]:
     return {key: _serialize_value(value) for key, value in asdict(restaurant).items()}
+
+
+def _restaurant_search_result_to_dict(restaurant: Restaurant) -> dict[str, Any]:
+    return {
+        "name": restaurant.name,
+        "rating": restaurant.rating,
+        "review_count": restaurant.review_count,
+        "area": restaurant.area,
+        "genres": restaurant.genres,
+        "url": restaurant.url,
+        "lunch_price": restaurant.lunch_price,
+        "dinner_price": restaurant.dinner_price,
+    }
 
 
 def _restaurant_detail_to_dict(
