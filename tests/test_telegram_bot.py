@@ -1307,10 +1307,10 @@ def test_telegraph_html_sanitizer_remaps_and_escapes_unsupported_html() -> None:
 
 
 @pytest.mark.asyncio
-async def test_telegram_client_publishes_messages_over_2000_chars_to_telegraph() -> None:
+async def test_telegram_client_publishes_messages_over_1000_chars_to_telegraph() -> None:
     payloads: list[dict[str, Any]] = []
     publisher = FakeTelegraphPublisher()
-    text = "x" * 2001
+    text = "x" * 1001
 
     def handler(request: httpx.Request) -> httpx.Response:
         payloads.append(json.loads(request.read().decode()))
@@ -1335,10 +1335,10 @@ async def test_telegram_client_publishes_messages_over_2000_chars_to_telegraph()
 
 
 @pytest.mark.asyncio
-async def test_telegram_client_does_not_publish_messages_at_2000_chars() -> None:
+async def test_telegram_client_does_not_publish_messages_at_1000_chars() -> None:
     payloads: list[dict[str, Any]] = []
     publisher = FakeTelegraphPublisher()
-    text = "x" * 2000
+    text = "x" * 1000
 
     def handler(request: httpx.Request) -> httpx.Response:
         payloads.append(json.loads(request.read().decode()))
@@ -1366,9 +1366,9 @@ async def test_telegram_client_edits_long_messages_to_telegraph_url() -> None:
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
         telegram = TelegramClient("token", http_client=client, telegraph_publisher=publisher)
-        await telegram.edit_message_text(123, 99, "x" * 2001)
+        await telegram.edit_message_text(123, 99, "x" * 1001)
 
-    assert publisher.published == ["x" * 2001]
+    assert publisher.published == ["x" * 1001]
     assert payloads == [
         {
             "chat_id": 123,

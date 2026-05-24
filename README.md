@@ -316,8 +316,9 @@ Image output:
 
 ## 📣 Telegraph Long Replies
 
-Telegram messages over the configured long-message threshold are published to Telegraph, and the Telegram reply becomes
-the Telegraph URL. This keeps long model replies readable while avoiding Telegram chunk spam.
+Telegram messages over the long-message threshold are published to Telegraph, and the Telegram reply becomes the
+Telegraph URL. The default threshold is **1000 characters**, so messages with 1001+ characters are published to
+Telegraph. This keeps long model replies readable while avoiding Telegram chunk spam.
 
 The publisher sanitizes content to Telegraph's supported HTML subset before creating the page.
 

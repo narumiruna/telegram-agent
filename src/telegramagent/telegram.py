@@ -209,7 +209,7 @@ class TelegramClient:
         *,
         http_client: httpx.AsyncClient | None = None,
         telegraph_publisher: LongMessagePublisher | None = None,
-        long_message_threshold: int = 2000,
+        long_message_threshold: int = 1000,
     ) -> None:
         self.token = token
         self.base_url = f"https://api.telegram.org/bot{token}"
