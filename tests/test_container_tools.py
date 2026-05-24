@@ -57,10 +57,8 @@ async def test_container_tools_ls_find_and_grep_are_sandboxed_and_bounded(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_container_tools_read_and_bash_truncate_output_and_timeout(tmp_path: Path) -> None:
-    runtime = ContainerToolRuntime(
-        ContainerToolConfig(root=tmp_path, timeout_seconds=0.05, max_output_chars=20, max_read_chars=5)
-    )
+async def test_container_tools_read_and_bash_truncate_output(tmp_path: Path) -> None:
+    runtime = ContainerToolRuntime(ContainerToolConfig(root=tmp_path, max_output_chars=20, max_read_chars=5))
     (tmp_path / "long.txt").write_text("abcdef", encoding="utf-8")
 
     assert await runtime.read("long.txt") == "abcde\n[truncated by telegramagent container read limit]"
@@ -68,6 +66,9 @@ async def test_container_tools_read_and_bash_truncate_output_and_timeout(tmp_pat
     assert bash_output.startswith("exit_code: 0\nstdout:")
     assert "[truncated by telegramagent:" in bash_output
 
+
+@pytest.mark.asyncio
+async def test_container_tools_bash_timeout(tmp_path: Path) -> None:
     timeout_runtime = ContainerToolRuntime(ContainerToolConfig(root=tmp_path, timeout_seconds=0.05))
     assert (await timeout_runtime.bash("sleep 1")).startswith("command timed out after 0.05s")
 
