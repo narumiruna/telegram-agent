@@ -15,6 +15,7 @@ from datetime import datetime
 from html.parser import HTMLParser
 from typing import Literal
 from typing import Protocol
+from typing import cast
 from urllib.parse import parse_qs
 from urllib.parse import urljoin
 from urllib.parse import urlparse
@@ -657,7 +658,7 @@ async def _resolve_public_addresses(host: str) -> list[str]:
     except socket.gaierror as exc:
         raise ActionError("這個連結的主機名稱解析失敗，我沒辦法自動讀取。") from exc
 
-    addresses = sorted({info[4][0] for info in infos})
+    addresses = sorted({cast(str, info[4][0]) for info in infos})
     if not addresses:
         raise ActionError("這個連結沒有解析到可用 IP，我沒辦法自動讀取。")
     for address in addresses:

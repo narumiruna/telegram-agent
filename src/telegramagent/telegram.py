@@ -188,6 +188,7 @@ class ReplyMessageContext:
     sender: str
     message_type: str
     content: str
+    chat_id: int | None = None
     message_date: str | None = None
     message_id: int | None = None
     urls_found: tuple[str, ...] = ()
@@ -437,8 +438,9 @@ class TelegramBot:
             return
         text = _message_text(message)
         image_ref = _message_image_ref(message)
+        image_refs = _message_image_refs(message)
         chat = message.get("chat")
-        if (not text and image_ref is None) or not chat:
+        if (not text and not image_refs) or not chat:
             return
 
         chat_id = chat["id"]
@@ -472,7 +474,7 @@ class TelegramBot:
         if await self._handle_image_generation_command(chat_id=chat_id, prompt=prompt, reply_to_message_id=message_id):
             return
 
-        images = await self._message_images(chat_id=chat_id, image_ref=image_ref, reply_to_message_id=message_id)
+        images = await self._message_images(chat_id=chat_id, image_refs=image_refs, reply_to_message_id=message_id)
         if images is None:
             return
 
@@ -634,7 +636,7 @@ class TelegramBot:
         )
 
     async def _reply_context_for_llm(self, *, message: TelegramMessage, text: str) -> ReplyMessageContext | None:
-        if not self._mentions_bot(text):
+        if not self._should_include_reply_context(message=message, text=text):
             return None
         context = _reply_message_context(message)
         if context is None:
@@ -826,9 +828,9 @@ class TelegramBot:
         return True
 
     async def _message_images(
-        self, *, chat_id: int, image_ref: TelegramImageRef | None, reply_to_message_id: int | None
+        self, *, chat_id: int, image_refs: Sequence[TelegramImageRef], reply_to_message_id: int | None
     ) -> list[ImageAttachment] | None:
-        if image_ref is None:
+        if not image_refs:
             return []
         if not self.image_input_enabled:
             await self.telegram.send_message(
@@ -836,7 +838,7 @@ class TelegramBot:
             )
             return None
         try:
-            return [await self._download_image(image_ref)]
+            return [await self._download_image(image_ref) for image_ref in image_refs]
         except TelegramImageError as exc:
             await self.telegram.send_message(chat_id, str(exc), reply_to_message_id=reply_to_message_id)
         except httpx.HTTPError, TelegramApiError:
@@ -989,6 +991,14 @@ class TelegramBot:
         mention_pattern = re.compile(rf"@{re.escape(self.bot_username)}\b", flags=re.IGNORECASE)
         return mention_pattern.sub("", text).strip()
 
+    def _should_include_reply_context(self, *, message: TelegramMessage, text: str) -> bool:
+        if not isinstance(message.get("reply_to_message"), Mapping):
+            return False
+        if self._mentions_bot(text):
+            return True
+        chat = message.get("chat")
+        return bool(chat and chat.get("type") == "private")
+
 
 _DEFAULT_IMAGE_PROMPT = "請閱讀這張圖片，描述重點並回答使用者可能想知道的內容。"
 _IMAGE_COMMANDS = {"/image", "/img", "/draw", "/畫圖"}
@@ -1015,12 +1025,37 @@ def _message_text(message: TelegramMessage) -> str:
     return ""
 
 
-def _message_image_ref(message: TelegramMessage) -> TelegramImageRef | None:
+def _message_image_refs(message: TelegramMessage) -> tuple[TelegramImageRef, ...]:
+    image_refs: list[TelegramImageRef] = []
+    image_ref = _message_image_ref(message)
+    if image_ref is not None:
+        image_refs.append(image_ref)
+    reply_image_ref = _reply_message_image_ref(message)
+    if reply_image_ref is not None:
+        image_refs.append(reply_image_ref)
+    return tuple(image_refs)
+
+
+def _reply_message_image_ref(message: TelegramMessage) -> TelegramImageRef | None:
+    reply_to_message = message.get("reply_to_message")
+    if not isinstance(reply_to_message, Mapping):
+        return None
+    image_ref = _message_image_ref(cast(Mapping[str, object], reply_to_message))
+    if image_ref is None:
+        return None
+    return replace(image_ref, filename=f"replied-{image_ref.filename}")
+
+
+def _message_image_ref(message: Mapping[str, object]) -> TelegramImageRef | None:
     photo_items = message.get("photo")
     if isinstance(photo_items, Sequence) and not isinstance(photo_items, str | bytes):
-        photo_sizes = [
-            item for item in photo_items if isinstance(item, Mapping) and isinstance(item.get("file_id"), str)
-        ]
+        photo_sizes: list[Mapping[str, object]] = []
+        for item in photo_items:
+            if not isinstance(item, Mapping):
+                continue
+            photo = cast(Mapping[str, object], item)
+            if isinstance(photo.get("file_id"), str):
+                photo_sizes.append(photo)
         if photo_sizes:
             largest = max(photo_sizes, key=_photo_sort_key)
             file_id = cast(str, largest["file_id"])
@@ -1033,15 +1068,16 @@ def _message_image_ref(message: TelegramMessage) -> TelegramImageRef | None:
 
     document = message.get("document")
     if isinstance(document, Mapping):
-        file_id = document.get("file_id")
-        mime_type = document.get("mime_type")
+        document_mapping = cast(Mapping[str, object], document)
+        file_id = document_mapping.get("file_id")
+        mime_type = document_mapping.get("mime_type")
         if isinstance(file_id, str) and isinstance(mime_type, str) and mime_type.startswith("image/"):
-            filename = document.get("file_name")
+            filename = document_mapping.get("file_name")
             return TelegramImageRef(
                 file_id=file_id,
                 media_type=mime_type,
                 filename=filename if isinstance(filename, str) and filename else "telegram-image",
-                file_size=_optional_int(document.get("file_size")),
+                file_size=_optional_int(document_mapping.get("file_size")),
             )
     return None
 
@@ -1050,7 +1086,7 @@ def _photo_sort_key(photo: Mapping[str, object]) -> tuple[int, int]:
     file_size = _optional_int(photo.get("file_size")) or 0
     width = _optional_int(photo.get("width")) or 0
     height = _optional_int(photo.get("height")) or 0
-    return file_size, width * height
+    return width * height, file_size
 
 
 def _optional_int(value: object) -> int | None:
@@ -1090,6 +1126,10 @@ def _llm_prompt_with_reply_context(text: str, *, reply_context: ReplyMessageCont
         f"Sender: {reply_context.sender}",
         f"Type: {reply_context.message_type}",
     ]
+    if reply_context.chat_id is not None:
+        lines.append(f"Chat ID: {reply_context.chat_id}")
+    if reply_context.message_id is not None:
+        lines.append(f"Message ID: {reply_context.message_id}")
     if reply_context.message_date is not None:
         lines.append(f"Date: {reply_context.message_date}")
     lines.extend(
@@ -1156,10 +1196,12 @@ def _reply_message_context(message: TelegramMessage) -> ReplyMessageContext | No
         return None
     reply_mapping = cast(Mapping[str, object], reply_to_message)
     message_type = _telegram_message_content_type(reply_mapping)
+    chat = message.get("chat")
     return ReplyMessageContext(
         sender=_telegram_message_sender(reply_mapping),
         message_type=message_type,
         content=_telegram_message_content(reply_mapping, message_type=message_type),
+        chat_id=chat["id"] if chat else None,
         message_date=_telegram_message_date(reply_mapping.get("date")),
         message_id=_optional_int(reply_mapping.get("message_id")),
     )

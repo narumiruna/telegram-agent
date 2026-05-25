@@ -454,6 +454,48 @@ async def test_handle_update_downloads_photo_and_passes_image_to_agent() -> None
 
 
 @pytest.mark.asyncio
+async def test_group_mention_reply_photo_downloads_replied_photo_for_vision() -> None:
+    telegram = FakeTelegram()
+    telegram.files["large"] = {"file_id": "large", "file_path": "photos/large.jpg", "file_size": 11}
+    telegram.file_contents["photos/large.jpg"] = b"replied-large-image"
+    agent = FakeArtifactAgent(AgentReply("ok"))
+    bot = TelegramBot(telegram=telegram, agent=agent, bot_username="fakebot", bot_user_id=42)
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 789, "username": "bob"},
+                "reply_to_message": {
+                    "message_id": 10,
+                    "from": {"id": 456, "username": "alice"},
+                    "photo": [
+                        {"file_id": "small", "width": 100, "height": 100, "file_size": 30},
+                        {"file_id": "large", "width": 800, "height": 600, "file_size": 11},
+                    ],
+                },
+                "text": "@FakeBot 這張圖是什麼？",
+            },
+        }
+    )
+
+    assert telegram.downloaded_paths == ["photos/large.jpg"]
+    assert telegram.sent == [(-100, "ok", 11)]
+    prompt, history, images = agent.calls[0]
+    assert history == []
+    assert "Replied message context:\nSender: @alice\nType: photo" in prompt
+    assert "Chat ID: -100" in prompt
+    assert "Message ID: 10" in prompt
+    assert "Content: 使用者回覆的是一則 photo 訊息，無文字內容" in prompt
+    assert "Current user message:\n這張圖是什麼？" in prompt
+    assert images == [
+        ImageAttachment(data=b"replied-large-image", media_type="image/jpeg", filename="replied-telegram-photo.jpg")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_handle_update_rejects_oversized_photo_before_download() -> None:
     telegram = FakeTelegram()
     bot = TelegramBot(telegram=telegram, agent=FakeAgent(), image_max_bytes=5)
@@ -876,6 +918,8 @@ async def test_group_mention_reply_url_entities_prioritize_replied_urls() -> Non
 @pytest.mark.asyncio
 async def test_group_mention_reply_photo_caption_includes_caption_context() -> None:
     telegram = FakeTelegram()
+    telegram.files["photo-1"] = {"file_id": "photo-1", "file_path": "photos/photo-1.jpg", "file_size": 9}
+    telegram.file_contents["photos/photo-1.jpg"] = b"caption-image"
     agent = FakeArtifactAgent(AgentReply("ok"))
     bot = TelegramBot(telegram=telegram, agent=agent, bot_username="fakebot", bot_user_id=42)
 
@@ -897,11 +941,15 @@ async def test_group_mention_reply_photo_caption_includes_caption_context() -> N
         }
     )
 
+    assert telegram.downloaded_paths == ["photos/photo-1.jpg"]
     assert telegram.sent == [(-100, "ok", 11)]
-    prompt = agent.calls[0][0]
+    prompt, _history, images = agent.calls[0]
     assert "Type: photo" in prompt
     assert "Content: 使用者回覆的是一則 photo 訊息，caption: 這張圖在講模型比較" in prompt
     assert "Current user message:\n（使用者只提及 bot，未提供額外文字。）" in prompt
+    assert images == [
+        ImageAttachment(data=b"caption-image", media_type="image/jpeg", filename="replied-telegram-photo.jpg")
+    ]
 
 
 @pytest.mark.asyncio
