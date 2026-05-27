@@ -12,6 +12,7 @@ from pydantic import TypeAdapter
 from telegramagent import gurume_tools
 from telegramagent.gurume_tools import build_gurume_tools
 from telegramagent.gurume_tools import recommend_japanese_restaurants
+from telegramagent.gurume_tools import search_japanese_restaurants
 
 HTTP_URL_ADAPTER = TypeAdapter(HttpUrl)
 
@@ -116,3 +117,103 @@ async def test_recommend_japanese_restaurants_resolves_area_and_cuisine(monkeypa
     assert captured_search["cuisine"] == "ラーメン"
     assert captured_search["keyword"] is None
     assert result["search"]["items"][0]["name"] == "テストラーメン"
+
+
+@pytest.mark.asyncio
+async def test_recommend_japanese_restaurants_treats_japan_as_nationwide(monkeypatch) -> None:
+    captured_search: dict[str, object] = {}
+
+    async def fail_area_suggestions(query: str) -> SuggestionListOutput:
+        raise AssertionError(f"nationwide searches must not resolve area suggestions: {query}")
+
+    async def fail_keyword_suggestions(query: str) -> SuggestionListOutput:
+        raise AssertionError(f"漢堡排 should resolve to supported cuisine without keyword suggestions: {query}")
+
+    async def fake_search_restaurants(**kwargs) -> RestaurantSearchOutput:
+        captured_search.update(kwargs)
+        return RestaurantSearchOutput(
+            status="success",
+            items=[
+                RestaurantOutput(
+                    name="テストハンバーグ",
+                    rating=3.9,
+                    review_count=200,
+                    area="銀座",
+                    genres=["ハンバーグ"],
+                    url=HTTP_URL_ADAPTER.validate_python("https://tabelog.com/tokyo/A1301/A130101/13000002/"),
+                    lunch_price="¥1,000～¥1,999",
+                    dinner_price="¥2,000～¥2,999",
+                )
+            ],
+            returned_count=1,
+            limit=10,
+            has_more=False,
+            meta=None,
+            applied_filters=SearchFiltersOutput(
+                area=None,
+                keyword=None,
+                cuisine="ハンバーグ",
+                genre_code="RC1202",
+                sort="ranking",
+                page=1,
+                reservation_date=None,
+                reservation_time=None,
+                party_size=None,
+            ),
+            warnings=[],
+            error=None,
+        )
+
+    monkeypatch.setattr(gurume_tools, "tabelog_get_area_suggestions", fail_area_suggestions)
+    monkeypatch.setattr(gurume_tools, "tabelog_get_keyword_suggestions", fail_keyword_suggestions)
+    monkeypatch.setattr(gurume_tools, "tabelog_search_restaurants", fake_search_restaurants)
+
+    result = await recommend_japanese_restaurants("日本", "漢堡排店", limit=10)
+
+    assert result["status"] == "success"
+    assert result["normalized"]["area"] is None
+    assert result["normalized"]["is_nationwide"] is True
+    assert result["normalized"]["cuisine"] == "ハンバーグ"
+    assert result["normalized"]["keyword"] is None
+    assert result["area_suggestions"] is None
+    assert captured_search["area"] is None
+    assert captured_search["cuisine"] == "ハンバーグ"
+    assert captured_search["keyword"] is None
+
+
+@pytest.mark.asyncio
+async def test_search_japanese_restaurants_normalizes_nationwide_keyword_cuisine(monkeypatch) -> None:
+    captured_search: dict[str, object] = {}
+
+    async def fake_search_restaurants(**kwargs) -> RestaurantSearchOutput:
+        captured_search.update(kwargs)
+        return RestaurantSearchOutput(
+            status="success",
+            items=[],
+            returned_count=0,
+            limit=10,
+            has_more=False,
+            meta=None,
+            applied_filters=SearchFiltersOutput(
+                area=kwargs["area"],
+                keyword=kwargs["keyword"],
+                cuisine=kwargs["cuisine"],
+                genre_code="RC1202",
+                sort="ranking",
+                page=1,
+                reservation_date=None,
+                reservation_time=None,
+                party_size=None,
+            ),
+            warnings=[],
+            error=None,
+        )
+
+    monkeypatch.setattr(gurume_tools, "tabelog_search_restaurants", fake_search_restaurants)
+
+    result = await search_japanese_restaurants(area="全国", keyword="漢堡排", limit=10)
+
+    assert result["status"] == "success"
+    assert captured_search["area"] is None
+    assert captured_search["keyword"] is None
+    assert captured_search["cuisine"] == "ハンバーグ"
