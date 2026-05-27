@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     bot_soul_path: Path = Field(default=Path("SOUL.md"), alias="BOT_SOUL_PATH")
     bot_soul_required: bool = Field(default=False, alias="BOT_SOUL_REQUIRED")
     bot_soul_max_chars: int = Field(default=8000, ge=1, alias="BOT_SOUL_MAX_CHARS")
-    bot_memory_path: Path = Field(default=Path("MEMORY.md"), alias="BOT_MEMORY_PATH")
+    bot_memory_path: Path = Field(default=Path("BOT_MEMORY.md"), alias="BOT_MEMORY_PATH")
     bot_memory_required: bool = Field(default=False, alias="BOT_MEMORY_REQUIRED")
     bot_memory_max_chars: int = Field(default=12000, ge=1, alias="BOT_MEMORY_MAX_CHARS")
     bot_proactive_enabled: bool = Field(default=True, alias="BOT_PROACTIVE_ENABLED")

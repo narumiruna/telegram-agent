@@ -1,4 +1,4 @@
-# MEMORY.md
+# BOT_MEMORY.md
 
 ## User Preferences
 - Prefers Traditional Chinese in casual conversation.
@@ -13,7 +13,7 @@
 ## Durable Facts
 - Agent Skills are installed under `.agents/skills` for this bot.
 - The bot uses Pydantic AI and OpenAI-compatible models.
-- SOUL.md defines identity and voice; MEMORY.md defines durable context.
+- SOUL.md defines identity and voice; BOT_MEMORY.md defines durable context.
 
 ## Gotchas
 - Docker skill installation needs `git`, `nodejs`, `npm`, `npx`, and a writable `.agents` mount.

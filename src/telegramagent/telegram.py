@@ -1429,7 +1429,7 @@ def _help_message() -> str:
             "/skills add <package> - 使用 npx skills add 安裝 Agent Skills",
             "/skills list - 列出已安裝 Agent Skills",
             "/soul show|reload|path - 管理 SOUL.md",
-            "/memory show|reload|path - 管理 MEMORY.md",
+            "/memory show|reload|path - 管理 BOT_MEMORY.md",
             "/events list|show|cancel|reload - 管理 immediate events",
             "/tasks list|show|cancel - 管理 proactive tasks",
             "也可以直接傳一般文字給我。",

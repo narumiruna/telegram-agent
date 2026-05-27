@@ -1,4 +1,4 @@
-# MEMORY.md
+# BOT_MEMORY.md
 
 ## User Preferences
 - Prefers Taiwan Traditional Chinese in conversation.
@@ -8,7 +8,7 @@
 ## Bot Context
 - This Telegram bot runs with Docker Compose and reads `.env`.
 - `SOUL.md` defines the bot persona and voice.
-- `MEMORY.md` stores durable context that is safe to load into instructions.
+- `BOT_MEMORY.md` stores durable context that is safe to load into instructions.
 - Agent Skills are installed under `.agents/skills` for this bot runtime.
 
 ## Operating Notes

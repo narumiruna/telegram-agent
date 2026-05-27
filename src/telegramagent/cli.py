@@ -173,7 +173,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
     )
     memory = load_context_file(
         settings.bot_memory_path,
-        label="MEMORY.md",
+        label="BOT_MEMORY.md",
         max_chars=settings.bot_memory_max_chars,
         required=settings.bot_memory_required,
     )
@@ -307,12 +307,12 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         nonlocal current_memory
         current_memory = load_context_file(
             settings.bot_memory_path,
-            label="MEMORY.md",
+            label="BOT_MEMORY.md",
             max_chars=settings.bot_memory_max_chars,
             required=settings.bot_memory_required,
         )
         agent.reload_context(memory=current_memory)
-        logger.info("Reloaded MEMORY.md from {}", settings.bot_memory_path)
+        logger.info("Reloaded BOT_MEMORY.md from {}", settings.bot_memory_path)
         return current_memory
 
     async def reload_skills() -> int:
@@ -378,7 +378,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
             ),
             ContextManagementTool(
                 command_name="memory",
-                display_name="MEMORY.md",
+                display_name="BOT_MEMORY.md",
                 current_context=get_memory_context,
                 reload_context=reload_memory,
                 admins=settings.bot_skill_admins,

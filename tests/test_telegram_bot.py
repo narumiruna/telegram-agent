@@ -1126,7 +1126,9 @@ async def test_bot_to_bot_replies_can_be_fully_disabled() -> None:
 
 @pytest.mark.asyncio
 async def test_context_tool_runs_before_builtin_commands(tmp_path: Path) -> None:
-    context = load_context_file(_write(tmp_path / "MEMORY.md", "memory text"), label="MEMORY.md", max_chars=1000)
+    context = load_context_file(
+        _write(tmp_path / "BOT_MEMORY.md", "memory text"), label="BOT_MEMORY.md", max_chars=1000
+    )
 
     async def reload_context():
         return context
@@ -1137,7 +1139,7 @@ async def test_context_tool_runs_before_builtin_commands(tmp_path: Path) -> None
         tools=[
             ContextManagementTool(
                 command_name="memory",
-                display_name="MEMORY.md",
+                display_name="BOT_MEMORY.md",
                 current_context=lambda: context,
                 reload_context=reload_context,
                 admins={456},
@@ -1146,7 +1148,7 @@ async def test_context_tool_runs_before_builtin_commands(tmp_path: Path) -> None
     )
 
     assert "memory text" in await bot.build_reply(123, "/memory show", user_id=456)
-    assert await bot.build_reply(123, "/memory show", user_id=999) == "你沒有權限管理 MEMORY.md。"
+    assert await bot.build_reply(123, "/memory show", user_id=999) == "你沒有權限管理 BOT_MEMORY.md。"
 
 
 @pytest.mark.asyncio
