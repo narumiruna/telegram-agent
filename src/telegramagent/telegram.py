@@ -13,6 +13,7 @@ from typing import NotRequired
 from typing import Protocol
 from typing import TypedDict
 from typing import cast
+from urllib.parse import quote
 
 import httpx
 from loguru import logger
@@ -1536,9 +1537,31 @@ def _format_inline_markdown_html(text: str, *, convert_bold: bool) -> str:
 
 
 def _format_markdown_text_html(text: str, *, convert_bold: bool) -> str:
-    escaped = html.escape(text, quote=False)
+    escaped = _escape_text_with_links(text)
     replacement = (lambda match: f"<b>{match.group(1)}</b>") if convert_bold else (lambda match: match.group(1))
     return _BOLD_RE.sub(replacement, escaped)
+
+
+def _escape_text_with_links(text: str) -> str:
+    parts: list[str] = []
+    cursor = 0
+    for match in _PLAIN_URL_RE.finditer(text):
+        raw_url = match.group(0)
+        url = _trim_url(raw_url)
+        suffix = raw_url[len(url) :]
+        parts.append(html.escape(text[cursor : match.start()], quote=False))
+        parts.append(_plain_url_html_link(url))
+        parts.append(html.escape(suffix, quote=False))
+        cursor = match.end()
+    parts.append(html.escape(text[cursor:], quote=False))
+    return "".join(parts)
+
+
+def _plain_url_html_link(url: str) -> str:
+    href = quote(url, safe=":/?#[]@!$&'()*+,;=%")
+    escaped_href = html.escape(href, quote=True)
+    escaped_label = html.escape(url, quote=False)
+    return f'<a href="{escaped_href}">{escaped_label}</a>'
 
 
 def _is_allowed_telegram_text_character(character: str) -> bool:

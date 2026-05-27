@@ -1320,7 +1320,9 @@ async def test_telegram_client_formats_commonmark_markdown_as_safe_html() -> Non
     assert "<b>🌅 清晨趕車到新潟，旅程一開始就很有戲</b>" in payloads[0]["text"]
     assert "<b>🌸 櫻花、城跡、山景，把日本春天拍得很滿</b>" in payloads[0]["text"]
     assert "這一趟重點是 <b>櫻花</b> 和 <b>城堡遺跡</b>。" in payloads[0]["text"]
-    assert "https://example.com/a_b?x=1&amp;y=2" in payloads[0]["text"]
+    assert (
+        '<a href="https://example.com/a_b?x=1&amp;y=2">https://example.com/a_b?x=1&amp;y=2</a>' in payloads[0]["text"]
+    )
     assert "特殊符號: _ * [ ] ( ) ~ ` &gt; # + - = | { } . !" in payloads[0]["text"]
     assert "<code>code</code>" in payloads[0]["text"]
     assert "<pre>code block &gt; should be escaped\n</pre>" in payloads[0]["text"]
@@ -1357,7 +1359,7 @@ def test_telegraph_html_sanitizer_remaps_and_escapes_unsupported_html() -> None:
 @pytest.mark.asyncio
 async def test_telegram_client_publishes_messages_over_1000_chars_to_telegraph() -> None:
     payloads: list[dict[str, Any]] = []
-    publisher = FakeTelegraphPublisher()
+    publisher = FakeTelegraphPublisher(url="https://telegra.ph/福岡-05-27")
     text = "x" * 1001
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1371,10 +1373,11 @@ async def test_telegram_client_publishes_messages_over_1000_chars_to_telegraph()
 
     assert message_id == 99
     assert publisher.published == [text]
+    expected_url = '<a href="https://telegra.ph/%E7%A6%8F%E5%B2%A1-05-27">https://telegra.ph/福岡-05-27</a>'
     assert payloads == [
         {
             "chat_id": 123,
-            "text": "https://telegra.ph/long-reply",
+            "text": expected_url,
             "parse_mode": "HTML",
             "disable_web_page_preview": False,
             "reply_to_message_id": 55,
@@ -1421,7 +1424,7 @@ async def test_telegram_client_edits_long_messages_to_telegraph_url() -> None:
         {
             "chat_id": 123,
             "message_id": 99,
-            "text": "https://telegra.ph/status",
+            "text": '<a href="https://telegra.ph/status">https://telegra.ph/status</a>',
             "parse_mode": "HTML",
             "disable_web_page_preview": False,
         }
