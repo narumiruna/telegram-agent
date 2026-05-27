@@ -39,3 +39,4 @@ def test_build_gurume_mcp_toolsets_creates_stdio_toolset_for_available_command()
     toolsets = build_gurume_mcp_toolsets(GurumeMcpConfig(enabled=True, command="python", args=("-m", "gurume", "mcp")))
 
     assert len(toolsets) == 1
+    assert toolsets[0].include_instructions is True

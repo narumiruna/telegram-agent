@@ -93,10 +93,11 @@ def test_yfinance_mcp_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_yfinance_mcp_read_timeout_seconds == 30
 
 
-def test_gurume_mcp_settings_default_to_enabled() -> None:
+def test_gurume_tools_settings_default_to_enabled() -> None:
     settings = Settings.model_validate({})
 
-    assert settings.bot_gurume_mcp_enabled is True
+    assert settings.bot_gurume_tools_enabled is True
+    assert settings.bot_gurume_mcp_enabled is False
     assert settings.bot_gurume_mcp_command == "gurume"
     assert settings.bot_gurume_mcp_args == ("mcp",)
     assert settings.bot_gurume_mcp_init_timeout_seconds == 10
@@ -104,6 +105,7 @@ def test_gurume_mcp_settings_default_to_enabled() -> None:
 
 
 def test_gurume_mcp_settings_parse_env(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_GURUME_TOOLS_ENABLED", "false")
     monkeypatch.setenv("BOT_GURUME_MCP_ENABLED", "true")
     monkeypatch.setenv("BOT_GURUME_MCP_COMMAND", "uvx")
     monkeypatch.setenv("BOT_GURUME_MCP_ARGS", "--from gurume gurume mcp")
@@ -112,6 +114,7 @@ def test_gurume_mcp_settings_parse_env(monkeypatch) -> None:
 
     settings = Settings()
 
+    assert settings.bot_gurume_tools_enabled is False
     assert settings.bot_gurume_mcp_enabled is True
     assert settings.bot_gurume_mcp_command == "uvx"
     assert settings.bot_gurume_mcp_args == ("--from", "gurume", "gurume", "mcp")

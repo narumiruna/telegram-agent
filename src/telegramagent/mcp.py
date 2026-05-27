@@ -70,5 +70,6 @@ def build_gurume_mcp_toolsets(config: GurumeMcpConfig) -> list[MCPToolset[Any]]:
             id="gurume",
             init_timeout=config.init_timeout_seconds,
             read_timeout=config.read_timeout_seconds,
+            include_instructions=True,
         )
     ]

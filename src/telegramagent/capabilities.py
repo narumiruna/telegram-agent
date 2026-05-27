@@ -66,6 +66,12 @@ def default_capabilities() -> list[Capability]:
             _yfinance_reason(package_available=yfmcp_available, command_available=yfmcp_path is not None),
         ),
         Capability(
+            "tool.gurume",
+            gurume_available,
+            "Direct Gurume Python tools for Tabelog Japanese restaurant search",
+            "gurume package not installed" if not gurume_available else "",
+        ),
+        Capability(
             "mcp.gurume",
             gurume_available and gurume_path is not None,
             "Japanese restaurant search MCP tools via gurume mcp",

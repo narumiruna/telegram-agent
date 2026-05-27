@@ -141,7 +141,8 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `BOT_YFINANCE_MCP_ENABLED` | `true` | Register Yahoo Finance MCP tools through `yfmcp`. |
-| `BOT_GURUME_MCP_ENABLED` | `true` | Register Gurume MCP tools through `gurume mcp` for Japanese restaurant search. |
+| `BOT_GURUME_TOOLS_ENABLED` | `true` | Register direct Gurume Python tools for Tabelog restaurant recommendations/search. |
+| `BOT_GURUME_MCP_ENABLED` | `false` | Optional Gurume MCP fallback through `gurume mcp`. |
 | `BOT_EVENTS_ENABLED` | `false` | Enable file-backed immediate events. |
 | `BOT_CONTAINER_TOOLS_ENABLED` | `true` in Compose | Register Docker-only local tools when running inside a container. |
 | `LOGFIRE_ENABLED` | `true` | Configure Logfire when `LOGFIRE_TOKEN` is set. |
@@ -396,11 +397,14 @@ statement, holder, sector, news, and price-chart lookups.
 
 Financial responses are informational only and are not investment advice.
 
-## 🍽️ Gurume MCP
+## 🍽️ Gurume Restaurant Tools
 
-Gurume's MCP toolset is enabled by default for Japanese restaurant search through Tabelog. By default, the bot starts it
-with `gurume mcp`; set `BOT_GURUME_MCP_ENABLED=false` to disable it, or override `BOT_GURUME_MCP_COMMAND` and
-`BOT_GURUME_MCP_ARGS` when using `uvx` or another launcher.
+Gurume's direct Python tools are enabled by default for Japanese restaurant search through Tabelog. The bot registers a
+high-level `recommend_japanese_restaurants` tool plus lower-level search, detail, area-suggestion, keyword-suggestion,
+and cuisine-list tools.
+
+Set `BOT_GURUME_TOOLS_ENABLED=false` to disable the direct tools. `BOT_GURUME_MCP_ENABLED=false` by default; enable it
+only when you intentionally want the Gurume MCP toolset as a fallback or integration test path.
 
 ## 🔭 Observability
 
