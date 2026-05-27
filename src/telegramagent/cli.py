@@ -31,9 +31,7 @@ from telegramagent.gurume_tools import build_gurume_tools
 from telegramagent.images import OpenAIImageGenerator
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
-from telegramagent.mcp import GurumeMcpConfig
 from telegramagent.mcp import YFinanceMcpConfig
-from telegramagent.mcp import build_gurume_mcp_toolsets
 from telegramagent.mcp import build_yfinance_mcp_toolsets
 from telegramagent.mcp import command_available
 from telegramagent.observability import LogfireConfig
@@ -99,11 +97,7 @@ def _yfinance_mcp_unavailable_reason(config: YFinanceMcpConfig, *, available: bo
     return _stdio_mcp_unavailable_reason(config, available=available)
 
 
-def _gurume_mcp_unavailable_reason(config: GurumeMcpConfig, *, available: bool) -> str:
-    return _stdio_mcp_unavailable_reason(config, available=available)
-
-
-def _stdio_mcp_unavailable_reason(config: YFinanceMcpConfig | GurumeMcpConfig, *, available: bool) -> str:
+def _stdio_mcp_unavailable_reason(config: YFinanceMcpConfig, *, available: bool) -> str:
     if available:
         return ""
     if not config.enabled:
@@ -207,22 +201,6 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
             _yfinance_mcp_unavailable_reason(yfinance_mcp_config, available=bool(yfinance_mcp_toolsets)),
         )
     )
-    gurume_mcp_config = GurumeMcpConfig(
-        enabled=settings.bot_gurume_mcp_enabled,
-        command=settings.bot_gurume_mcp_command,
-        args=settings.bot_gurume_mcp_args,
-        init_timeout_seconds=settings.bot_gurume_mcp_init_timeout_seconds,
-        read_timeout_seconds=settings.bot_gurume_mcp_read_timeout_seconds,
-    )
-    gurume_mcp_toolsets = build_gurume_mcp_toolsets(gurume_mcp_config)
-    capabilities.set(
-        Capability(
-            "mcp.gurume",
-            bool(gurume_mcp_toolsets),
-            "Japanese restaurant search MCP tools via gurume mcp",
-            _gurume_mcp_unavailable_reason(gurume_mcp_config, available=bool(gurume_mcp_toolsets)),
-        )
-    )
     capabilities.set(
         Capability(
             "image_input.telegram",
@@ -256,7 +234,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         memory=memory,
         capability_summary=capabilities.summary(),
         kabigon_tool_timeout_seconds=settings.bot_kabigon_timeout_seconds,
-        mcp_toolsets=(*yfinance_mcp_toolsets, *gurume_mcp_toolsets),
+        mcp_toolsets=tuple(yfinance_mcp_toolsets),
         tools=(*gurume_tools, *container_tools),
     )
     topic_end_judge = TopicEndAgent(

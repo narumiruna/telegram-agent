@@ -65,11 +65,6 @@ class Settings(BaseSettings):
         default=120.0, gt=0, alias="BOT_YFINANCE_MCP_READ_TIMEOUT_SECONDS"
     )
     bot_gurume_tools_enabled: bool = Field(default=True, alias="BOT_GURUME_TOOLS_ENABLED")
-    bot_gurume_mcp_enabled: bool = Field(default=False, alias="BOT_GURUME_MCP_ENABLED")
-    bot_gurume_mcp_command: str = Field(default="gurume", alias="BOT_GURUME_MCP_COMMAND")
-    bot_gurume_mcp_args: Annotated[tuple[str, ...], NoDecode] = Field(default=("mcp",), alias="BOT_GURUME_MCP_ARGS")
-    bot_gurume_mcp_init_timeout_seconds: float = Field(default=10.0, gt=0, alias="BOT_GURUME_MCP_INIT_TIMEOUT_SECONDS")
-    bot_gurume_mcp_read_timeout_seconds: float = Field(default=120.0, gt=0, alias="BOT_GURUME_MCP_READ_TIMEOUT_SECONDS")
     bot_container_tools_enabled: bool = Field(default=False, alias="BOT_CONTAINER_TOOLS_ENABLED")
     bot_container_tools_root: Path = Field(default=Path(), alias="BOT_CONTAINER_TOOLS_ROOT")
     bot_container_tools_timeout_seconds: float = Field(default=10.0, gt=0, alias="BOT_CONTAINER_TOOLS_TIMEOUT_SECONDS")
@@ -116,7 +111,7 @@ class Settings(BaseSettings):
             return {item.strip() for item in value.split(",") if item.strip()}
         return value
 
-    @field_validator("bot_yfinance_mcp_args", "bot_gurume_mcp_args", mode="before")
+    @field_validator("bot_yfinance_mcp_args", mode="before")
     @classmethod
     def parse_mcp_args(cls, value: object) -> tuple[str, ...] | object:
         if value is None or value == "":

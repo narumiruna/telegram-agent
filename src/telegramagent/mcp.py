@@ -21,15 +21,6 @@ class YFinanceMcpConfig:
     read_timeout_seconds: float = 120.0
 
 
-@dataclass(frozen=True)
-class GurumeMcpConfig:
-    enabled: bool = False
-    command: str = "gurume"
-    args: tuple[str, ...] = ("mcp",)
-    init_timeout_seconds: float = 10.0
-    read_timeout_seconds: float = 120.0
-
-
 def parse_mcp_args(value: str | Sequence[str] | None) -> tuple[str, ...]:
     if value is None:
         return ()
@@ -56,20 +47,5 @@ def build_yfinance_mcp_toolsets(config: YFinanceMcpConfig) -> list[MCPToolset[An
             id="yfinance",
             init_timeout=config.init_timeout_seconds,
             read_timeout=config.read_timeout_seconds,
-        )
-    ]
-
-
-def build_gurume_mcp_toolsets(config: GurumeMcpConfig) -> list[MCPToolset[Any]]:
-    if not config.enabled or not command_available(config.command):
-        return []
-    transport = StdioTransport(command=config.command, args=list(config.args))
-    return [
-        MCPToolset(
-            cast(Any, transport),
-            id="gurume",
-            init_timeout=config.init_timeout_seconds,
-            read_timeout=config.read_timeout_seconds,
-            include_instructions=True,
         )
     ]
