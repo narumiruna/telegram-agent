@@ -38,6 +38,7 @@ jobs:
       - name: Deploy with Docker Compose
         run: |
           docker compose up -d --build --remove-orphans
+          docker image prune -f
 
       - name: Remove environment file
         if: always()
