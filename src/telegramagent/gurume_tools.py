@@ -12,6 +12,8 @@ from gurume.server import tabelog_get_keyword_suggestions
 from gurume.server import tabelog_get_restaurant_details
 from gurume.server import tabelog_list_cuisines
 from gurume.server import tabelog_search_restaurants
+from gurume.server_models import RestaurantOutput
+from gurume.server_models import RestaurantSearchOutput
 from gurume.server_models import SuggestionListOutput
 from pydantic import BaseModel
 from pydantic_ai import Tool
@@ -55,8 +57,11 @@ async def recommend_japanese_restaurants(
     keyword: str | None = None
     normalized_food_query = _normalize_food_query(food_query) if food_query else None
     if normalized_food_query:
-        cuisine = _resolve_supported_cuisine(normalized_food_query)
-        if cuisine is None:
+        if _prefers_keyword_search(normalized_food_query):
+            keyword = normalized_food_query
+        else:
+            cuisine = _resolve_supported_cuisine(normalized_food_query)
+        if cuisine is None and keyword is None:
             keyword_suggestions = await tabelog_get_keyword_suggestions(normalized_food_query)
             cuisine = _first_supported_cuisine(keyword_suggestions)
         if cuisine is None:
@@ -101,7 +106,9 @@ async def recommend_japanese_restaurants(
         },
         "area_suggestions": _model_to_json(area_suggestions) if area_suggestions is not None else None,
         "keyword_suggestions": _model_to_json(keyword_suggestions) if keyword_suggestions is not None else None,
-        "search": _model_to_json(search_result),
+        "display_items": _restaurant_display_items(search_result.items),
+        "response_contract": _RESPONSE_CONTRACT,
+        "search": _search_output_to_json(search_result),
         "warnings": warnings,
     }
 
@@ -133,7 +140,7 @@ async def search_japanese_restaurants(
         reservation_time=reservation_time,
         party_size=party_size,
     )
-    return _model_to_json(result)
+    return _search_output_to_json(result)
 
 
 async def get_japanese_restaurant_details(
@@ -181,8 +188,9 @@ def build_gurume_tools() -> tuple[Tool[Any], ...]:
                 "For nationwide requests such as 日本, 全国, 全國, or Japan, use this tool with that area text; "
                 "the tool treats it as nationwide and searches without a Tabelog area filter. "
                 "It resolves ambiguous area text, maps supported cuisine terms, searches Gurume/Tabelog, "
-                "and returns normalized filters, warnings, and ranked restaurant results with name, genres, "
-                "rating, review_count, area/station text, lunch/dinner price ranges, and Tabelog URL."
+                "and returns display_items plus structured restaurant results. "
+                "When answering, copy display_items rows exactly; never invent ratings or URLs, and never combine "
+                "a restaurant name from one item with a URL, rating, area, or genre from another item."
             ),
         ),
         Tool(
@@ -194,8 +202,9 @@ def build_gurume_tools() -> tuple[Tool[Any], ...]:
                 "For nationwide Japan requests, leave area unset or pass 日本/全国/全國/Japan; do not search "
                 "for 日本 as a local area. "
                 "For vague recommendation requests, prefer recommend_japanese_restaurants. "
-                "Returns RestaurantSearchOutput with applied filters, warnings, pagination metadata, "
-                "and restaurant items containing name, genres, rating, review_count, area, price ranges, and URL."
+                "Returns RestaurantSearchOutput fields plus display_items. "
+                "When answering, copy display_items rows exactly; never invent ratings or URLs, and never combine "
+                "a restaurant name from one item with a URL, rating, area, or genre from another item."
             ),
         ),
         Tool(
@@ -266,7 +275,21 @@ _CUISINE_ALIASES = {
     "hamburg": "ハンバーグ",
     "hamburgsteak": "ハンバーグ",
     "hamburgersteak": "ハンバーグ",
+    "壽喜燒": "すき焼き",
+    "寿喜烧": "すき焼き",
+    "壽喜焼": "すき焼き",
+    "寿喜焼": "すき焼き",
+    "sukiyaki": "すき焼き",
 }
+
+_KEYWORD_SEARCH_FOODS = {
+    "すき焼き",
+}
+
+_RESPONSE_CONTRACT = (
+    "Use display_items as the authoritative restaurant list. Copy each row exactly when presenting results. "
+    "Do not rewrite ratings, URLs, names, genres, or areas from memory, and do not mix fields between rows."
+)
 
 
 def _is_nationwide_area_query(query: str) -> bool:
@@ -279,9 +302,11 @@ def _normalize_search_filters(
     normalized_area = None if area is not None and _is_nationwide_area_query(area) else area
     normalized_cuisine = _normalize_food_query(cuisine) if cuisine else None
     normalized_keyword = _normalize_food_query(keyword) if keyword else None
+    if normalized_cuisine is not None and _prefers_keyword_search(normalized_cuisine) and normalized_keyword is None:
+        return normalized_area, normalized_cuisine, None
     if normalized_cuisine is None and normalized_keyword is not None:
         resolved_keyword_cuisine = _resolve_supported_cuisine(normalized_keyword)
-        if resolved_keyword_cuisine is not None:
+        if resolved_keyword_cuisine is not None and not _prefers_keyword_search(resolved_keyword_cuisine):
             return normalized_area, None, resolved_keyword_cuisine
     return normalized_area, normalized_keyword, normalized_cuisine
 
@@ -301,6 +326,10 @@ def _compact_text(text: str) -> str:
     return re.sub(r"[\s　_-]+", "", text.strip()).casefold()
 
 
+def _prefers_keyword_search(query: str) -> bool:
+    return query in _KEYWORD_SEARCH_FOODS
+
+
 def _resolve_supported_cuisine(query: str) -> str | None:
     return query if get_genre_code(query) is not None else None
 
@@ -315,6 +344,32 @@ def _first_supported_cuisine(suggestions: SuggestionListOutput) -> str | None:
 
 def _clamp_limit(limit: int) -> int:
     return max(1, min(limit, 20))
+
+
+def _search_output_to_json(model: RestaurantSearchOutput) -> dict[str, Any]:
+    data = _model_to_json(model)
+    data["display_items"] = _restaurant_display_items(model.items)
+    data["response_contract"] = _RESPONSE_CONTRACT
+    return data
+
+
+def _restaurant_display_items(items: list[RestaurantOutput]) -> list[str]:
+    return [_restaurant_display_item(rank, item) for rank, item in enumerate(items, start=1)]
+
+
+def _restaurant_display_item(rank: int, item: RestaurantOutput) -> str:
+    return (
+        f"{rank}. {item.name} | rating: {_format_rating(item.rating)} | reviews: {item.review_count} | "
+        f"area: {item.area or '-'} | genres: {_format_genres(item.genres)} | url: {item.url}"
+    )
+
+
+def _format_rating(rating: float | None) -> str:
+    return f"{rating:.2f}" if rating is not None else "-"
+
+
+def _format_genres(genres: list[str]) -> str:
+    return "、".join(genres) if genres else "-"
 
 
 def _model_to_json(model: BaseModel) -> dict[str, Any]:

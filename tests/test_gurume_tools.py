@@ -117,6 +117,11 @@ async def test_recommend_japanese_restaurants_resolves_area_and_cuisine(monkeypa
     assert captured_search["cuisine"] == "ラーメン"
     assert captured_search["keyword"] is None
     assert result["search"]["items"][0]["name"] == "テストラーメン"
+    assert result["display_items"] == [
+        "1. テストラーメン | rating: 3.80 | reviews: 100 | area: 新宿 | genres: ラーメン | "
+        "url: https://tabelog.com/tokyo/A1304/A130401/13000001/"
+    ]
+    assert result["search"]["display_items"] == result["display_items"]
 
 
 @pytest.mark.asyncio
@@ -179,6 +184,7 @@ async def test_recommend_japanese_restaurants_treats_japan_as_nationwide(monkeyp
     assert captured_search["area"] is None
     assert captured_search["cuisine"] == "ハンバーグ"
     assert captured_search["keyword"] is None
+    assert result["display_items"][0].endswith("url: https://tabelog.com/tokyo/A1301/A130101/13000002/")
 
 
 @pytest.mark.asyncio
@@ -217,3 +223,58 @@ async def test_search_japanese_restaurants_normalizes_nationwide_keyword_cuisine
     assert captured_search["area"] is None
     assert captured_search["keyword"] is None
     assert captured_search["cuisine"] == "ハンバーグ"
+    assert result["display_items"] == []
+    assert "Copy each row exactly" in result["response_contract"]
+
+
+@pytest.mark.asyncio
+async def test_sukiyaki_uses_keyword_search_to_avoid_broad_cuisine_results(monkeypatch) -> None:
+    captured_search: dict[str, object] = {}
+
+    async def fake_search_restaurants(**kwargs) -> RestaurantSearchOutput:
+        captured_search.update(kwargs)
+        return RestaurantSearchOutput(
+            status="success",
+            items=[
+                RestaurantOutput(
+                    name="すき焼割烹 日山",
+                    rating=3.73,
+                    review_count=548,
+                    area="人形町駅 66m",
+                    genres=["すき焼き、日本料理"],
+                    url=HTTP_URL_ADAPTER.validate_python("https://tabelog.com/tokyo/A1302/A130204/13003043/"),
+                    lunch_price=None,
+                    dinner_price=None,
+                )
+            ],
+            returned_count=1,
+            limit=10,
+            has_more=False,
+            meta=None,
+            applied_filters=SearchFiltersOutput(
+                area=None,
+                keyword="すき焼き",
+                cuisine=None,
+                genre_code=None,
+                sort="ranking",
+                page=1,
+                reservation_date=None,
+                reservation_time=None,
+                party_size=None,
+            ),
+            warnings=[],
+            error=None,
+        )
+
+    monkeypatch.setattr(gurume_tools, "tabelog_search_restaurants", fake_search_restaurants)
+
+    result = await search_japanese_restaurants(area="日本", cuisine="壽喜燒", limit=10)
+
+    assert result["status"] == "success"
+    assert captured_search["area"] is None
+    assert captured_search["keyword"] == "すき焼き"
+    assert captured_search["cuisine"] is None
+    assert result["display_items"] == [
+        "1. すき焼割烹 日山 | rating: 3.73 | reviews: 548 | area: 人形町駅 66m | genres: すき焼き、日本料理 | "
+        "url: https://tabelog.com/tokyo/A1302/A130204/13003043/"
+    ]
