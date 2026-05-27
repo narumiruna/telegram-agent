@@ -5,7 +5,7 @@
 - Work from the repository root. This is a Python 3.14 Telegram bot packaged as `telegramagent` with source in `src/telegramagent/` and tests in `tests/`.
 - Runtime entrypoint is `telegramagent.cli:app`; Telegram API plumbing lives in `src/telegramagent/telegram.py`, LLM wiring in `src/telegramagent/llm.py`, proactive URL handling in `src/telegramagent/actions.py`, and configuration in `src/telegramagent/settings.py`.
 - Treat `third_party/`, `.venv/`, `.events/`, `.telegramagent/`, coverage files, caches, and build artifacts as generated or vendored; do not hand-edit them unless the task explicitly targets vendored code.
-- `MEMORY.md` is maintainer-facing repo memory for future coding agents. `SOUL.md` and `BOT_MEMORY.md` are runtime context files. Do not add secrets or sensitive personal data to any of them.
+- `MEMORY.md` is maintainer-facing repo memory for future coding agents. `SOUL.md` is the runtime persona/context file. Do not add secrets or sensitive personal data to either file.
 
 ## Build, test, and development commands
 

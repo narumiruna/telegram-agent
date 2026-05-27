@@ -19,33 +19,24 @@ class FakeRunResult:
         self.output = output
 
 
-def test_settings_include_soul_and_memory_defaults() -> None:
+def test_settings_include_soul_defaults() -> None:
     settings = Settings()
 
     assert settings.bot_soul_path == Path("SOUL.md")
     assert settings.bot_soul_required is False
     assert settings.bot_soul_max_chars == 8000
-    assert settings.bot_memory_path == Path("BOT_MEMORY.md")
-    assert settings.bot_memory_required is False
-    assert settings.bot_memory_max_chars == 12000
 
 
-def test_settings_parse_soul_and_memory_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_settings_parse_soul_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BOT_SOUL_PATH", "persona/SOUL.md")
     monkeypatch.setenv("BOT_SOUL_REQUIRED", "true")
     monkeypatch.setenv("BOT_SOUL_MAX_CHARS", "123")
-    monkeypatch.setenv("BOT_MEMORY_PATH", "persona/BOT_MEMORY.md")
-    monkeypatch.setenv("BOT_MEMORY_REQUIRED", "true")
-    monkeypatch.setenv("BOT_MEMORY_MAX_CHARS", "456")
 
     settings = Settings()
 
     assert settings.bot_soul_path == Path("persona/SOUL.md")
     assert settings.bot_soul_required is True
     assert settings.bot_soul_max_chars == 123
-    assert settings.bot_memory_path == Path("persona/BOT_MEMORY.md")
-    assert settings.bot_memory_required is True
-    assert settings.bot_memory_max_chars == 456
 
 
 class FakeRunnableAgent:
@@ -70,10 +61,10 @@ def test_load_context_file_missing_required_raises(tmp_path: Path) -> None:
 
 
 def test_load_context_file_truncates(tmp_path: Path) -> None:
-    path = tmp_path / "BOT_MEMORY.md"
+    path = tmp_path / "SOUL.md"
     path.write_text("abcdef", encoding="utf-8")
 
-    context = load_context_file(path, label="BOT_MEMORY.md", max_chars=3)
+    context = load_context_file(path, label="SOUL.md", max_chars=3)
 
     assert context.exists is True
     assert context.truncated is True
@@ -82,11 +73,8 @@ def test_load_context_file_truncates(tmp_path: Path) -> None:
     assert "truncated" in format_context_for_instructions(context)
 
 
-def test_chat_agent_instruction_order_is_core_soul_memory_skills(tmp_path: Path) -> None:
+def test_chat_agent_instruction_order_is_core_soul_skills(tmp_path: Path) -> None:
     soul = load_context_file(_write(tmp_path / "SOUL.md", "# Soul\nvoice"), label="SOUL.md", max_chars=1000)
-    memory = load_context_file(
-        _write(tmp_path / "BOT_MEMORY.md", "# Memory\nfacts"), label="BOT_MEMORY.md", max_chars=1000
-    )
     skill = AgentSkill(name="skill", description="desc", content="# Skill\nworkflow", path=tmp_path / "SKILL.md")
     captured: dict[str, str] = {}
 
@@ -94,12 +82,11 @@ def test_chat_agent_instruction_order_is_core_soul_memory_skills(tmp_path: Path)
         captured["instructions"] = instructions
         return FakeRunnableAgent()
 
-    ChatAgent(api_key="key", model="model", soul=soul, memory=memory, skills=[skill], agent_factory=factory)
+    ChatAgent(api_key="key", model="model", soul=soul, skills=[skill], agent_factory=factory)
 
     instructions = captured["instructions"]
     assert instructions.index("Telegram 機器人助理") < instructions.index("SOUL.md")
-    assert instructions.index("SOUL.md") < instructions.index("BOT_MEMORY.md")
-    assert instructions.index("BOT_MEMORY.md") < instructions.index("Skill: skill")
+    assert instructions.index("SOUL.md") < instructions.index("Skill: skill")
 
 
 def test_chat_agent_reload_context_updates_instructions(tmp_path: Path) -> None:

@@ -107,7 +107,6 @@ class ChatAgent:
         http_client: httpx.AsyncClient | None = None,
         skills: list[AgentSkill] | None = None,
         soul: ContextFile | None = None,
-        memory: ContextFile | None = None,
         agent_factory: AgentFactory | None = None,
         capability_summary: str = "",
         kabigon_tool_timeout_seconds: float = 180.0,
@@ -117,7 +116,6 @@ class ChatAgent:
         self.client = OpenAIChatClient(api_key=api_key, model=model, base_url=base_url, http_client=http_client)
         self.skills = skills or []
         self.soul = soul
-        self.memory = memory
         self.capability_summary = capability_summary
         self.agent_factory = agent_factory
         self.kabigon_tool_timeout_seconds = kabigon_tool_timeout_seconds
@@ -162,11 +160,9 @@ class ChatAgent:
         self.skills = skills
         self._rebuild_agent()
 
-    def reload_context(self, *, soul: ContextFile | None = None, memory: ContextFile | None = None) -> None:
+    def reload_context(self, *, soul: ContextFile | None = None) -> None:
         if soul is not None:
             self.soul = soul
-        if memory is not None:
-            self.memory = memory
         self._rebuild_agent()
 
     def _rebuild_agent(self) -> None:
@@ -186,7 +182,7 @@ class ChatAgent:
         agent_factory: AgentFactory | None,
     ) -> RunnableAgent:
         instructions = _chat_instructions(
-            skills=self.skills, soul=self.soul, memory=self.memory, capability_summary=self.capability_summary
+            skills=self.skills, soul=self.soul, capability_summary=self.capability_summary
         )
         if agent_factory is not None:
             return agent_factory(instructions)
@@ -201,9 +197,7 @@ class ChatAgent:
         )
 
 
-def _chat_instructions(
-    *, skills: list[AgentSkill], soul: ContextFile | None, memory: ContextFile | None, capability_summary: str = ""
-) -> str:
+def _chat_instructions(*, skills: list[AgentSkill], soul: ContextFile | None, capability_summary: str = "") -> str:
     sections = [
         "你是一個 Telegram 機器人助理。請用繁體中文簡潔、有幫助地回答；可以自然、克制地加入少量 emoji。"
         "對話歷史會以真正的 prior messages 提供；回覆前必須先檢查近期對話，"
@@ -222,9 +216,6 @@ def _chat_instructions(
     soul_instructions = format_context_for_instructions(soul)
     if soul_instructions:
         sections.append(soul_instructions)
-    memory_instructions = format_context_for_instructions(memory)
-    if memory_instructions:
-        sections.append(memory_instructions)
     if capability_summary:
         sections.append(f"Runtime capabilities:\n{capability_summary}")
     skill_instructions = format_skills_for_instructions(skills)

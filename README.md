@@ -15,7 +15,7 @@ runtime tools such as kabigon, Yahoo Finance MCP, and container-local file tools
 - **Image input/output**: Telegram photos can be sent to a vision-capable model; `/image` can call an image-generation
   endpoint when enabled.
 - **Long replies**: replies over Telegram's practical limit are published to Telegraph and replaced with a link.
-- **Durable context**: `SOUL.md`, `BOT_MEMORY.md`, and per-chat session logs survive restarts.
+- **Durable context**: `SOUL.md` and per-chat session logs survive restarts.
 - **Agent Skills**: local `.agents/skills/*/SKILL.md` files are loaded as model instructions.
 - **Docker-ready**: Compose includes mounted runtime state, Playwright browser assets, and optional container tools.
 
@@ -109,7 +109,6 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `BOT_SOUL_PATH` | `SOUL.md` | Persona and voice instructions. |
-| `BOT_MEMORY_PATH` | `BOT_MEMORY.md` | Durable user/project memory loaded into instructions. |
 | `BOT_SESSION_LOG_DIR` | `.telegramagent/sessions` | Per-chat JSONL history used after restarts. |
 | `BOT_SKILLS_DIR` | `.agents/skills` | Directory for Agent Skills. |
 | `BOT_ENABLED_SKILLS` | empty | Comma-separated skill names. Empty loads every skill. |
@@ -208,32 +207,32 @@ run inside the container.
 
 ## 🧠 Context Files
 
-The bot can load two always-on context files before Agent Skills:
+The bot can load one always-on runtime context file before Agent Skills:
 
-1. `SOUL.md`: identity, voice, values, and hard boundaries
-2. `BOT_MEMORY.md`: durable user preferences, project context, gotchas, and open threads
+- `SOUL.md`: identity, voice, values, and hard boundaries
+
+`MEMORY.md` is maintainer-facing repo memory for future coding agents. It is not loaded into Telegram runtime
+instructions.
 
 Instruction order:
 
 ```text
-core rules -> SOUL.md -> BOT_MEMORY.md -> Agent Skills -> conversation history -> user message
+core rules -> SOUL.md -> Agent Skills -> conversation history -> user message
 ```
 
 Start from templates:
 
 ```bash
 cp SOUL.md.example SOUL.md
-cp BOT_MEMORY.md.example BOT_MEMORY.md
 ```
 
 Reload at runtime:
 
 ```text
 /soul reload
-/memory reload
 ```
 
-Keep these files safe. Do not store API keys, bot tokens, cookies, private URLs, passwords, or sensitive personal data.
+Keep context files safe. Do not store API keys, bot tokens, cookies, private URLs, passwords, or sensitive personal data.
 
 ## 🧩 Agent Skills
 
@@ -295,7 +294,6 @@ Pydantic AI tool, or MCP toolset.
 | `/skills add <package>` | Install Agent Skills with `npx`. |
 | `/skills list` | List installed Agent Skills. |
 | `/soul show\|reload\|path` | Inspect or reload `SOUL.md`. |
-| `/memory show\|reload\|path` | Inspect or reload `BOT_MEMORY.md`. |
 | `/events list\|show <name>\|cancel <name>\|reload` | Manage file-backed events. |
 | `/tasks list\|show <id>\|cancel <id>` | Inspect or cancel proactive runtime tasks. |
 
@@ -452,7 +450,7 @@ Note: `just lint` applies Ruff fixes.
 ## 🔒 Security Notes
 
 - Never commit `.env`, bot tokens, API keys, cookies, or private URLs.
-- Keep `SOUL.md` and `BOT_MEMORY.md` free of secrets.
+- Keep `SOUL.md` and `MEMORY.md` free of secrets.
 - URL fetching blocks private/local network targets.
 - Risky side-effect actions should require explicit confirmation.
 - Container tools can expose file contents to the model provider; keep secrets outside mounted tool roots.
@@ -466,8 +464,6 @@ Compose mounts these paths by default:
 - ./.events:/app/.events
 - ./.telegramagent:/app/.telegramagent
 - ./SOUL.md:/app/SOUL.md:ro
-- ./BOT_MEMORY.md:/app/BOT_MEMORY.md:ro
 ```
 
-This keeps skills, events, and session logs durable while allowing `SOUL.md` and `BOT_MEMORY.md` edits without rebuilding the
-image.
+This keeps skills, events, and session logs durable while allowing `SOUL.md` edits without rebuilding the image.

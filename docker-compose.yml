@@ -21,4 +21,3 @@ services:
       - ./.events:/app/.events
       - ./.telegramagent:/app/.telegramagent
       - ./SOUL.md:/app/SOUL.md:ro
-      - ./BOT_MEMORY.md:/app/BOT_MEMORY.md:ro

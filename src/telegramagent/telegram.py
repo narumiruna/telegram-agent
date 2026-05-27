@@ -761,7 +761,7 @@ class TelegramBot:
                     _llm_prompt_with_reply_context(prompt or _DEFAULT_IMAGE_PROMPT, reply_context=reply_context),
                     images=images,
                 )
-            case "/skills" | "/soul" | "/memory":
+            case "/skills" | "/soul":
                 return "這個 bot 尚未啟用這個管理功能。"
             case _ if text.startswith("/"):
                 return "我不認識這個指令。輸入 /help 查看可用指令。"
@@ -1429,7 +1429,6 @@ def _help_message() -> str:
             "/skills add <package> - 使用 npx skills add 安裝 Agent Skills",
             "/skills list - 列出已安裝 Agent Skills",
             "/soul show|reload|path - 管理 SOUL.md",
-            "/memory show|reload|path - 管理 BOT_MEMORY.md",
             "/events list|show|cancel|reload - 管理 immediate events",
             "/tasks list|show|cancel - 管理 proactive tasks",
             "也可以直接傳一般文字給我。",
@@ -1452,7 +1451,6 @@ def _is_management_command(text: str) -> bool:
     return command in {
         "/skills",
         "/soul",
-        "/memory",
         "/events",
         "/tasks",
         "/start",
