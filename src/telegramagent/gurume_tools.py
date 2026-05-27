@@ -167,34 +167,61 @@ def build_gurume_tools() -> tuple[Tool[Any], ...]:
             recommend_japanese_restaurants,
             name="recommend_japanese_restaurants",
             description=(
-                "High-level Tabelog restaurant recommendation for Japan. Resolves area and cuisine, searches Gurume, "
-                "and returns structured results with warnings."
+                "Primary tool for Japanese restaurant recommendations on Tabelog. "
+                "Use for best/top restaurant requests, where-to-eat questions, broad area searches, "
+                "and natural-language area+cuisine requests in Japan. "
+                "It resolves ambiguous area text, maps supported cuisine terms, searches Gurume/Tabelog, "
+                "and returns normalized filters, warnings, and ranked restaurant results with name, genres, "
+                "rating, review_count, area/station text, lunch/dinner price ranges, and Tabelog URL."
             ),
         ),
         Tool(
             search_japanese_restaurants,
             name="search_japanese_restaurants",
-            description="Search Tabelog restaurants through Gurume with explicit area, keyword, cuisine, and filters.",
+            description=(
+                "Lower-level Gurume/Tabelog search for explicit filters. "
+                "Use when the area, keyword, cuisine, sort, page, or reservation filters are already known. "
+                "For vague recommendation requests, prefer recommend_japanese_restaurants. "
+                "Returns RestaurantSearchOutput with applied filters, warnings, pagination metadata, "
+                "and restaurant items containing name, genres, rating, review_count, area, price ranges, and URL."
+            ),
         ),
         Tool(
             get_japanese_restaurant_details,
             name="get_japanese_restaurant_details",
-            description="Fetch Tabelog detail data for one restaurant URL returned by Gurume search.",
+            description=(
+                "Fetch detailed Tabelog data for one restaurant URL returned by Gurume search. "
+                "Use when the user asks about a specific restaurant, menu, course, reviews, hours, address, "
+                "station access, phone, closed days, or reservation information."
+            ),
         ),
         Tool(
             get_tabelog_area_suggestions,
             name="get_tabelog_area_suggestions",
-            description="Resolve ambiguous Japanese area, city, prefecture, or station names before restaurant search.",
+            description=(
+                "Resolve ambiguous Japanese area, city, prefecture, or station text before restaurant search. "
+                "Returns candidate area names, datatypes, IDs, and coordinates. "
+                "This is a lookup helper, not a restaurant recommendation tool."
+            ),
         ),
         Tool(
             get_tabelog_keyword_suggestions,
             name="get_tabelog_keyword_suggestions",
-            description="Resolve food keywords into Tabelog cuisine or restaurant-name suggestions.",
+            description=(
+                "Resolve food, cuisine, or restaurant-name text before restaurant search. "
+                "Use to decide whether a user food query should be searched as a supported cuisine, "
+                "a free-text keyword, or a restaurant name. "
+                "Returns suggestion names, datatypes, and IDs."
+            ),
         ),
         Tool(
             list_tabelog_cuisines,
             name="list_tabelog_cuisines",
-            description="List supported Gurume cuisine filters and Tabelog genre codes.",
+            description=(
+                "List Gurume-supported Tabelog cuisine filters and genre codes. "
+                "Use when checking whether a food query can be passed as the cuisine filter "
+                "instead of a free-text keyword."
+            ),
         ),
     )
 
