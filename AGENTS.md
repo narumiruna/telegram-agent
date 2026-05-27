@@ -23,6 +23,7 @@
 - Keep async Telegram, HTTPX, Pydantic AI, and MCP code non-blocking; use bounded timeouts and explicit error messages for external services.
 - Add new environment settings in `Settings`, `.env.example`, and README configuration docs together.
 - Keep user-facing bot messages in Traditional Chinese unless the surrounding feature intentionally uses another language.
+- For LLM/agent features, prefer instructions and structured tool outputs over ad hoc string manipulation; reserve string handling for input normalization and final display formatting.
 
 ## Testing and verification
 
