@@ -594,6 +594,85 @@ async def test_handle_update_routes_long_action_through_background_task_queue() 
 
 
 @pytest.mark.asyncio
+async def test_background_link_reply_survives_session_log_append_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    telegram = FakeTelegram()
+    proactive = FakeProactiveTool(["背景整理完成"])
+    session_log = SessionLog(tmp_path / "sessions")
+
+    def fail_append_turn(chat_id: int, *, user_text: str, assistant_text: str, synthetic: bool = False) -> None:
+        raise FileExistsError(17, "File exists", ".telegramagent")
+
+    monkeypatch.setattr(session_log, "append_turn", fail_append_turn)
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=FakeAgent(),
+        proactive_tool=proactive,
+        session_log=session_log,
+        task_queue=TaskQueue(),
+    )
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 456},
+                "text": "https://example.com",
+            },
+        }
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert telegram.edited == [(123, 100, "背景整理完成")]
+    assert bot.task_queue is not None
+    assert [task.status for task in bot.task_queue.list_records(chat_id=123)] == ["completed"]
+    assert bot.histories[123] == [("user", "https://example.com"), ("assistant", "背景整理完成")]
+
+
+@pytest.mark.asyncio
+async def test_background_task_failure_uses_generic_user_reply() -> None:
+    class ExplodingProactiveTool:
+        async def handle(
+            self,
+            text: str,
+            *,
+            chat_id: int,
+            agent: object,
+            history: Sequence[tuple[str, str]],
+        ) -> str | None:
+            raise FileExistsError(17, "File exists", ".telegramagent")
+
+    telegram = FakeTelegram()
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=FakeAgent(),
+        proactive_tool=ExplodingProactiveTool(),
+        task_queue=TaskQueue(),
+    )
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 456},
+                "text": "https://example.com",
+            },
+        }
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert telegram.edited == [(123, 100, "任務執行時遇到內部錯誤，沒有完成；請稍後再試。")]
+    assert ".telegramagent" not in telegram.edited[0][2]
+
+
+@pytest.mark.asyncio
 async def test_proactive_tool_falls_back_to_agent_when_no_action_matches() -> None:
     proactive = FakeProactiveTool([None])
     bot = TelegramBot(telegram=FakeTelegram(), agent=FakeAgent(), proactive_tool=proactive)

@@ -35,7 +35,10 @@ async def kabigon_load_url(url: str) -> str:
     than the built-in URL fetcher, including YouTube, articles, PDFs, social posts,
     and audio/video pages. Localhost and private network URLs are blocked.
     """
-    return await load_url_with_kabigon(url)
+    try:
+        return await load_url_with_kabigon(url)
+    except KabigonLoadError as exc:
+        return f"Error: {exc}"
 
 
 async def _load_with_kabigon(url: str) -> str:
