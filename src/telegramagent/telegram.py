@@ -204,6 +204,13 @@ class TelegramApiError(RuntimeError):
     """Raised when Telegram Bot API returns an error response."""
 
 
+_TELEGRAM_API_ERRORS = (httpx.HTTPError, TelegramApiError)
+_LLM_REQUEST_ERRORS = (httpx.HTTPError, AgentRunError)
+_IMAGE_GENERATION_ERRORS = (httpx.HTTPError, TelegramApiError, RuntimeError, ValueError)
+_MESSAGE_DATE_ERRORS = (OSError, OverflowError, ValueError)
+_BACKGROUND_TASK_ERRORS = (asyncio.CancelledError, httpx.HTTPError, TelegramApiError)
+
+
 class TelegramClient:
     def __init__(
         self,
@@ -572,7 +579,7 @@ class TelegramBot:
         if reply_mode == "edit-status" and status_message_id is not None:
             try:
                 await self.telegram.edit_message_text(chat_id, status_message_id, reply)
-            except httpx.HTTPError, TelegramApiError:
+            except _TELEGRAM_API_ERRORS:
                 logger.exception("Failed to edit synthetic event status message; sending a new message instead")
                 await self.telegram.send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
             return
@@ -819,7 +826,7 @@ class TelegramBot:
                 reply = await self.agent.reply(prompt, history=history, images=images)
             else:
                 reply = await self.agent.reply(prompt, history=history)
-        except httpx.HTTPError, AgentRunError:
+        except _LLM_REQUEST_ERRORS:
             logger.exception("LLM request failed")
             if images:
                 return AgentReply(text="AI 服務暫時無法處理這張圖片，可能是目前模型或 provider 不支援圖片理解。")
@@ -842,7 +849,7 @@ class TelegramBot:
                     media_type=photo.media_type,
                     reply_to_message_id=parent_message_id or reply_to_message_id,
                 )
-            except httpx.HTTPError, TelegramApiError:
+            except _TELEGRAM_API_ERRORS:
                 logger.exception("Failed to send agent image artifact")
                 await self.telegram.send_message(
                     chat_id,
@@ -878,7 +885,7 @@ class TelegramBot:
             return [await self._download_image(image_ref) for image_ref in image_refs]
         except TelegramImageError as exc:
             await self.telegram.send_message(chat_id, str(exc), reply_to_message_id=reply_to_message_id)
-        except httpx.HTTPError, TelegramApiError:
+        except _TELEGRAM_API_ERRORS:
             logger.exception("Failed to download Telegram image")
             await self.telegram.send_message(
                 chat_id,
@@ -927,7 +934,7 @@ class TelegramBot:
                 media_type=generated.media_type,
                 reply_to_message_id=reply_to_message_id,
             )
-        except httpx.HTTPError, TelegramApiError, RuntimeError, ValueError:
+        except _IMAGE_GENERATION_ERRORS:
             logger.exception("Image generation failed")
             await self._finish_image_status(
                 chat_id=chat_id,
@@ -958,7 +965,7 @@ class TelegramBot:
             return
         try:
             await self.telegram.edit_message_text(chat_id, status_message_id, text)
-        except httpx.HTTPError, TelegramApiError:
+        except _TELEGRAM_API_ERRORS:
             logger.exception("Failed to edit image generation status message; sending a new message instead")
             await self.telegram.send_message(chat_id, text, reply_to_message_id=fallback_reply_to_message_id)
 
@@ -1412,7 +1419,7 @@ def _telegram_message_date(value: object) -> str | None:
         return None
     try:
         return datetime.fromtimestamp(value, tz=UTC).isoformat()
-    except OSError, OverflowError, ValueError:
+    except _MESSAGE_DATE_ERRORS:
         return None
 
 
@@ -1475,7 +1482,7 @@ def _help_message() -> str:
 def _log_background_task_error(task: asyncio.Task[None]) -> None:
     try:
         task.result()
-    except asyncio.CancelledError, httpx.HTTPError, TelegramApiError:
+    except _BACKGROUND_TASK_ERRORS:
         logger.exception("Background Telegram task failed")
 
 
