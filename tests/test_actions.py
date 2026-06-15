@@ -307,6 +307,44 @@ async def test_x_url_uses_kabigon_fallback_when_builtin_fetch_returns_browser_bl
 
 
 @pytest.mark.asyncio
+async def test_reddit_url_uses_kabigon_fallback_when_builtin_fetch_returns_verification_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://www.reddit.com/r/SonyAlpha/comments/1f9xt2k/regrets_upgrading_to_a7cii/"
+
+    async def allow_host(host: str) -> None:
+        assert host == "www.reddit.com"
+
+    monkeypatch.setattr("telegramagent.actions._assert_public_host", allow_host)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == url
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            text=(
+                "<html><title>Reddit - Please wait for verification</title>"
+                "<body>Please wait for verification</body></html>"
+            ),
+        )
+
+    external_loader = FakeExternalLoader()
+    tool = ProactiveActionTool(
+        http_client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        capabilities=CapabilityRegistry([Capability("external_loader.kabigon", True, "test fallback")]),
+        external_loader=external_loader,
+    )
+    agent = FakeAgent()
+
+    reply = await tool.handle(url, chat_id=123, agent=agent, history=[])
+
+    assert reply == "整理完成"
+    assert external_loader.calls == [url]
+    assert "外部 loader 內容" in agent.prompts[0]
+    assert "Please wait for verification" not in agent.prompts[0]
+
+
+@pytest.mark.asyncio
 async def test_generic_url_blocks_localhost() -> None:
     tool = ProactiveActionTool()
     agent = FakeAgent()

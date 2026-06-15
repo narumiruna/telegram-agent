@@ -561,7 +561,11 @@ class TelegramBot:
                 priority="next",
                 status_message_id=status_message_id,
             )
-            reply = task.output if task.status == "completed" else task.error or "任務沒有完成。"
+            if task.status == "completed":
+                reply = task.output
+            else:
+                logger.warning("Telegram background task {} failed with status={}", task.id, task.status)
+                reply = _task_failure_reply(task.status)
         else:
             reply = await action(object())
 
@@ -680,18 +684,41 @@ class TelegramBot:
         )
 
     def _history(self, chat_id: int) -> list[tuple[str, str]]:
+        memory_history = self.histories.get(chat_id)
         if self.session_log is not None:
-            return self.session_log.history(chat_id, limit=20)
+            try:
+                durable_history = self.session_log.history(chat_id, limit=20)
+            except Exception as exc:  # noqa: BLE001 - broken durable history must not block replies
+                logger.warning(
+                    "Session log history failed for chat_id={} with {}; using in-memory history",
+                    chat_id,
+                    type(exc).__name__,
+                )
+            else:
+                if memory_history:
+                    return [*durable_history, *memory_history][-20:]
+                return durable_history
         return self.histories.setdefault(chat_id, [])
 
     def _record_turn(self, chat_id: int, *, user_text: str, assistant_text: str, synthetic: bool = False) -> None:
         if self.session_log is not None:
-            self.session_log.append_turn(
-                chat_id, user_text=user_text, assistant_text=assistant_text, synthetic=synthetic
-            )
-            return
+            try:
+                self.session_log.append_turn(
+                    chat_id, user_text=user_text, assistant_text=assistant_text, synthetic=synthetic
+                )
+            except Exception as exc:  # noqa: BLE001 - keep the user reply even if durable history fails
+                logger.warning(
+                    "Session log append failed for chat_id={} with {}; falling back to in-memory history",
+                    chat_id,
+                    type(exc).__name__,
+                )
+            else:
+                return
+        self._append_in_memory_history(chat_id, ("user", user_text), ("assistant", assistant_text))
+
+    def _append_in_memory_history(self, chat_id: int, *turns: tuple[str, str]) -> None:
         history = self.histories.setdefault(chat_id, [])
-        history.extend([("user", user_text), ("assistant", assistant_text)])
+        history.extend(turns)
         del history[:-20]
 
     def _record_passive_group_context(
@@ -712,23 +739,32 @@ class TelegramBot:
             return
         message_id = message.get("message_id")
         if self.session_log is not None:
-            self.session_log.append(
-                chat_id,
-                "user",
-                text=passive_text,
-                role="user",
-                message_id=message_id,
-                metadata={"passive_group_context": True},
-            )
-            return
-        history = self.histories.setdefault(chat_id, [])
-        history.append(("user", passive_text))
-        del history[:-20]
+            try:
+                self.session_log.append(
+                    chat_id,
+                    "user",
+                    text=passive_text,
+                    role="user",
+                    message_id=message_id,
+                    metadata={"passive_group_context": True},
+                )
+            except Exception as exc:  # noqa: BLE001 - passive context should not break message handling
+                logger.warning(
+                    "Session log passive append failed for chat_id={} with {}; falling back to in-memory history",
+                    chat_id,
+                    type(exc).__name__,
+                )
+            else:
+                return
+        self._append_in_memory_history(chat_id, ("user", passive_text))
 
     def _clear_history(self, chat_id: int) -> None:
         self.histories.pop(chat_id, None)
         if self.session_log is not None:
-            self.session_log.clear_chat(chat_id)
+            try:
+                self.session_log.clear_chat(chat_id)
+            except Exception as exc:  # noqa: BLE001 - reset should still clear in-memory fallback history
+                logger.warning("Session log clear failed for chat_id={} with {}", chat_id, type(exc).__name__)
 
     async def _handle_builtin_command(
         self,
@@ -1441,6 +1477,12 @@ def _log_background_task_error(task: asyncio.Task[None]) -> None:
         task.result()
     except asyncio.CancelledError, httpx.HTTPError, TelegramApiError:
         logger.exception("Background Telegram task failed")
+
+
+def _task_failure_reply(status: str) -> str:
+    if status == "cancelled":
+        return "任務已取消。"
+    return "任務執行時遇到內部錯誤，沒有完成；請稍後再試。"
 
 
 def _is_management_command(text: str) -> bool:

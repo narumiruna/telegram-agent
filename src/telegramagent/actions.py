@@ -422,8 +422,9 @@ class ProactiveActionTool:
         text = _html_to_text(raw_text) if "text/html" in content_type else raw_text
         text = _collapse_whitespace(html.unescape(text))[: self.settings.max_extracted_chars]
         title = _html_title(raw_text) or parsed.netloc
-        if _is_x_status_url(url) and _looks_like_x_blocker_page(text, title=title):
-            raise ActionError("X 回傳的是 JavaScript/browser unsupported 頁面，不是貼文內容。")
+        blocker_error = _blocker_error_for_url(url, text, title=title)
+        if blocker_error is not None:
+            raise ActionError(blocker_error)
         if not text:
             raise ActionError("這個頁面沒有讀到可摘要的文字內容。")
         return ActionContent(title=title, source_url=url, body=text, content_type="web_page")
@@ -459,12 +460,19 @@ class _TextExtractor(HTMLParser):
 _URL_RE = re.compile(r"https?://[^\s<>()]+", flags=re.IGNORECASE)
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be"}
 _X_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}
+_REDDIT_HOSTS = {"reddit.com", "www.reddit.com", "old.reddit.com", "redd.it", "www.redd.it"}
 _X_BLOCKER_PHRASES = (
     "javascript is not available",
     "javascript is disabled in this browser",
     "enable javascript or switch to a supported browser",
     "switch to a supported browser to continue using x.com",
     "continue using x.com",
+)
+_REDDIT_BLOCKER_PHRASES = (
+    "reddit - please wait for verification",
+    "please wait for verification",
+    "verify you are a human",
+    "verify you're a human",
 )
 _SENSITIVE_ERROR_RE = re.compile(r"(?i)\b(token|api[_-]?key|authorization|cookie|set-cookie|password|secret)=([^\s;]+)")
 _BEARER_ERROR_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
@@ -533,6 +541,10 @@ def _source_type_for_url(url: str) -> Literal["x_post", "webpage", "youtube", "u
     return "unknown"
 
 
+def _is_reddit_url(url: str) -> bool:
+    return (urlparse(url).hostname or "").casefold() in _REDDIT_HOSTS
+
+
 def _is_x_status_url(url: str) -> bool:
     parsed = urlparse(url)
     host = (parsed.hostname or "").casefold()
@@ -555,6 +567,24 @@ def _looks_like_x_blocker_page(
 ) -> bool:
     combined = " ".join(part for part in (title, description, text) if part).casefold()
     return bool(combined) and any(phrase in combined for phrase in _X_BLOCKER_PHRASES)
+
+
+def _looks_like_reddit_blocker_page(
+    text: str | None,
+    *,
+    title: str | None = None,
+    description: str | None = None,
+) -> bool:
+    combined = " ".join(part for part in (title, description, text) if part).casefold()
+    return bool(combined) and any(phrase in combined for phrase in _REDDIT_BLOCKER_PHRASES)
+
+
+def _blocker_error_for_url(url: str, text: str | None, *, title: str | None = None) -> str | None:
+    if _is_x_status_url(url) and _looks_like_x_blocker_page(text, title=title):
+        return "X 回傳的是 JavaScript/browser unsupported 頁面，不是貼文內容。"
+    if _is_reddit_url(url) and _looks_like_reddit_blocker_page(text, title=title):
+        return "Reddit 回傳的是驗證/反機器人頁面，不是貼文內容。"
+    return None
 
 
 def _latest_url_from_history(history: Sequence[tuple[str, str]]) -> str | None:
@@ -807,6 +837,10 @@ def _url_context_from_response(
 
     if source_type == "x_post" and _looks_like_x_blocker_page(text, title=title, description=description):
         raise ActionError("X 回傳的是 JavaScript/browser unsupported 頁面，不是貼文內容。")
+    if (_is_reddit_url(url) or _is_reddit_url(final_url)) and _looks_like_reddit_blocker_page(
+        text, title=title, description=description
+    ):
+        raise ActionError("Reddit 回傳的是驗證/反機器人頁面，不是貼文內容。")
 
     if source_type == "x_post" and author is None:
         x_parts = _x_status_parts(final_url) or _x_status_parts(url)
