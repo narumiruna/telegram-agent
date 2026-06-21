@@ -384,6 +384,7 @@ class TelegramBot:
         bot_username: str | None = None,
         bot_user_id: int | None = None,
         max_consecutive_replies_to_bots: int = 1,
+        group_reply_to_bot_enabled: bool = False,
         group_passive_context_enabled: bool = True,
         topic_end_judge: TopicEndJudge | None = None,
         skill_tool: SkillTool | None = None,
@@ -402,6 +403,7 @@ class TelegramBot:
         self.bot_username = bot_username
         self.bot_user_id = bot_user_id
         self.max_consecutive_replies_to_bots = max_consecutive_replies_to_bots
+        self.group_reply_to_bot_enabled = group_reply_to_bot_enabled
         self.group_passive_context_enabled = group_passive_context_enabled
         self.topic_end_judge = topic_end_judge
         self.skill_tool = skill_tool
@@ -1003,7 +1005,7 @@ class TelegramBot:
     def _should_respond_to_message(self, *, chat: TelegramChat, message: TelegramMessage, text: str) -> bool:
         if chat["type"] not in {"group", "supergroup"}:
             return True
-        return self._mentions_bot(text) or self._is_reply_to_bot(message)
+        return self._mentions_bot(text) or (self.group_reply_to_bot_enabled and self._is_reply_to_bot(message))
 
     def _mentions_bot(self, text: str) -> bool:
         if not self.bot_username:

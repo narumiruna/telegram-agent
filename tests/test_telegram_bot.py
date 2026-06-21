@@ -1032,9 +1032,37 @@ async def test_group_mention_reply_photo_caption_includes_caption_context() -> N
 
 
 @pytest.mark.asyncio
-async def test_group_reply_to_bot_addresses_bot() -> None:
+async def test_group_reply_to_bot_does_not_address_bot_by_default() -> None:
     telegram = FakeTelegram()
     bot = TelegramBot(telegram=telegram, agent=FakeAgent(), bot_username="fakebot", bot_user_id=42)
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 456},
+                "reply_to_message": {"message_id": 10, "from": {"id": 42, "username": "fakebot"}},
+                "text": "繼續說",
+            },
+        }
+    )
+
+    assert telegram.sent == []
+    assert bot.histories[-100] == [("user", "[群組旁聽訊息 from user_id=456] 繼續說")]
+
+
+@pytest.mark.asyncio
+async def test_group_reply_to_bot_addresses_bot_when_enabled() -> None:
+    telegram = FakeTelegram()
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=FakeAgent(),
+        bot_username="fakebot",
+        bot_user_id=42,
+        group_reply_to_bot_enabled=True,
+    )
 
     await bot.handle_update(
         {
@@ -1061,6 +1089,7 @@ async def test_topic_end_judge_can_stop_bot_reply_without_answering() -> None:
         agent=FakeAgent(),
         bot_username="fakebot",
         bot_user_id=42,
+        group_reply_to_bot_enabled=True,
         topic_end_judge=judge,
     )
 
@@ -1090,6 +1119,7 @@ async def test_topic_end_judge_can_continue_bot_reply() -> None:
         agent=FakeAgent(),
         bot_username="fakebot",
         bot_user_id=42,
+        group_reply_to_bot_enabled=True,
         topic_end_judge=judge,
     )
 
@@ -1113,7 +1143,13 @@ async def test_topic_end_judge_can_continue_bot_reply() -> None:
 @pytest.mark.asyncio
 async def test_bot_to_bot_loop_stops_after_one_reply_without_judge() -> None:
     telegram = FakeTelegram()
-    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), bot_username="fakebot", bot_user_id=42)
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=FakeAgent(),
+        bot_username="fakebot",
+        bot_user_id=42,
+        group_reply_to_bot_enabled=True,
+    )
 
     await bot.handle_update(
         {
@@ -1146,7 +1182,13 @@ async def test_bot_to_bot_loop_stops_after_one_reply_without_judge() -> None:
 @pytest.mark.asyncio
 async def test_human_message_resets_bot_to_bot_loop_guard() -> None:
     telegram = FakeTelegram()
-    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), bot_username="fakebot", bot_user_id=42)
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=FakeAgent(),
+        bot_username="fakebot",
+        bot_user_id=42,
+        group_reply_to_bot_enabled=True,
+    )
 
     bot.bot_reply_streaks[-100] = 1
     await bot.handle_update(
@@ -1184,6 +1226,7 @@ async def test_bot_to_bot_replies_can_be_fully_disabled() -> None:
         agent=FakeAgent(),
         bot_username="fakebot",
         bot_user_id=42,
+        group_reply_to_bot_enabled=True,
         max_consecutive_replies_to_bots=0,
     )
 

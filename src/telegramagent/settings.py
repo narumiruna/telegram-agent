@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     bot_token: str = Field(default="", alias="BOT_TOKEN")
     bot_whitelist: Annotated[set[int], NoDecode] = Field(default_factory=set, alias="BOT_WHITELIST")
     bot_max_consecutive_replies_to_bots: int = Field(default=1, ge=0, alias="BOT_MAX_CONSECUTIVE_REPLIES_TO_BOTS")
+    bot_group_reply_to_bot_enabled: bool = Field(default=False, alias="BOT_GROUP_REPLY_TO_BOT_ENABLED")
     bot_group_passive_context_enabled: bool = Field(default=True, alias="BOT_GROUP_PASSIVE_CONTEXT_ENABLED")
     bot_skills_dir: Path = Field(default=Path(".agents/skills"), alias="BOT_SKILLS_DIR")
     bot_enabled_skills: Annotated[set[str], NoDecode] = Field(default_factory=set, alias="BOT_ENABLED_SKILLS")

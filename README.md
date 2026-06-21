@@ -8,7 +8,7 @@ runtime tools such as kabigon, Yahoo Finance MCP, and container-local file tools
 
 ## ✨ Highlights
 
-- **Telegram-native behavior**: private chat replies, group mention handling, reply-to-bot handling, and bot-loop guards.
+- **Telegram-native behavior**: private chat replies, group mention handling, optional reply-to-bot handling, and bot-loop guards.
 - **Reply context**: when mentioned in a group reply, the bot includes the replied message sender, type, date, text/caption,
   and URL context in the LLM prompt.
 - **URL enrichment**: HTTP(S), YouTube, X/Twitter, and general webpages are fetched or loaded through kabigon when possible.
@@ -93,7 +93,8 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | --- | --- | --- |
 | `BOT_TOKEN` | empty | Telegram Bot API token from BotFather. |
 | `BOT_WHITELIST` | empty | Comma-separated chat IDs or user IDs allowed to use the bot. Empty allows everyone. |
-| `BOT_MAX_CONSECUTIVE_REPLIES_TO_BOTS` | `1` | Safety limit for bot-to-bot reply chains. Use `0` to never reply to bots. |
+| `BOT_MAX_CONSECUTIVE_REPLIES_TO_BOTS` | `1` | Safety limit for enabled bot-to-bot reply chains. Use `0` to never reply to bots. |
+| `BOT_GROUP_REPLY_TO_BOT_ENABLED` | `false` | In groups, allow a direct reply to a bot message to address the bot without `@mention`. |
 | `BOT_GROUP_PASSIVE_CONTEXT_ENABLED` | `true` | Store unaddressed group messages as passive context without replying. |
 
 ### Model
@@ -157,7 +158,7 @@ In private chats, the bot replies to normal text, commands, images, and supporte
 To avoid interrupting group conversations, the bot replies only when:
 
 1. The message mentions the bot, for example `@your_bot 你怎麼看？`
-2. The message directly replies to a bot message
+2. `BOT_GROUP_REPLY_TO_BOT_ENABLED=true` and the message directly replies to a bot message
 
 When `BOT_GROUP_PASSIVE_CONTEXT_ENABLED=true`, unaddressed group messages are stored as passive context without calling
 the LLM. The next addressed message can then use recent group context.

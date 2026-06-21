@@ -329,6 +329,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         agent=agent,
         whitelist=settings.bot_whitelist,
         max_consecutive_replies_to_bots=settings.bot_max_consecutive_replies_to_bots,
+        group_reply_to_bot_enabled=settings.bot_group_reply_to_bot_enabled,
         group_passive_context_enabled=settings.bot_group_passive_context_enabled,
         topic_end_judge=topic_end_judge,
         skill_tool=SkillManagementTool(
