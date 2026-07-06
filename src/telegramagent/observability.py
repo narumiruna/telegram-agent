@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from importlib import import_module
 from typing import Protocol
 
 import httpx
@@ -8,6 +10,9 @@ import logfire
 from loguru import logger
 
 _TELEGRAM_BOT_TOKEN_MARKER = "/bot"
+_TELEGRAM_API_EXCLUDED_URL_PATTERN = r"https://api\.telegram\.org/bot.*"
+_OPENAI_AGENTS_DISABLE_TRACING_ENV = "OPENAI_AGENTS_DISABLE_TRACING"
+_OTEL_HTTPX_EXCLUDED_URLS_ENV = "OTEL_PYTHON_HTTPX_EXCLUDED_URLS"
 _REDACTED_QUERY_VALUE = "[redacted]"
 
 
@@ -32,6 +37,9 @@ def configure_logfire(config: LogfireConfig, *, verbose: bool = False) -> bool:
     """Configure Logfire tracing and log forwarding when a token is available."""
     if not config.enabled or not config.token:
         return False
+
+    _disable_openai_agents_default_tracing()
+    _ensure_httpx_excluded_url(_TELEGRAM_API_EXCLUDED_URL_PATTERN)
 
     logfire.configure(
         token=config.token,
@@ -59,6 +67,33 @@ def configure_logfire(config: LogfireConfig, *, verbose: bool = False) -> bool:
         config.include_content,
     )
     return True
+
+
+def _disable_openai_agents_default_tracing() -> None:
+    os.environ.setdefault(_OPENAI_AGENTS_DISABLE_TRACING_ENV, "1")
+    if not _env_flag_enabled(os.environ.get(_OPENAI_AGENTS_DISABLE_TRACING_ENV)):
+        return
+    try:
+        agents_module = import_module("agents")
+    except ImportError:
+        return
+    set_tracing_disabled = getattr(agents_module, "set_tracing_disabled", None)
+    if callable(set_tracing_disabled):
+        set_tracing_disabled(True)
+
+
+def _ensure_httpx_excluded_url(pattern: str) -> None:
+    existing = os.environ.get(_OTEL_HTTPX_EXCLUDED_URLS_ENV, "")
+    patterns = [entry.strip() for entry in existing.split(",") if entry.strip()]
+    if pattern not in patterns:
+        patterns.append(pattern)
+    os.environ[_OTEL_HTTPX_EXCLUDED_URLS_ENV] = ",".join(patterns)
+
+
+def _env_flag_enabled(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().casefold() not in {"", "0", "false", "no", "off"}
 
 
 def _redact_httpx_request_span(span: _Span, request: _HttpxRequest) -> None:

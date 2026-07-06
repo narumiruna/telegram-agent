@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import httpx
 
 from telegramagent.observability import LogfireConfig
@@ -53,6 +55,8 @@ def test_configure_logfire_noops_without_token(monkeypatch) -> None:
 def test_configure_logfire_sets_integrations(monkeypatch) -> None:
     fake_logfire = FakeLogfire()
     fake_logger = FakeLogger()
+    monkeypatch.delenv("OPENAI_AGENTS_DISABLE_TRACING", raising=False)
+    monkeypatch.delenv("OTEL_PYTHON_HTTPX_EXCLUDED_URLS", raising=False)
     monkeypatch.setattr("telegramagent.observability.logfire", fake_logfire)
     monkeypatch.setattr("telegramagent.observability.logger", fake_logger)
 
@@ -87,6 +91,21 @@ def test_configure_logfire_sets_integrations(monkeypatch) -> None:
     assert fake_logfire.calls[2][1] == {"include_content": True}
     assert fake_logger.add_calls == [{"sink": "fake-sink", "format": "{message}", "level": "DEBUG"}]
     assert fake_logger.info_calls
+    assert "api\\.telegram\\.org/bot" in os.environ["OTEL_PYTHON_HTTPX_EXCLUDED_URLS"]
+    assert os.environ["OPENAI_AGENTS_DISABLE_TRACING"] == "1"
+
+
+def test_configure_logfire_preserves_existing_httpx_excluded_urls(monkeypatch) -> None:
+    fake_logfire = FakeLogfire()
+    fake_logger = FakeLogger()
+    monkeypatch.setenv("OTEL_PYTHON_HTTPX_EXCLUDED_URLS", "https://example.invalid/.*")
+    monkeypatch.setattr("telegramagent.observability.logfire", fake_logfire)
+    monkeypatch.setattr("telegramagent.observability.logger", fake_logger)
+
+    assert configure_logfire(LogfireConfig(token="secret-token")) is True
+
+    excluded_urls = os.environ["OTEL_PYTHON_HTTPX_EXCLUDED_URLS"].split(",")
+    assert excluded_urls == ["https://example.invalid/.*", "https://api\\.telegram\\.org/bot.*"]
 
 
 class FakeSpan:

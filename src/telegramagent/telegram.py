@@ -548,11 +548,18 @@ class TelegramBot:
     ) -> None:
         status_message_id: int | None = None
         if reply_mode == "edit-status":
-            status_message_id = await self.telegram.send_message(
-                chat_id,
-                "處理中…",
-                reply_to_message_id=reply_to_message_id,
-            )
+            try:
+                status_message_id = await self.telegram.send_message(
+                    chat_id,
+                    "處理中…",
+                    reply_to_message_id=reply_to_message_id,
+                )
+            except _TELEGRAM_API_ERRORS as exc:
+                logger.warning(
+                    "Failed to send synthetic status message with {}; skipping background task",
+                    type(exc).__name__,
+                )
+                return
 
         async def action(_task: object) -> str:
             reply = await self._build_response(
@@ -579,11 +586,20 @@ class TelegramBot:
         if reply_mode == "edit-status" and status_message_id is not None:
             try:
                 await self.telegram.edit_message_text(chat_id, status_message_id, reply)
-            except _TELEGRAM_API_ERRORS:
-                logger.exception("Failed to edit synthetic event status message; sending a new message instead")
-                await self.telegram.send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+            except _TELEGRAM_API_ERRORS as exc:
+                logger.warning(
+                    "Failed to edit synthetic event status message with {}; sending a new message instead",
+                    type(exc).__name__,
+                )
+                try:
+                    await self.telegram.send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+                except _TELEGRAM_API_ERRORS as send_exc:
+                    logger.warning("Failed to send synthetic fallback reply with {}", type(send_exc).__name__)
             return
-        await self.telegram.send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+        try:
+            await self.telegram.send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+        except _TELEGRAM_API_ERRORS as exc:
+            logger.warning("Failed to send synthetic reply with {}", type(exc).__name__)
 
     async def _build_response(
         self,

@@ -673,6 +673,62 @@ async def test_background_task_failure_uses_generic_user_reply() -> None:
 
 
 @pytest.mark.asyncio
+async def test_background_status_send_failure_does_not_log_task_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailingStatusTelegram(FakeTelegram):
+        async def send_message(
+            self,
+            chat_id: int,
+            text: str,
+            *,
+            reply_to_message_id: int | None = None,
+        ) -> int | None:
+            raise httpx.ConnectError("network unavailable")
+
+    class FakeLogger:
+        def __init__(self) -> None:
+            self.warning_calls: list[tuple[object, ...]] = []
+            self.exception_calls: list[tuple[object, ...]] = []
+
+        def debug(self, *args: object) -> None:
+            pass
+
+        def info(self, *args: object) -> None:
+            pass
+
+        def warning(self, *args: object) -> None:
+            self.warning_calls.append(args)
+
+        def exception(self, *args: object) -> None:
+            self.exception_calls.append(args)
+
+    fake_logger = FakeLogger()
+    monkeypatch.setattr("telegramagent.telegram.logger", fake_logger)
+    bot = TelegramBot(
+        telegram=FailingStatusTelegram(),
+        agent=FakeAgent(),
+        proactive_tool=FakeProactiveTool(["背景整理完成"]),
+        task_queue=TaskQueue(),
+    )
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 456},
+                "text": "https://example.com",
+            },
+        }
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert fake_logger.exception_calls == []
+    assert fake_logger.warning_calls
+
+
+@pytest.mark.asyncio
 async def test_proactive_tool_falls_back_to_agent_when_no_action_matches() -> None:
     proactive = FakeProactiveTool([None])
     bot = TelegramBot(telegram=FakeTelegram(), agent=FakeAgent(), proactive_tool=proactive)
