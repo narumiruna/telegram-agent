@@ -447,22 +447,62 @@ async def test_risky_action_requires_confirmation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_redirect_is_not_followed(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_safe_redirect_is_followed(monkeypatch: pytest.MonkeyPatch) -> None:
     async def allow_host(host: str) -> None:
         assert host == "example.com"
 
     monkeypatch.setattr("telegramagent.actions._assert_public_host", allow_host)
 
+    requests: list[str] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(302, headers={"location": "http://localhost/admin"})
+        requests.append(str(request.url))
+        if request.url.path == "/redirect":
+            return httpx.Response(302, headers={"location": "/final"})
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            text="<html><title>Final</title><body><p>Redirected article text</p></body></html>",
+        )
 
     tool = ProactiveActionTool(http_client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     agent = FakeAgent()
 
     reply = await tool.handle("https://example.com/redirect", chat_id=123, agent=agent, history=[])
 
+    assert reply == "整理完成"
+    assert requests == ["https://example.com/redirect", "https://example.com/final"]
+    assert "來源網址: https://example.com/final" in agent.prompts[0]
+    assert "Redirected article text" in agent.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_private_redirect_target_is_blocked_without_external_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def guard_public_host(host: str) -> None:
+        if host == "localhost":
+            raise ActionError("基於安全限制，我不會自動讀取 localhost、私有網路或雲端 metadata 位址。")
+        assert host == "example.com"
+
+    monkeypatch.setattr("telegramagent.actions._assert_public_host", guard_public_host)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "http://localhost/admin"})
+
+    external_loader = FakeExternalLoader()
+    tool = ProactiveActionTool(
+        http_client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        capabilities=CapabilityRegistry([Capability("external_loader.kabigon", True, "test fallback")]),
+        external_loader=external_loader,
+    )
+    agent = FakeAgent()
+
+    reply = await tool.handle("https://example.com/redirect", chat_id=123, agent=agent, history=[])
+
     assert reply is not None
-    assert "不自動跟隨 redirect" in reply
+    assert "localhost、私有網路" in reply
+    assert external_loader.calls == []
     assert agent.prompts == []
 
 

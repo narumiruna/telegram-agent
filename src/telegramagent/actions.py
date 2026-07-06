@@ -359,7 +359,9 @@ class ProactiveActionTool:
             "只能讀取 http 或 https",
             "沒有有效主機名稱",
             "localhost、私有網路",
-            "不自動跟隨 redirect",
+            "重新導向但沒有提供 Location",
+            "重新導向到不支援或無效",
+            "重新導向太多次",
         )
         return not any(fragment in message for fragment in hard_stop_fragments)
 
@@ -393,23 +395,14 @@ class ProactiveActionTool:
         if host is None:
             raise ActionError("這個連結沒有有效主機名稱，我沒辦法自動讀取。")
         if self.http_client_factory is None:
-            response = await _fetch_public_url(
+            final_url, response = await _fetch_public_url_follow_redirects(
                 url,
                 timeout_seconds=self.settings.url_timeout_seconds,
                 max_bytes=self.settings.max_extracted_chars * 8,
             )
         else:
-            await _assert_public_host(host)
-            async with self.http_client_factory() as client:
-                httpx_response = await client.get(url)
-            response = FetchedResponse(
-                status_code=httpx_response.status_code,
-                headers={key.casefold(): value for key, value in httpx_response.headers.items()},
-                content=httpx_response.content,
-            )
+            final_url, response = await self._fetch_url_with_http_client_follow_redirects(url)
 
-        if 300 <= response.status_code < 400:
-            raise ActionError("這個連結會重新導向。為了避免 SSRF/跳轉風險，我先不自動跟隨 redirect。")
         if response.status_code >= 400:
             raise ActionError(f"這個連結回傳 HTTP {response.status_code}，我目前讀不到內容。")
         content_type = response.headers.get("content-type", "")
@@ -421,13 +414,52 @@ class ProactiveActionTool:
         raw_text = response.text
         text = _html_to_text(raw_text) if "text/html" in content_type else raw_text
         text = _collapse_whitespace(html.unescape(text))[: self.settings.max_extracted_chars]
-        title = _html_title(raw_text) or parsed.netloc
-        blocker_error = _blocker_error_for_url(url, text, title=title)
+        final_parsed = urlparse(final_url)
+        title = _html_title(raw_text) or final_parsed.netloc or parsed.netloc
+        blocker_error = _blocker_error_for_url(url, text, title=title) or _blocker_error_for_url(
+            final_url, text, title=title
+        )
         if blocker_error is not None:
             raise ActionError(blocker_error)
         if not text:
             raise ActionError("這個頁面沒有讀到可摘要的文字內容。")
-        return ActionContent(title=title, source_url=url, body=text, content_type="web_page")
+        return ActionContent(title=title, source_url=final_url, body=text, content_type="web_page")
+
+    async def _fetch_url_with_http_client_follow_redirects(
+        self, url: str, *, max_redirects: int = 3
+    ) -> tuple[str, FetchedResponse]:
+        http_client_factory = self.http_client_factory
+        if http_client_factory is None:
+            raise ActionError("HTTP client factory is not configured.")
+
+        current_url = url
+        async with http_client_factory() as client:
+            for _redirect_count in range(max_redirects + 1):
+                parsed = urlparse(current_url)
+                if parsed.scheme.casefold() not in self.settings.allowed_schemes or parsed.hostname is None:
+                    raise ActionError("這個連結重新導向到不支援或無效的 URL。")
+                await _assert_public_host(parsed.hostname)
+
+                httpx_response = await client.get(current_url, follow_redirects=False)
+                response = FetchedResponse(
+                    status_code=httpx_response.status_code,
+                    headers={key.casefold(): value for key, value in httpx_response.headers.items()},
+                    content=httpx_response.content,
+                )
+                if not 300 <= response.status_code < 400:
+                    return current_url, response
+
+                location = response.headers.get("location")
+                if not location:
+                    raise ActionError("這個連結重新導向但沒有提供 Location header。")
+                next_url = urljoin(current_url, location)
+                next_parsed = urlparse(next_url)
+                if next_parsed.scheme.casefold() not in self.settings.allowed_schemes or next_parsed.hostname is None:
+                    raise ActionError("這個連結重新導向到不支援或無效的 URL。")
+                await _assert_public_host(next_parsed.hostname)
+                current_url = next_url
+
+        raise ActionError("這個連結重新導向太多次，我先不自動讀取。")
 
 
 class ActionError(RuntimeError):
