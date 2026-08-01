@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 import httpx
 
@@ -80,7 +81,14 @@ def test_configure_logfire_sets_integrations(monkeypatch) -> None:
         "environment": "prod",
         "console": False,
         "inspect_arguments": False,
+        "scrubbing": fake_logfire.calls[0][1]["scrubbing"],
     }
+    scrub_patterns = fake_logfire.calls[0][1]["scrubbing"].extra_patterns
+    assert scrub_patterns is not None
+    assert any(
+        re.search(pattern, "request to https://mcp.firecrawl.dev/fc-secret/key/v2/mcp failed")
+        for pattern in scrub_patterns
+    )
     assert fake_logfire.calls[1][1] == {
         "capture_headers": False,
         "capture_request_body": False,
@@ -140,6 +148,22 @@ def test_redact_httpx_request_span_removes_telegram_token_and_query_values() -> 
     assert "secret-token" not in str(span.attributes)
     assert "token=secret" not in str(span.attributes)
     assert "safe=yes" not in str(span.attributes)
+
+
+def test_redact_httpx_request_span_removes_firecrawl_mcp_key() -> None:
+    span = FakeSpan()
+
+    _redact_httpx_request_span(
+        span,
+        FakeRequest("https://mcp.firecrawl.dev/fc-secret%2Fkey/v2/mcp"),
+    )
+
+    assert span.attributes["http.url"] == "https://mcp.firecrawl.dev/[redacted]/v2/mcp"
+    assert span.attributes["url.full"] == span.attributes["http.url"]
+    assert span.attributes["http.target"] == "/[redacted]/v2/mcp"
+    assert span.attributes["url.path"] == "/[redacted]/v2/mcp"
+    assert "fc-secret" not in str(span.attributes)
+    assert "%2Fkey" not in str(span.attributes)
 
 
 def test_redact_httpx_request_span_removes_non_secret_query_values() -> None:

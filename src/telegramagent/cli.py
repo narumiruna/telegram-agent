@@ -31,9 +31,12 @@ from telegramagent.gurume_tools import build_gurume_tools
 from telegramagent.images import OpenAIImageGenerator
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
+from telegramagent.mcp import FirecrawlMcpConfig
 from telegramagent.mcp import YFinanceMcpConfig
+from telegramagent.mcp import build_firecrawl_mcp_toolsets
 from telegramagent.mcp import build_yfinance_mcp_toolsets
 from telegramagent.mcp import command_available
+from telegramagent.mcp import redact_firecrawl_mcp_url
 from telegramagent.observability import LogfireConfig
 from telegramagent.observability import configure_logfire
 from telegramagent.session import SessionLog
@@ -70,10 +73,14 @@ class LoguruInterceptHandler(logging.Handler):
         )
 
 
+def _write_redacted_stderr(message: object) -> None:
+    sys.stderr.write(_redact_log_message(str(message)))
+
+
 def configure_logging(verbose: bool = False) -> None:
     logger.remove()
     logger.add(
-        sys.stderr,
+        _write_redacted_stderr,
         level="DEBUG" if verbose else "INFO",
         format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {name}:{line} - {message}",
         backtrace=False,
@@ -88,6 +95,7 @@ def configure_logging(verbose: bool = False) -> None:
 
 
 def _redact_log_message(message: str) -> str:
+    message = redact_firecrawl_mcp_url(message)
     message = _TELEGRAM_BOT_TOKEN_RE.sub("/bot[redacted]", message)
     message = _SENSITIVE_LOG_VALUE_RE.sub(lambda match: f"{match.group(1)}=[redacted]", message)
     return _BEARER_LOG_RE.sub("Bearer [redacted]", message)
@@ -105,6 +113,49 @@ def _stdio_mcp_unavailable_reason(config: YFinanceMcpConfig, *, available: bool)
     if not command_available(config.command):
         return f"command not found: {config.command}"
     return "not configured"
+
+
+def _firecrawl_mcp_unavailable_reason(config: FirecrawlMcpConfig, *, available: bool) -> str:
+    if available:
+        return ""
+    if not config.enabled:
+        return "disabled"
+    if not config.api_key or not config.api_key.strip():
+        return "FIRECRAWL_API_KEY not configured"
+    return "not configured"
+
+
+def _mcp_toolsets_from_settings(settings: Settings) -> tuple[tuple[Any, ...], tuple[Capability, ...]]:
+    yfinance_config = YFinanceMcpConfig(
+        enabled=settings.bot_yfinance_mcp_enabled,
+        command=settings.bot_yfinance_mcp_command,
+        args=settings.bot_yfinance_mcp_args,
+        init_timeout_seconds=settings.bot_yfinance_mcp_init_timeout_seconds,
+        read_timeout_seconds=settings.bot_yfinance_mcp_read_timeout_seconds,
+    )
+    yfinance_toolsets = build_yfinance_mcp_toolsets(yfinance_config)
+    firecrawl_config = FirecrawlMcpConfig(
+        enabled=settings.bot_firecrawl_mcp_enabled,
+        api_key=settings.firecrawl_api_key,
+        init_timeout_seconds=settings.bot_firecrawl_mcp_init_timeout_seconds,
+        read_timeout_seconds=settings.bot_firecrawl_mcp_read_timeout_seconds,
+    )
+    firecrawl_toolsets = build_firecrawl_mcp_toolsets(firecrawl_config)
+    capabilities = (
+        Capability(
+            "mcp.yfinance",
+            bool(yfinance_toolsets),
+            "Yahoo Finance market data MCP tools via yfmcp",
+            _yfinance_mcp_unavailable_reason(yfinance_config, available=bool(yfinance_toolsets)),
+        ),
+        Capability(
+            "mcp.firecrawl",
+            bool(firecrawl_toolsets),
+            "Firecrawl hosted web search, scraping, crawling, extraction, and research MCP tools",
+            _firecrawl_mcp_unavailable_reason(firecrawl_config, available=bool(firecrawl_toolsets)),
+        ),
+    )
+    return (*yfinance_toolsets, *firecrawl_toolsets), capabilities
 
 
 def _image_generation_unavailable_reason(settings: Settings) -> str:
@@ -179,22 +230,9 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         logger.info("Loaded {} Agent Skill(s) from {}", len(skills), settings.bot_skills_dir)
 
     capabilities = CapabilityRegistry()
-    yfinance_mcp_config = YFinanceMcpConfig(
-        enabled=settings.bot_yfinance_mcp_enabled,
-        command=settings.bot_yfinance_mcp_command,
-        args=settings.bot_yfinance_mcp_args,
-        init_timeout_seconds=settings.bot_yfinance_mcp_init_timeout_seconds,
-        read_timeout_seconds=settings.bot_yfinance_mcp_read_timeout_seconds,
-    )
-    yfinance_mcp_toolsets = build_yfinance_mcp_toolsets(yfinance_mcp_config)
-    capabilities.set(
-        Capability(
-            "mcp.yfinance",
-            bool(yfinance_mcp_toolsets),
-            "Yahoo Finance market data MCP tools via yfmcp",
-            _yfinance_mcp_unavailable_reason(yfinance_mcp_config, available=bool(yfinance_mcp_toolsets)),
-        )
-    )
+    mcp_toolsets, mcp_capabilities = _mcp_toolsets_from_settings(settings)
+    for mcp_capability in mcp_capabilities:
+        capabilities.set(mcp_capability)
     capabilities.set(
         Capability(
             "image_input.telegram",
@@ -227,7 +265,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         soul=soul,
         capability_summary=capabilities.summary(),
         kabigon_tool_timeout_seconds=settings.bot_kabigon_timeout_seconds,
-        mcp_toolsets=tuple(yfinance_mcp_toolsets),
+        mcp_toolsets=mcp_toolsets,
         tools=(*gurume_tools, *container_tools),
     )
     topic_end_judge = TopicEndAgent(

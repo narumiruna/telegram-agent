@@ -93,6 +93,20 @@ def test_yfinance_mcp_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_yfinance_mcp_read_timeout_seconds == 30
 
 
+def test_firecrawl_mcp_settings_parse_env(monkeypatch) -> None:
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test")
+    monkeypatch.setenv("BOT_FIRECRAWL_MCP_ENABLED", "false")
+    monkeypatch.setenv("BOT_FIRECRAWL_MCP_INIT_TIMEOUT_SECONDS", "6")
+    monkeypatch.setenv("BOT_FIRECRAWL_MCP_READ_TIMEOUT_SECONDS", "45")
+
+    settings = Settings()
+
+    assert settings.firecrawl_api_key == "fc-test"
+    assert settings.bot_firecrawl_mcp_enabled is False
+    assert settings.bot_firecrawl_mcp_init_timeout_seconds == 6
+    assert settings.bot_firecrawl_mcp_read_timeout_seconds == 45
+
+
 def test_gurume_tools_settings_default_to_enabled() -> None:
     settings = Settings.model_validate({})
 

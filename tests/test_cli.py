@@ -2,7 +2,44 @@ from __future__ import annotations
 
 import logging
 
+from telegramagent.cli import _mcp_toolsets_from_settings
 from telegramagent.cli import configure_logging
+from telegramagent.settings import Settings
+
+
+def test_mcp_toolsets_from_settings_registers_firecrawl_alongside_runtime_capability() -> None:
+    settings = Settings.model_validate(
+        {
+            "BOT_YFINANCE_MCP_ENABLED": True,
+            "BOT_YFINANCE_MCP_COMMAND": "python",
+            "FIRECRAWL_API_KEY": "fc-test",
+            "BOT_FIRECRAWL_MCP_ENABLED": True,
+        }
+    )
+
+    toolsets, capabilities = _mcp_toolsets_from_settings(settings)
+
+    assert [toolset.id for toolset in toolsets] == ["yfinance", "firecrawl"]
+    firecrawl_capability = next(item for item in capabilities if item.name == "mcp.firecrawl")
+    assert firecrawl_capability.available is True
+    assert firecrawl_capability.reason == ""
+
+
+def test_mcp_toolsets_from_settings_reports_missing_firecrawl_key() -> None:
+    settings = Settings.model_validate(
+        {
+            "BOT_YFINANCE_MCP_ENABLED": False,
+            "FIRECRAWL_API_KEY": None,
+            "BOT_FIRECRAWL_MCP_ENABLED": True,
+        }
+    )
+
+    toolsets, capabilities = _mcp_toolsets_from_settings(settings)
+
+    assert toolsets == ()
+    firecrawl_capability = next(item for item in capabilities if item.name == "mcp.firecrawl")
+    assert firecrawl_capability.available is False
+    assert firecrawl_capability.reason == "FIRECRAWL_API_KEY not configured"
 
 
 def test_configure_logging_routes_stdlib_logging_to_loguru(capsys) -> None:
@@ -41,6 +78,31 @@ def test_configure_logging_redacts_sensitive_stdlib_log_values(capsys) -> None:
         assert "Bearer [redacted]" in captured.err
         assert "secret-token" not in captured.err
         assert "bearer-secret" not in captured.err
+    finally:
+        root_logger.handlers = original_handlers
+        root_logger.setLevel(original_level)
+        logging.captureWarnings(False)
+
+
+def test_configure_logging_redacts_firecrawl_mcp_key_from_url(capsys) -> None:
+    root_logger = logging.getLogger()
+    original_handlers = [*root_logger.handlers]
+    original_level = root_logger.level
+
+    try:
+        configure_logging(verbose=True)
+
+        logging.getLogger("kabigon.loader").debug(
+            "Request failed for url 'https://mcp.firecrawl.dev/fc-secret-key/v2/mcp'."
+        )
+        try:
+            raise RuntimeError("POST https://mcp.firecrawl.dev/fc-secret-key/v2/mcp failed")
+        except RuntimeError:
+            logging.getLogger("kabigon.loader").exception("Firecrawl request failed")
+
+        captured = capsys.readouterr()
+        assert "https://mcp.firecrawl.dev/[redacted]/v2/mcp" in captured.err
+        assert "fc-secret-key" not in captured.err
     finally:
         root_logger.handlers = original_handlers
         root_logger.setLevel(original_level)

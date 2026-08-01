@@ -7,7 +7,11 @@ from typing import Protocol
 
 import httpx
 import logfire
+from logfire import ScrubbingOptions
 from loguru import logger
+
+from telegramagent.mcp import FIRECRAWL_MCP_LOGFIRE_SCRUB_PATTERN
+from telegramagent.mcp import redact_firecrawl_mcp_url
 
 _TELEGRAM_BOT_TOKEN_MARKER = "/bot"
 _TELEGRAM_API_EXCLUDED_URL_PATTERN = r"https://api\.telegram\.org/bot.*"
@@ -48,6 +52,7 @@ def configure_logfire(config: LogfireConfig, *, verbose: bool = False) -> bool:
         environment=config.environment,
         console=False,
         inspect_arguments=False,
+        scrubbing=ScrubbingOptions(extra_patterns=[FIRECRAWL_MCP_LOGFIRE_SCRUB_PATTERN]),
     )
     logfire.instrument_httpx(
         capture_headers=False,
@@ -116,7 +121,8 @@ def _set_redacted_url_attributes(span: _Span, url: httpx.URL) -> None:
 
 
 def _redact_url_text(value: str) -> str:
-    safe_value = _redact_telegram_bot_token(value)
+    safe_value = redact_firecrawl_mcp_url(value)
+    safe_value = _redact_telegram_bot_token(safe_value)
     path, separator, query = safe_value.partition("?")
     if not separator:
         return path

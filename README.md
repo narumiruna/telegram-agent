@@ -4,7 +4,7 @@ Telegram AI bot powered by the Telegram Bot API, Pydantic AI, and an OpenAI-comp
 
 It can chat in private messages, behave politely in groups, read replied messages, enrich URLs with extracted content,
 summarize links, understand Telegram images, generate images, publish long replies to Telegraph, and expose optional
-runtime tools such as kabigon, Yahoo Finance MCP, and container-local file tools.
+runtime tools such as kabigon, Yahoo Finance MCP, Firecrawl MCP, and container-local file tools.
 
 ## ✨ Highlights
 
@@ -140,6 +140,10 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `BOT_YFINANCE_MCP_ENABLED` | `true` | Register Yahoo Finance MCP tools through `yfmcp`. |
+| `FIRECRAWL_API_KEY` | empty | Authenticate the hosted Firecrawl MCP endpoint and Firecrawl-backed kabigon loading. |
+| `BOT_FIRECRAWL_MCP_ENABLED` | `true` | Register hosted Firecrawl MCP tools when `FIRECRAWL_API_KEY` is configured. |
+| `BOT_FIRECRAWL_MCP_INIT_TIMEOUT_SECONDS` | `10` | Firecrawl MCP initialization timeout. |
+| `BOT_FIRECRAWL_MCP_READ_TIMEOUT_SECONDS` | `120` | Firecrawl MCP read timeout. |
 | `BOT_GURUME_TOOLS_ENABLED` | `true` | Register direct Gurume Python tools for Tabelog restaurant recommendations/search. |
 | `BOT_EVENTS_ENABLED` | `false` | Enable file-backed immediate events. |
 | `BOT_CONTAINER_TOOLS_ENABLED` | `true` in Compose | Register Docker-only local tools when running inside a container. |
@@ -393,6 +397,15 @@ When `BOT_YFINANCE_MCP_ENABLED=true`, the bot registers the `yfmcp` MCP toolset 
 statement, holder, sector, news, and price-chart lookups.
 
 Financial responses are informational only and are not investment advice.
+
+## 🔥 Firecrawl MCP
+
+When `BOT_FIRECRAWL_MCP_ENABLED=true` and `FIRECRAWL_API_KEY` is configured, the bot registers Firecrawl's hosted
+Streamable HTTP MCP toolset at `https://mcp.firecrawl.dev/{FIRECRAWL_API_KEY}/v2/mcp`. This provides web search,
+scraping, crawling, extraction, interaction, and research tools without running a separate MCP process.
+
+The deploy workflow already writes the `FIRECRAWL_API_KEY` GitHub secret to the runtime `.env`. Keep the key out of
+committed files; endpoint URLs are redacted in application logs and HTTP trace attributes.
 
 ## 🍽️ Gurume Restaurant Tools
 

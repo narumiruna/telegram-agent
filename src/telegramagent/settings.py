@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     bot_yfinance_mcp_read_timeout_seconds: float = Field(
         default=120.0, gt=0, alias="BOT_YFINANCE_MCP_READ_TIMEOUT_SECONDS"
     )
+    firecrawl_api_key: str | None = Field(default=None, alias="FIRECRAWL_API_KEY")
+    bot_firecrawl_mcp_enabled: bool = Field(default=True, alias="BOT_FIRECRAWL_MCP_ENABLED")
+    bot_firecrawl_mcp_init_timeout_seconds: float = Field(
+        default=10.0, gt=0, alias="BOT_FIRECRAWL_MCP_INIT_TIMEOUT_SECONDS"
+    )
+    bot_firecrawl_mcp_read_timeout_seconds: float = Field(
+        default=120.0, gt=0, alias="BOT_FIRECRAWL_MCP_READ_TIMEOUT_SECONDS"
+    )
     bot_gurume_tools_enabled: bool = Field(default=True, alias="BOT_GURUME_TOOLS_ENABLED")
     bot_container_tools_enabled: bool = Field(default=False, alias="BOT_CONTAINER_TOOLS_ENABLED")
     bot_container_tools_root: Path = Field(default=Path(), alias="BOT_CONTAINER_TOOLS_ROOT")
