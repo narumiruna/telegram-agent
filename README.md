@@ -61,7 +61,7 @@ Set at least:
 ```env
 BOT_TOKEN=your Telegram Bot token
 OPENAI_API_KEY=your API key
-OPENAI_MODEL=gpt-5.4-mini
+OPENAI_MODEL=gpt-5.6-luna
 ```
 
 Run locally:
@@ -102,7 +102,7 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | --- | --- | --- |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible API base URL. |
 | `OPENAI_API_KEY` | empty | API key for the configured provider. |
-| `OPENAI_MODEL` | `gpt-5.4-mini` | Chat model used for replies. |
+| `OPENAI_MODEL` | `gpt-5.6-luna` | Chat model used for replies. |
 
 ### Context
 

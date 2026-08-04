@@ -81,7 +81,7 @@ class Settings(BaseSettings):
 
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
-    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
+    openai_model: str = Field(default="gpt-5.6-luna", alias="OPENAI_MODEL")
 
     logfire_enabled: bool = Field(default=True, alias="LOGFIRE_ENABLED")
     logfire_token: str | None = Field(default=None, alias="LOGFIRE_TOKEN")
