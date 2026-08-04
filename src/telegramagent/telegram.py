@@ -17,6 +17,7 @@ from urllib.parse import quote
 
 import httpx
 from loguru import logger
+from mcp.shared.exceptions import McpError
 from pydantic_ai.exceptions import AgentRunError
 
 from telegramagent.actions import UrlContext
@@ -205,7 +206,7 @@ class TelegramApiError(RuntimeError):
 
 
 _TELEGRAM_API_ERRORS = (httpx.HTTPError, TelegramApiError)
-_LLM_REQUEST_ERRORS = (httpx.HTTPError, AgentRunError)
+_LLM_REQUEST_ERRORS = (httpx.HTTPError, AgentRunError, McpError)
 _IMAGE_GENERATION_ERRORS = (httpx.HTTPError, TelegramApiError, RuntimeError, ValueError)
 _MESSAGE_DATE_ERRORS = (OSError, OverflowError, ValueError)
 _BACKGROUND_TASK_ERRORS = (asyncio.CancelledError, httpx.HTTPError, TelegramApiError)

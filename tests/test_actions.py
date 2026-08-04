@@ -5,6 +5,8 @@ from collections.abc import Sequence
 
 import httpx
 import pytest
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData
 
 from telegramagent.actions import ActionContent
 from telegramagent.actions import ActionError
@@ -31,6 +33,12 @@ class FakeAgent:
 class FailingAgent:
     async def reply(self, prompt: str, *, history: Sequence[tuple[str, str]]) -> str:
         raise httpx.ConnectError("LLM down")
+
+
+class FailingMcpAgent:
+    async def reply(self, prompt: str, *, history: Sequence[tuple[str, str]]) -> str:
+        del prompt, history
+        raise McpError(ErrorData(code=-32603, message="MCP server unavailable"))
 
 
 class SlowTranscriptFetcher:
@@ -188,6 +196,16 @@ async def test_agent_failure_after_successful_fetch_returns_readable_error() -> 
     tool = ProactiveActionTool(transcript_fetcher=fetcher)
 
     reply = await tool.handle("https://youtu.be/iG-hzh9roNw", chat_id=123, agent=FailingAgent(), history=[])
+
+    assert reply == "AI 服務暫時無法使用, 請稍後再試。"
+
+
+@pytest.mark.asyncio
+async def test_mcp_agent_failure_after_successful_fetch_returns_readable_error() -> None:
+    fetcher = FakeTranscriptFetcher()
+    tool = ProactiveActionTool(transcript_fetcher=fetcher)
+
+    reply = await tool.handle("https://youtu.be/iG-hzh9roNw", chat_id=123, agent=FailingMcpAgent(), history=[])
 
     assert reply == "AI 服務暫時無法使用, 請稍後再試。"
 

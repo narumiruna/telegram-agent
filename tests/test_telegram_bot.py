@@ -8,6 +8,8 @@ from typing import Any
 
 import httpx
 import pytest
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.messages import ToolReturnPart
@@ -294,6 +296,24 @@ async def test_plain_text_uses_agent_and_keeps_history() -> None:
 
     assert await bot.build_reply(123, "你好") == "AI: 你好 (0)"
     assert await bot.build_reply(123, "/ask 第二題") == "AI: 第二題 (2)"
+
+
+@pytest.mark.asyncio
+async def test_mcp_failure_returns_safe_reply_instead_of_crashing_message_handling() -> None:
+    class FailingMcpAgent:
+        async def reply(
+            self,
+            prompt: str,
+            *,
+            history: Sequence[tuple[str, str]],
+            images: Sequence[ImageAttachment] = (),
+        ) -> str:
+            del prompt, history, images
+            raise McpError(ErrorData(code=-32603, message="MCP server unavailable"))
+
+    bot = TelegramBot(telegram=FakeTelegram(), agent=FailingMcpAgent())
+
+    assert await bot.build_reply(123, "幫我搜尋") == "AI 服務暫時無法使用, 請稍後再試。"
 
 
 @pytest.mark.asyncio

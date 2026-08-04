@@ -23,6 +23,8 @@ from urllib.parse import urlunparse
 
 import httpx
 from loguru import logger
+from mcp.shared.exceptions import McpError
+from pydantic_ai.exceptions import AgentRunError
 
 from telegramagent.capabilities import CapabilityRegistry
 from telegramagent.kabigon_tool import KabigonLoadError
@@ -302,7 +304,7 @@ class ProactiveActionTool:
         prompt = _build_summary_prompt(content, max_chars=self.settings.max_extracted_chars)
         try:
             return await agent.reply(prompt, history=history)
-        except httpx.HTTPError:
+        except httpx.HTTPError, AgentRunError, McpError:
             logger.exception("LLM request failed after proactive action")
             return "AI 服務暫時無法使用, 請稍後再試。"
 
