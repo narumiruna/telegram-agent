@@ -12,16 +12,13 @@ from urllib.parse import quote
 
 from fastmcp.client.transports import StdioTransport
 from fastmcp.client.transports import StreamableHttpTransport
-from mcp.shared.exceptions import McpError
 from pydantic_ai import RunContext
-from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.mcp import CallToolFunc
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.mcp import ToolResult
 
 _FIRECRAWL_MCP_URL_TEMPLATE = "https://mcp.firecrawl.dev/{api_key}/v2/mcp"
 _FIRECRAWL_SEARCH_TOOL_NAME = "firecrawl_search"
-_INVALID_PARAMS_ERROR_CODE = -32602
 FIRECRAWL_MCP_LOGFIRE_SCRUB_PATTERN = r"https://mcp\.firecrawl\.dev/[^?#\s]+?/v2/mcp"
 _FIRECRAWL_MCP_CREDENTIAL_RE = re.compile(
     r"(?P<prefix>https://mcp\.firecrawl\.dev/|(?<!\S)/)"
@@ -69,28 +66,18 @@ def redact_firecrawl_mcp_url(value: str) -> str:
     )
 
 
-async def retry_invalid_mcp_tool_arguments(
+async def normalize_firecrawl_search_sources(
     ctx: RunContext[Any],
     call_tool: CallToolFunc,
     name: str,
     tool_args: dict[str, Any],
 ) -> ToolResult:
-    """Normalize known argument representations and return other validation errors for retry."""
+    """Wrap a single Firecrawl search source in the array required by the MCP server."""
     del ctx
-    normalized_args = _normalize_mcp_tool_arguments(name, tool_args)
-    try:
-        return await call_tool(name, normalized_args)
-    except McpError as exc:
-        if exc.error.code != _INVALID_PARAMS_ERROR_CODE:
-            raise
-        raise ModelRetry(f"MCP tool {name!r} rejected its arguments: {exc}") from exc
-
-
-def _normalize_mcp_tool_arguments(name: str, tool_args: dict[str, Any]) -> dict[str, Any]:
     sources = tool_args.get("sources")
     if name == _FIRECRAWL_SEARCH_TOOL_NAME and isinstance(sources, dict):
-        return {**tool_args, "sources": [sources]}
-    return tool_args
+        tool_args = {**tool_args, "sources": [sources]}
+    return await call_tool(name, tool_args)
 
 
 def build_firecrawl_mcp_toolsets(config: FirecrawlMcpConfig) -> list[MCPToolset[Any]]:
@@ -104,7 +91,7 @@ def build_firecrawl_mcp_toolsets(config: FirecrawlMcpConfig) -> list[MCPToolset[
         MCPToolset(
             cast(Any, transport),
             id="firecrawl",
-            process_tool_call=retry_invalid_mcp_tool_arguments,
+            process_tool_call=normalize_firecrawl_search_sources,
             init_timeout=config.init_timeout_seconds,
             read_timeout=config.read_timeout_seconds,
         )
@@ -119,7 +106,6 @@ def build_yfinance_mcp_toolsets(config: YFinanceMcpConfig) -> list[MCPToolset[An
         MCPToolset(
             cast(Any, transport),
             id="yfinance",
-            process_tool_call=retry_invalid_mcp_tool_arguments,
             init_timeout=config.init_timeout_seconds,
             read_timeout=config.read_timeout_seconds,
         )
