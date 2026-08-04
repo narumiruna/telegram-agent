@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import re
-import shlex
 import shutil
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -42,14 +40,6 @@ class YFinanceMcpConfig:
     args: tuple[str, ...] = ()
     init_timeout_seconds: float = 10.0
     read_timeout_seconds: float = 120.0
-
-
-def parse_mcp_args(value: str | Sequence[str] | None) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if isinstance(value, str):
-        return tuple(shlex.split(value))
-    return tuple(value)
 
 
 def command_available(command: str) -> bool:

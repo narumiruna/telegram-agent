@@ -528,16 +528,6 @@ class TelegramBot:
             reply_context=reply_context,
         )
 
-    async def build_reply(
-        self,
-        chat_id: int,
-        text: str,
-        *,
-        user_id: int | None = None,
-        images: Sequence[ImageAttachment] = (),
-    ) -> str:
-        return (await self.build_response(chat_id, text, user_id=user_id, images=images)).text
-
     async def dispatch_synthetic_message(
         self,
         *,

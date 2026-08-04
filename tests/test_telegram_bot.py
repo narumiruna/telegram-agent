@@ -90,6 +90,10 @@ class FakeTelegram:
         self.edited.append((chat_id, message_id, text))
 
 
+async def build_reply(bot: TelegramBot, chat_id: int, text: str, *, user_id: int | None = None) -> str:
+    return (await bot.build_response(chat_id, text, user_id=user_id)).text
+
+
 class FakeAgent:
     async def reply(
         self,
@@ -281,12 +285,12 @@ def test_load_agent_skills_from_directory(tmp_path: Path) -> None:
 async def test_start_help_id_and_reset_commands() -> None:
     bot = TelegramBot(telegram=FakeTelegram(), agent=FakeAgent())
 
-    assert "Telegram AI 助理" in await bot.build_reply(123, "/start", user_id=456)
-    assert "/ask <問題>" in await bot.build_reply(123, "/help", user_id=456)
-    assert await bot.build_reply(123, "/id", user_id=456) == "chat_id: 123\nuser_id: 456"
+    assert "Telegram AI 助理" in await build_reply(bot, 123, "/start", user_id=456)
+    assert "/ask <問題>" in await build_reply(bot, 123, "/help", user_id=456)
+    assert await build_reply(bot, 123, "/id", user_id=456) == "chat_id: 123\nuser_id: 456"
 
     bot.histories[123] = [("user", "hi")]
-    assert await bot.build_reply(123, "/reset", user_id=456) == "已清除這個聊天室的對話記憶。"
+    assert await build_reply(bot, 123, "/reset", user_id=456) == "已清除這個聊天室的對話記憶。"
     assert 123 not in bot.histories
 
 
@@ -294,8 +298,8 @@ async def test_start_help_id_and_reset_commands() -> None:
 async def test_plain_text_uses_agent_and_keeps_history() -> None:
     bot = TelegramBot(telegram=FakeTelegram(), agent=FakeAgent())
 
-    assert await bot.build_reply(123, "你好") == "AI: 你好 (0)"
-    assert await bot.build_reply(123, "/ask 第二題") == "AI: 第二題 (2)"
+    assert await build_reply(bot, 123, "你好") == "AI: 你好 (0)"
+    assert await build_reply(bot, 123, "/ask 第二題") == "AI: 第二題 (2)"
 
 
 @pytest.mark.asyncio
@@ -313,7 +317,7 @@ async def test_mcp_failure_returns_safe_reply_instead_of_crashing_message_handli
 
     bot = TelegramBot(telegram=FakeTelegram(), agent=FailingMcpAgent())
 
-    assert await bot.build_reply(123, "幫我搜尋") == "AI 服務暫時無法使用, 請稍後再試。"
+    assert await build_reply(bot, 123, "幫我搜尋") == "AI 服務暫時無法使用, 請稍後再試。"
 
 
 @pytest.mark.asyncio
@@ -321,7 +325,7 @@ async def test_proactive_tool_runs_before_generic_chat_and_updates_history() -> 
     proactive = FakeProactiveTool(["主動整理完成"])
     bot = TelegramBot(telegram=FakeTelegram(), agent=FakeAgent(), proactive_tool=proactive)
 
-    assert await bot.build_reply(123, "https://youtu.be/iG-hzh9roNw") == "主動整理完成"
+    assert await build_reply(bot, 123, "https://youtu.be/iG-hzh9roNw") == "主動整理完成"
     assert proactive.calls == [("https://youtu.be/iG-hzh9roNw", 123, [])]
     assert bot.histories[123] == [("user", "https://youtu.be/iG-hzh9roNw"), ("assistant", "主動整理完成")]
 
@@ -394,14 +398,14 @@ async def test_session_log_restores_history_after_restart(tmp_path: Path) -> Non
     session_log = SessionLog(tmp_path / "sessions")
     first_bot = TelegramBot(telegram=FakeTelegram(), agent=FakeAgent(), session_log=session_log)
 
-    assert await first_bot.build_reply(123, "https://youtu.be/video") == "AI: https://youtu.be/video (0)"
+    assert await build_reply(first_bot, 123, "https://youtu.be/video") == "AI: https://youtu.be/video (0)"
 
     second_proactive = FakeProactiveTool(["沿用前面的網址完成"])
     second_bot = TelegramBot(
         telegram=FakeTelegram(), agent=FakeAgent(), proactive_tool=second_proactive, session_log=session_log
     )
 
-    assert await second_bot.build_reply(123, "有字幕") == "沿用前面的網址完成"
+    assert await build_reply(second_bot, 123, "有字幕") == "沿用前面的網址完成"
     assert second_proactive.calls == [
         ("有字幕", 123, [("user", "https://youtu.be/video"), ("assistant", "AI: https://youtu.be/video (0)")])
     ]
@@ -418,7 +422,7 @@ async def test_session_log_restores_url_for_kabigon_followup_after_restart(tmp_p
         session_log=session_log,
     )
 
-    first_reply = await first_bot.build_reply(123, "https://www.youtube.com/watch?v=h_7fdZjUKE8")
+    first_reply = await build_reply(first_bot, 123, "https://www.youtube.com/watch?v=h_7fdZjUKE8")
 
     assert "字幕內容" in first_reply
 
@@ -430,7 +434,7 @@ async def test_session_log_restores_url_for_kabigon_followup_after_restart(tmp_p
         session_log=session_log,
     )
 
-    await second_bot.build_reply(123, "你用 kabigon 抓抓看阿")
+    await build_reply(second_bot, 123, "你用 kabigon 抓抓看阿")
 
     assert first_fetcher.calls == ["h_7fdZjUKE8"]
     assert second_fetcher.calls == ["h_7fdZjUKE8"]
@@ -753,7 +757,7 @@ async def test_proactive_tool_falls_back_to_agent_when_no_action_matches() -> No
     proactive = FakeProactiveTool([None])
     bot = TelegramBot(telegram=FakeTelegram(), agent=FakeAgent(), proactive_tool=proactive)
 
-    assert await bot.build_reply(123, "你好") == "AI: 你好 (0)"
+    assert await build_reply(bot, 123, "你好") == "AI: 你好 (0)"
     assert proactive.calls == [("你好", 123, [])]
 
 
@@ -1300,8 +1304,8 @@ async def test_context_tool_runs_before_builtin_commands(tmp_path: Path) -> None
         ],
     )
 
-    assert "soul text" in await bot.build_reply(123, "/soul show", user_id=456)
-    assert await bot.build_reply(123, "/soul show", user_id=999) == "你沒有權限管理 SOUL.md。"
+    assert "soul text" in await build_reply(bot, 123, "/soul show", user_id=456)
+    assert await build_reply(bot, 123, "/soul show", user_id=999) == "你沒有權限管理 SOUL.md。"
 
 
 @pytest.mark.asyncio
@@ -1320,7 +1324,7 @@ async def test_skills_add_runs_installer_and_reloads() -> None:
         skill_tool=SkillManagementTool(installer=installer, skill_admins={456}, reload_skills=reload_skills),
     )
 
-    reply = await bot.build_reply(123, "/skills add owner/repo --skill chat-style", user_id=456)
+    reply = await build_reply(bot, 123, "/skills add owner/repo --skill chat-style", user_id=456)
 
     assert installer.add_calls == ["owner/repo --skill chat-style"]
     assert reload_count == 1
@@ -1337,7 +1341,7 @@ async def test_natural_language_skills_install_request_runs_installer() -> None:
         skill_tool=SkillManagementTool(installer=installer, skill_admins={456}),
     )
 
-    reply = await bot.build_reply(123, "安裝 narumiruna/skills 的 skills 所有", user_id=456)
+    reply = await build_reply(bot, 123, "安裝 narumiruna/skills 的 skills 所有", user_id=456)
 
     assert installer.add_calls == ["narumiruna/skills --skill *"]
     assert "已重新載入" not in reply
@@ -1353,7 +1357,7 @@ async def test_skills_add_requires_admin() -> None:
         skill_tool=SkillManagementTool(installer=installer, skill_admins={999}),
     )
 
-    reply = await bot.build_reply(123, "/skills add owner/repo", user_id=456)
+    reply = await build_reply(bot, 123, "/skills add owner/repo", user_id=456)
 
     assert reply == "你沒有權限管理 Agent Skills。"
     assert installer.add_calls == []

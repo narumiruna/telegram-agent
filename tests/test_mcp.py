@@ -12,12 +12,6 @@ from telegramagent.mcp import build_firecrawl_mcp_toolsets
 from telegramagent.mcp import build_yfinance_mcp_toolsets
 from telegramagent.mcp import command_available
 from telegramagent.mcp import normalize_firecrawl_search_sources
-from telegramagent.mcp import parse_mcp_args
-
-
-def test_parse_mcp_args_uses_shell_style_splitting() -> None:
-    assert parse_mcp_args('--from yfmcp "yfmcp"') == ("--from", "yfmcp", "yfmcp")
-    assert parse_mcp_args("") == ()
 
 
 def test_command_available_checks_path_and_executable() -> None:
