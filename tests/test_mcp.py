@@ -60,6 +60,26 @@ def test_build_firecrawl_mcp_toolsets_creates_streamable_http_toolset() -> None:
 
 
 @pytest.mark.asyncio
+async def test_firecrawl_search_wraps_single_source_object_before_calling_server() -> None:
+    original_args: dict[str, object] = {"query": "hwchiu 是誰", "sources": {"type": "web"}}
+    received_args: list[dict[str, object]] = []
+
+    async def strict_call(name: str, args: dict[str, object], *, metadata: object = None) -> str:
+        del metadata
+        assert name == "firecrawl_search"
+        received_args.append(args)
+        if not isinstance(args.get("sources"), list):
+            raise McpError(ErrorData(code=-32602, message="sources: expected array, received object"))
+        return "ok"
+
+    result = await retry_invalid_mcp_tool_arguments(cast(Any, None), strict_call, "firecrawl_search", original_args)
+
+    assert result == "ok"
+    assert received_args == [{"query": "hwchiu 是誰", "sources": [{"type": "web"}]}]
+    assert original_args == {"query": "hwchiu 是誰", "sources": {"type": "web"}}
+
+
+@pytest.mark.asyncio
 async def test_invalid_mcp_tool_arguments_are_returned_to_the_model_for_retry() -> None:
     async def invalid_call(name: str, args: dict[str, object], *, metadata: object = None) -> str:
         del name, args, metadata

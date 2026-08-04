@@ -20,6 +20,7 @@ from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.mcp import ToolResult
 
 _FIRECRAWL_MCP_URL_TEMPLATE = "https://mcp.firecrawl.dev/{api_key}/v2/mcp"
+_FIRECRAWL_SEARCH_TOOL_NAME = "firecrawl_search"
 _INVALID_PARAMS_ERROR_CODE = -32602
 FIRECRAWL_MCP_LOGFIRE_SCRUB_PATTERN = r"https://mcp\.firecrawl\.dev/[^?#\s]+?/v2/mcp"
 _FIRECRAWL_MCP_CREDENTIAL_RE = re.compile(
@@ -74,14 +75,22 @@ async def retry_invalid_mcp_tool_arguments(
     name: str,
     tool_args: dict[str, Any],
 ) -> ToolResult:
-    """Return MCP invalid-argument errors to the model so it can correct the tool call."""
+    """Normalize known argument representations and return other validation errors for retry."""
     del ctx
+    normalized_args = _normalize_mcp_tool_arguments(name, tool_args)
     try:
-        return await call_tool(name, tool_args)
+        return await call_tool(name, normalized_args)
     except McpError as exc:
         if exc.error.code != _INVALID_PARAMS_ERROR_CODE:
             raise
         raise ModelRetry(f"MCP tool {name!r} rejected its arguments: {exc}") from exc
+
+
+def _normalize_mcp_tool_arguments(name: str, tool_args: dict[str, Any]) -> dict[str, Any]:
+    sources = tool_args.get("sources")
+    if name == _FIRECRAWL_SEARCH_TOOL_NAME and isinstance(sources, dict):
+        return {**tool_args, "sources": [sources]}
+    return tool_args
 
 
 def build_firecrawl_mcp_toolsets(config: FirecrawlMcpConfig) -> list[MCPToolset[Any]]:
