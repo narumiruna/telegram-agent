@@ -24,7 +24,7 @@ Confirmed product decisions:
 - Replace `session.py` with a v2 append-only JSONL store for structured Pydantic messages and compaction records. It will provide exact model history to the runtime and a text projection for proactive URL behavior.
 - Add a throttled Telegram progress renderer. The polling loop dispatches updates concurrently; the runtime serializes work per chat while allowing different chats to proceed independently.
 - Use Pydantic AI's default parallel tool manager and per-tool `sequential` declaration. Runtime before/after hooks observe normalized tool lifecycle events without reimplementing tool execution.
-- Automatic compaction estimates history tokens conservatively, asks a tool-free compactor for a summary, replaces old context with a summary request/response pair, and records the replacement. A failed compaction leaves the original history intact and reports an event.
+- Automatic compaction estimates history tokens conservatively, asks a tool-free compactor for a summary, replaces old context with a summary request, and records the replacement. A failed compaction leaves the original history intact and reports an event.
 
 ## Non-Goals
 
@@ -49,7 +49,7 @@ Confirmed product decisions:
 - [x] Integrate the runtime into Telegram and CLI: concurrent update dispatch, throttled edit-in-place progress, `/cancel`, same-chat serialization, cross-chat parallelism, and structured history projection; verified 45 focused Telegram/CLI/runtime tests plus Ruff and ty checks passed.
 - [x] Add runtime settings to `Settings`, `.env.example`, and README, including the breaking session-format deployment note; verified 57 focused settings/CLI/runtime/Telegram tests plus Ruff and ty checks passed.
 - [x] Re-index changed source and audit the final dependency direction and diff; graph index completed with 1,221 nodes/5,586 edges, all quality gates passed, and 191 tests passed.
-- [ ] Push `feat/pi-style-agent-runtime`, create a pull request against `main`, and verify the remote branch and PR URL.
+- [x] Push `feat/pi-style-agent-runtime`, create pull request #9 against `main`, and verify https://github.com/narumiruna/telegram-agent/pull/9.
 
 ## Completion Checklist
 
@@ -60,4 +60,4 @@ Confirmed product decisions:
 - [x] Transient failures retry no more than three times with exponential backoff; permanent and cancellation failures do not retry.
 - [x] Model, tool, retry, compaction, and lifecycle events are observable without duplicating Pydantic AI's tool loop.
 - [x] All repository quality gates pass.
-- [ ] Focused commits are pushed and a pull request is open.
+- [x] Focused commits are pushed and pull request #9 is open.
