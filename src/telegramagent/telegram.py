@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import replace
@@ -12,6 +13,7 @@ from loguru import logger
 from mcp.shared.exceptions import McpError
 from pydantic_ai.exceptions import AgentRunError
 
+from telegramagent.agent_runtime import AgentEvent
 from telegramagent.images import AgentReply
 from telegramagent.images import ImageAttachment
 from telegramagent.images import as_telegram_photo
@@ -33,6 +35,7 @@ from telegramagent.telegram_messages import _passive_group_history_text
 from telegramagent.telegram_messages import _reply_context_urls
 from telegramagent.telegram_messages import _reply_message_context
 from telegramagent.telegram_types import Agent
+from telegramagent.telegram_types import AgentRuntimeGateway
 from telegramagent.telegram_types import ImageGenerator
 from telegramagent.telegram_types import ProactiveTool
 from telegramagent.telegram_types import ReplyMessageContext
@@ -55,6 +58,75 @@ class TelegramImageError(RuntimeError):
     """Raised when a Telegram image cannot be safely downloaded for vision input."""
 
 
+class _TelegramAgentProgress:
+    def __init__(
+        self,
+        *,
+        telegram: TelegramGateway,
+        chat_id: int,
+        reply_to_message_id: int | None,
+        edit_interval_seconds: float,
+    ) -> None:
+        self.telegram = telegram
+        self.chat_id = chat_id
+        self.reply_to_message_id = reply_to_message_id
+        self.edit_interval_seconds = edit_interval_seconds
+        self.message_id: int | None = None
+        self.message_text = ""
+        self.last_rendered = ""
+        self.last_edit_at = 0.0
+
+    async def handle(self, event: AgentEvent) -> None:
+        if event.type == "agent_start":
+            await self._ensure_message()
+        elif event.type == "message_start":
+            self.message_text = ""
+        elif event.type == "message_delta":
+            self.message_text += event.text
+            await self._edit(self.message_text or "思考中…")
+        elif event.type == "tool_start":
+            await self._edit(f"{self.message_text}\n\n🔧 正在執行 {event.tool_name}…".strip(), force=True)
+        elif event.type == "retry_scheduled":
+            await self._edit("AI 服務暫時忙碌, 正在重試…", force=True)
+        elif event.type == "compaction_start":
+            await self._edit("正在整理較早的對話內容…", force=True)
+        elif event.type == "agent_end":
+            await self.finish(event.text)
+        elif event.type == "cancelled":
+            await self.finish(event.text or "已取消目前任務。")
+
+    async def finish(self, text: str) -> None:
+        if self.message_id is not None:
+            await self._edit(text, force=True)
+
+    async def _ensure_message(self) -> None:
+        if self.message_id is not None:
+            return
+        try:
+            self.message_id = await self.telegram.send_message(
+                self.chat_id,
+                "處理中…",
+                reply_to_message_id=self.reply_to_message_id,
+            )
+        except _TELEGRAM_API_ERRORS as exc:
+            logger.warning("Failed to send agent progress message with {}", type(exc).__name__)
+
+    async def _edit(self, text: str, *, force: bool = False) -> None:
+        await self._ensure_message()
+        if self.message_id is None or not text or text == self.last_rendered:
+            return
+        now = time.monotonic()
+        if not force and now - self.last_edit_at < self.edit_interval_seconds:
+            return
+        try:
+            await self.telegram.edit_message_text(self.chat_id, self.message_id, text)
+        except _TELEGRAM_API_ERRORS as exc:
+            logger.warning("Failed to edit agent progress message with {}", type(exc).__name__)
+            return
+        self.last_rendered = text
+        self.last_edit_at = now
+
+
 _TELEGRAM_API_ERRORS = (httpx.HTTPError, TelegramApiError)
 _LLM_REQUEST_ERRORS = (httpx.HTTPError, AgentRunError, McpError)
 _IMAGE_GENERATION_ERRORS = (httpx.HTTPError, TelegramApiError, RuntimeError, ValueError)
@@ -67,6 +139,7 @@ class TelegramBot:
         *,
         telegram: TelegramGateway,
         agent: Agent,
+        agent_runtime: AgentRuntimeGateway | None = None,
         whitelist: set[int] | None = None,
         bot_username: str | None = None,
         bot_user_id: int | None = None,
@@ -82,9 +155,11 @@ class TelegramBot:
         image_max_bytes: int = 8_000_000,
         image_generator: ImageGenerator | None = None,
         url_context_extractor: UrlContextLoader | None = None,
+        progress_edit_interval_seconds: float = 0.5,
     ) -> None:
         self.telegram = telegram
         self.agent = agent
+        self.agent_runtime = agent_runtime
         self.whitelist = whitelist or set()
         self.bot_username = bot_username
         self.bot_user_id = bot_user_id
@@ -100,8 +175,10 @@ class TelegramBot:
         self.image_max_bytes = image_max_bytes
         self.image_generator = image_generator
         self.url_context_extractor = url_context_extractor or extract_url_context
+        self.progress_edit_interval_seconds = progress_edit_interval_seconds
         self.bot_reply_streaks: dict[int, int] = {}
         self.histories: dict[int, list[tuple[str, str]]] = {}
+        self._update_tasks: set[asyncio.Task[None]] = set()
 
     async def run_forever(self) -> None:
         me = await self.telegram.get_me()
@@ -116,7 +193,10 @@ class TelegramBot:
                 updates = await self.telegram.get_updates(offset=offset)
                 for update in updates:
                     offset = update["update_id"] + 1
-                    await self.handle_update(update)
+                    task = asyncio.create_task(self.handle_update(update))
+                    self._update_tasks.add(task)
+                    task.add_done_callback(self._update_tasks.discard)
+                    task.add_done_callback(_log_background_task_error)
             except httpx.HTTPStatusError as exc:
                 logger.warning(
                     "Telegram polling failed with HTTP status {}; retrying soon",
@@ -192,8 +272,32 @@ class TelegramBot:
             return
 
         reply_context = await self._reply_context_for_llm(message=message, text=text)
-        reply = await self.build_response(chat_id, prompt, user_id=user_id, images=images, reply_context=reply_context)
-        await self._send_agent_reply(chat_id, reply, reply_to_message_id=message_id)
+        progress = (
+            _TelegramAgentProgress(
+                telegram=self.telegram,
+                chat_id=chat_id,
+                reply_to_message_id=message_id,
+                edit_interval_seconds=self.progress_edit_interval_seconds,
+            )
+            if self.agent_runtime is not None
+            else None
+        )
+        reply = await self.build_response(
+            chat_id,
+            prompt,
+            user_id=user_id,
+            images=images,
+            reply_context=reply_context,
+            progress=progress,
+        )
+        if progress is not None:
+            await progress.finish(reply.text)
+        await self._send_agent_reply(
+            chat_id,
+            reply,
+            reply_to_message_id=message_id,
+            existing_message_id=progress.message_id if progress is not None else None,
+        )
 
     async def build_response(
         self,
@@ -203,6 +307,7 @@ class TelegramBot:
         user_id: int | None = None,
         images: Sequence[ImageAttachment] = (),
         reply_context: ReplyMessageContext | None = None,
+        progress: _TelegramAgentProgress | None = None,
     ) -> AgentReply:
         return await self._build_response(
             chat_id,
@@ -212,6 +317,7 @@ class TelegramBot:
             synthetic=False,
             images=images,
             reply_context=reply_context,
+            progress=progress,
         )
 
     async def dispatch_synthetic_message(
@@ -288,6 +394,7 @@ class TelegramBot:
         synthetic: bool,
         images: Sequence[ImageAttachment],
         reply_context: ReplyMessageContext | None = None,
+        progress: _TelegramAgentProgress | None = None,
     ) -> AgentReply:
         reply = await self._generate_response(
             chat_id,
@@ -296,8 +403,13 @@ class TelegramBot:
             allow_management=allow_management,
             images=images,
             reply_context=reply_context,
+            progress=progress,
         )
-        if not _is_reset_command(text) and not (not allow_management and _is_management_command(text)):
+        if (
+            not reply.session_recorded
+            and not _is_reset_command(text)
+            and not (not allow_management and _is_management_command(text))
+        ):
             self._record_turn(
                 chat_id,
                 user_text=_history_user_text(
@@ -317,6 +429,7 @@ class TelegramBot:
         allow_management: bool,
         images: Sequence[ImageAttachment],
         reply_context: ReplyMessageContext | None = None,
+        progress: _TelegramAgentProgress | None = None,
     ) -> AgentReply:
         if allow_management:
             for tool in self._management_tools():
@@ -337,7 +450,10 @@ class TelegramBot:
             if proactive_reply is not None:
                 return AgentReply(text=proactive_reply)
         return await self._ask_agent_response(
-            chat_id, _llm_prompt_with_reply_context(text.strip(), reply_context=reply_context), images=images
+            chat_id,
+            _llm_prompt_with_reply_context(text.strip(), reply_context=reply_context),
+            images=images,
+            progress=progress,
         )
 
     async def _reply_context_for_llm(self, *, message: TelegramMessage, text: str) -> ReplyMessageContext | None:
@@ -489,6 +605,8 @@ class TelegramBot:
             case "/reset":
                 self._clear_history(chat_id)
                 return "已清除這個聊天室的對話記憶。"
+            case "/cancel":
+                return await self._cancel_active_run(chat_id)
             case "/ask":
                 if not prompt and not images:
                     return "請在 /ask 後面加上你想問的內容。"
@@ -504,14 +622,33 @@ class TelegramBot:
             case _:
                 return None
 
+    async def _cancel_active_run(self, chat_id: int) -> str:
+        if self.agent_runtime is None or not await self.agent_runtime.cancel(chat_id):
+            return "目前沒有執行中的任務。"
+        return "已取消目前任務。"
+
     async def _ask_agent(self, chat_id: int, prompt: str, *, images: Sequence[ImageAttachment] = ()) -> str:
         return (await self._ask_agent_response(chat_id, prompt, images=images)).text
 
     async def _ask_agent_response(
-        self, chat_id: int, prompt: str, *, images: Sequence[ImageAttachment] = ()
+        self,
+        chat_id: int,
+        prompt: str,
+        *,
+        images: Sequence[ImageAttachment] = (),
+        progress: _TelegramAgentProgress | None = None,
     ) -> AgentReply:
-        history = self._history(chat_id)
         try:
+            if self.agent_runtime is not None:
+                submission = await self.agent_runtime.submit(
+                    chat_id,
+                    prompt,
+                    images=images,
+                    event_handler=progress.handle if progress is not None else None,
+                )
+                return replace(submission.reply, session_recorded=True)
+
+            history = self._history(chat_id)
             rich_reply = getattr(self.agent, "reply_with_artifacts", None)
             if callable(rich_reply):
                 return await rich_reply(prompt, history=history, images=images)
@@ -527,11 +664,18 @@ class TelegramBot:
         return AgentReply(text=reply)
 
     async def _send_agent_reply(
-        self, chat_id: int, reply: AgentReply, *, reply_to_message_id: int | None = None
+        self,
+        chat_id: int,
+        reply: AgentReply,
+        *,
+        reply_to_message_id: int | None = None,
+        existing_message_id: int | None = None,
     ) -> None:
-        parent_message_id = await self.telegram.send_message(
-            chat_id, reply.text, reply_to_message_id=reply_to_message_id
-        )
+        parent_message_id = existing_message_id
+        if parent_message_id is None:
+            parent_message_id = await self.telegram.send_message(
+                chat_id, reply.text, reply_to_message_id=reply_to_message_id
+            )
         for image in reply.images:
             photo = as_telegram_photo(image)
             try:
@@ -755,6 +899,7 @@ def _help_message() -> str:
             "/help - 顯示說明",
             "/id - 顯示 chat/user ID, 方便設定白名單",
             "/reset - 清除這個聊天室的對話記憶",
+            "/cancel - 取消目前執行中的任務",
             "/ask <問題> - 詢問 AI 助理",
             "/image <描述> - 產生圖片（需要 provider 支援 /images/generations）",
             "/skills add <package> - 使用 npx skills add 安裝 Agent Skills",
@@ -794,6 +939,7 @@ def _is_management_command(text: str) -> bool:
         "/help",
         "/id",
         "/reset",
+        "/cancel",
         "/ask",
         *IMAGE_COMMANDS,
     }

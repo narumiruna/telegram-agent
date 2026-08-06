@@ -14,6 +14,7 @@ from telegramagent.actions import ActionSettings
 from telegramagent.actions import KabigonExternalLoader
 from telegramagent.actions import PendingActionStore
 from telegramagent.actions import ProactiveActionTool
+from telegramagent.agent_runtime import AgentRuntime
 from telegramagent.capabilities import Capability
 from telegramagent.capabilities import CapabilityRegistry
 from telegramagent.container_tools import ContainerToolConfig
@@ -340,6 +341,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         return len(updated_skills)
 
     session_log = SessionLog(settings.bot_session_log_dir)
+    agent_runtime = AgentRuntime(backend=agent, sessions=session_log, compactor=agent)
     task_queue = TaskQueue(max_concurrent_per_chat=settings.bot_tasks_max_concurrent_per_chat)
     telegram = TelegramClient(settings.bot_token)
     event_watcher = EventWatcher(
@@ -365,6 +367,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
     bot = TelegramBot(
         telegram=telegram,
         agent=agent,
+        agent_runtime=agent_runtime,
         whitelist=settings.bot_whitelist,
         max_consecutive_replies_to_bots=settings.bot_max_consecutive_replies_to_bots,
         group_passive_context_enabled=settings.bot_group_passive_context_enabled,

@@ -27,6 +27,7 @@ class GeneratedImage:
 class AgentReply:
     text: str
     images: tuple[GeneratedImage, ...] = ()
+    session_recorded: bool = False
 
 
 class ImageGenerationError(RuntimeError):

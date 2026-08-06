@@ -6,6 +6,8 @@ from typing import NotRequired
 from typing import Protocol
 from typing import TypedDict
 
+from telegramagent.agent_runtime import AgentEventHandler
+from telegramagent.agent_runtime import AgentSubmission
 from telegramagent.images import GeneratedImage
 from telegramagent.images import ImageAttachment
 from telegramagent.url_context import UrlContext
@@ -92,6 +94,19 @@ class Agent(Protocol):
         history: Sequence[tuple[str, str]],
         images: Sequence[ImageAttachment] = (),
     ) -> str: ...
+
+
+class AgentRuntimeGateway(Protocol):
+    async def submit(
+        self,
+        chat_id: int,
+        prompt: str,
+        *,
+        images: Sequence[ImageAttachment] = (),
+        event_handler: AgentEventHandler | None = None,
+    ) -> AgentSubmission: ...
+
+    async def cancel(self, chat_id: int) -> bool: ...
 
 
 class ImageGenerator(Protocol):
