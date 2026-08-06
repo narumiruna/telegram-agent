@@ -65,7 +65,7 @@ async def test_start_help_id_and_reset_commands() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_streams_by_editing_one_telegram_message() -> None:
+async def test_runtime_edits_processing_status_once_with_final_answer() -> None:
     class FakeRuntime:
         async def submit(self, chat_id, prompt, *, images=(), event_handler=None):
             del chat_id, prompt, images
@@ -89,7 +89,6 @@ async def test_runtime_streams_by_editing_one_telegram_message() -> None:
         telegram=telegram,
         agent=FakeAgent(),
         agent_runtime=FakeRuntime(),
-        progress_edit_interval_seconds=0,
     )
 
     await bot.handle_update(
@@ -105,12 +104,12 @@ async def test_runtime_streams_by_editing_one_telegram_message() -> None:
     )
 
     assert telegram.sent == [(123, "處理中…", 10)]
-    assert telegram.edited[-1] == (123, 100, "partial answer")
+    assert telegram.edited == [(123, 100, "partial answer")]
     assert bot.histories == {}
 
 
 @pytest.mark.asyncio
-async def test_ask_command_uses_runtime_progress_stream() -> None:
+async def test_ask_command_edits_processing_status_once() -> None:
     class FakeRuntime:
         async def submit(self, chat_id, prompt, *, images=(), event_handler=None):
             del chat_id, prompt, images

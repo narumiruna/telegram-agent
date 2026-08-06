@@ -48,9 +48,6 @@ class Settings(BaseSettings):
         default=0.8, gt=0, le=1, alias="BOT_AGENT_COMPACTION_TRIGGER_RATIO"
     )
     bot_agent_chars_per_token: float = Field(default=4.0, gt=0, alias="BOT_AGENT_CHARS_PER_TOKEN")
-    bot_agent_progress_edit_interval_seconds: float = Field(
-        default=0.5, ge=0, alias="BOT_AGENT_PROGRESS_EDIT_INTERVAL_SECONDS"
-    )
     bot_tasks_max_concurrent_per_chat: int = Field(default=1, ge=1, alias="BOT_TASKS_MAX_CONCURRENT_PER_CHAT")
     bot_image_input_enabled: bool = Field(default=True, alias="BOT_IMAGE_INPUT_ENABLED")
     bot_image_max_bytes: int = Field(default=8_000_000, ge=1, alias="BOT_IMAGE_MAX_BYTES")

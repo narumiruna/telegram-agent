@@ -395,7 +395,6 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         session_log=session_log,
         task_queue=task_queue,
         image_input_enabled=settings.bot_image_input_enabled,
-        progress_edit_interval_seconds=settings.bot_agent_progress_edit_interval_seconds,
         image_max_bytes=settings.bot_image_max_bytes,
         image_generator=image_generator,
         tools=[

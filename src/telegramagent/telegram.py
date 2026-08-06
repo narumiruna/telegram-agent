@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import time
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import replace
@@ -65,31 +64,16 @@ class _TelegramAgentProgress:
         telegram: TelegramGateway,
         chat_id: int,
         reply_to_message_id: int | None,
-        edit_interval_seconds: float,
     ) -> None:
         self.telegram = telegram
         self.chat_id = chat_id
         self.reply_to_message_id = reply_to_message_id
-        self.edit_interval_seconds = edit_interval_seconds
         self.message_id: int | None = None
-        self.message_text = ""
         self.last_rendered = ""
-        self.last_edit_at = 0.0
 
     async def handle(self, event: AgentEvent) -> None:
         if event.type == "agent_start":
             await self._ensure_message()
-        elif event.type == "message_start":
-            self.message_text = ""
-        elif event.type == "message_delta":
-            self.message_text += event.text
-            await self._edit(self.message_text or "思考中…")
-        elif event.type == "tool_start":
-            await self._edit(f"{self.message_text}\n\n🔧 正在執行 {event.tool_name}…".strip(), force=True)
-        elif event.type == "retry_scheduled":
-            await self._edit("AI 服務暫時忙碌, 正在重試…", force=True)
-        elif event.type == "compaction_start":
-            await self._edit("正在整理較早的對話內容…", force=True)
         elif event.type == "agent_end":
             await self.finish(event.text)
         elif event.type == "cancelled":
@@ -97,7 +81,7 @@ class _TelegramAgentProgress:
 
     async def finish(self, text: str) -> None:
         if self.message_id is not None:
-            await self._edit(text, force=True)
+            await self._edit(text)
 
     async def _ensure_message(self) -> None:
         if self.message_id is not None:
@@ -111,12 +95,9 @@ class _TelegramAgentProgress:
         except _TELEGRAM_API_ERRORS as exc:
             logger.warning("Failed to send agent progress message with {}", type(exc).__name__)
 
-    async def _edit(self, text: str, *, force: bool = False) -> None:
+    async def _edit(self, text: str) -> None:
         await self._ensure_message()
         if self.message_id is None or not text or text == self.last_rendered:
-            return
-        now = time.monotonic()
-        if not force and now - self.last_edit_at < self.edit_interval_seconds:
             return
         try:
             await self.telegram.edit_message_text(self.chat_id, self.message_id, text)
@@ -124,7 +105,6 @@ class _TelegramAgentProgress:
             logger.warning("Failed to edit agent progress message with {}", type(exc).__name__)
             return
         self.last_rendered = text
-        self.last_edit_at = now
 
 
 _TELEGRAM_API_ERRORS = (httpx.HTTPError, TelegramApiError)
@@ -154,7 +134,6 @@ class TelegramBot:
         image_max_bytes: int = 8_000_000,
         image_generator: ImageGenerator | None = None,
         url_context_extractor: UrlContextLoader | None = None,
-        progress_edit_interval_seconds: float = 0.5,
     ) -> None:
         self.telegram = telegram
         self.agent = agent
@@ -174,7 +153,6 @@ class TelegramBot:
         self.image_max_bytes = image_max_bytes
         self.image_generator = image_generator
         self.url_context_extractor = url_context_extractor or extract_url_context
-        self.progress_edit_interval_seconds = progress_edit_interval_seconds
         self.bot_reply_streaks: dict[int, int] = {}
         self.histories: dict[int, list[tuple[str, str]]] = {}
         self._update_tasks: set[asyncio.Task[None]] = set()
@@ -276,7 +254,6 @@ class TelegramBot:
                 telegram=self.telegram,
                 chat_id=chat_id,
                 reply_to_message_id=message_id,
-                edit_interval_seconds=self.progress_edit_interval_seconds,
             )
             if self.agent_runtime is not None
             else None
