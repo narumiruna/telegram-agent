@@ -15,7 +15,8 @@ runtime tools such as kabigon, Yahoo Finance MCP, Firecrawl MCP, and container-l
 - **Image input/output**: Telegram photos can be sent to a vision-capable model; `/image` can call an image-generation
   endpoint when enabled.
 - **Long replies**: replies over Telegram's practical limit are published to Telegraph and replaced with a link.
-- **Durable context**: `SOUL.md` and per-chat session logs survive restarts.
+- **Durable context**: `SOUL.md` and structured per-chat model transcripts survive restarts.
+- **Agent runtime**: per-chat execution, streamed Telegram edits, mid-run steering, `/cancel`, transient retries, and automatic context compaction.
 - **Agent Skills**: local `.agents/skills/*/SKILL.md` files are loaded as model instructions.
 - **Docker-ready**: Compose includes mounted runtime state, Playwright browser assets, and optional container tools.
 
@@ -25,9 +26,10 @@ runtime tools such as kabigon, Yahoo Finance MCP, Firecrawl MCP, and container-l
 Telegram updates
   -> telegramagent.telegram
   -> command / image / reply-context / proactive URL routing
+  -> telegramagent.agent_runtime (per-chat state, steering, retry, compaction)
   -> telegramagent.llm via Pydantic AI
-  -> OpenAI-compatible API
-  -> Telegram response
+  -> OpenAI-compatible API and tools
+  -> streamed Telegram edits and final response
 ```
 
 Important modules:
@@ -36,7 +38,9 @@ Important modules:
 | --- | --- |
 | CLI and app wiring | `src/telegramagent/cli.py` |
 | Telegram Bot API client and handlers | `src/telegramagent/telegram.py` |
-| LLM agent wiring | `src/telegramagent/llm.py` |
+| Per-chat agent orchestration | `src/telegramagent/agent_runtime.py` |
+| LLM and Pydantic AI adapter | `src/telegramagent/llm.py` |
+| Structured session store | `src/telegramagent/session.py` |
 | Proactive URL and YouTube handling | `src/telegramagent/actions.py` |
 | Configuration | `src/telegramagent/settings.py` |
 | Telegraph publishing | `src/telegramagent/telegraph_pages.py` |
@@ -109,10 +113,18 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `BOT_SOUL_PATH` | `SOUL.md` | Persona and voice instructions. |
-| `BOT_SESSION_LOG_DIR` | `.telegramagent/sessions` | Per-chat JSONL history used after restarts. |
+| `BOT_SESSION_LOG_DIR` | `.telegramagent/sessions` | Structured v2 per-chat Pydantic AI transcripts used after restarts. |
+| `BOT_AGENT_MAX_ATTEMPTS` | `3` | Maximum attempts for transient provider/MCP failures. |
+| `BOT_AGENT_RETRY_BASE_DELAY_SECONDS` | `1` | Initial exponential retry delay. |
+| `BOT_AGENT_CONTEXT_TOKEN_BUDGET` | `100000` | Approximate context budget that drives automatic compaction. |
+| `BOT_AGENT_COMPACTION_TRIGGER_RATIO` | `0.8` | Fraction of the context budget at which compaction starts. |
+| `BOT_AGENT_CHARS_PER_TOKEN` | `4` | Token-estimation fallback when the provider cannot count ahead. |
+| `BOT_AGENT_PROGRESS_EDIT_INTERVAL_SECONDS` | `0.5` | Minimum interval between Telegram streaming edits. |
 | `BOT_SKILLS_DIR` | `.agents/skills` | Directory for Agent Skills. |
 | `BOT_ENABLED_SKILLS` | empty | Comma-separated skill names. Empty loads every skill. |
 | `BOT_SKILL_ADMINS` | empty | Users/chats allowed to manage skills/context files. Empty reuses `BOT_WHITELIST`. |
+
+> **Breaking session format:** the runtime writes `session-v2.jsonl` and intentionally ignores legacy `log.jsonl` files. Clear `BOT_SESSION_LOG_DIR` before deploying this version if old conversation state must not remain on disk.
 
 ### URL Handling
 
@@ -293,6 +305,7 @@ Pydantic AI tool, or MCP toolset.
 | `/help` | Show help. |
 | `/id` | Show current chat/user ID for allowlist setup. |
 | `/reset` | Clear conversation memory for the current chat. |
+| `/cancel` | Cancel the active run for this chat and discard pending steering input. |
 | `/ask <question>` | Ask the AI assistant directly. |
 | `/image <prompt>` | Generate an image when image output is enabled. |
 | `/skills add <package>` | Install Agent Skills with `npx`. |

@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+from pydantic_ai import Agent as PydanticAgent
+from pydantic_ai import Tool
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import TextPart
 from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.messages import UserPromptPart
+from pydantic_ai.models.test import TestModel
 
+from telegramagent.agent_runtime import AgentEvent
 from telegramagent.images import GeneratedImage
 from telegramagent.images import ImageAttachment
 from telegramagent.llm import ChatAgent
@@ -38,6 +46,77 @@ async def test_chat_agent_uses_pydantic_agent_with_history() -> None:
     assert "直接引用 display_items" in captured["instructions"]
     assert runnable.prompts == ["問題"]
     assert runnable.message_history_lengths == [2]
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_streams_normalized_lifecycle_events_and_messages() -> None:
+    pydantic_agent = PydanticAgent(TestModel(custom_output_text="streamed answer"))
+    agent = ChatAgent(api_key="key", model="model", agent_factory=lambda _instructions: pydantic_agent)
+    events: list[AgentEvent] = []
+
+    result = await agent.run_streamed("question", event_handler=events.append)
+
+    assert result.reply.text == "streamed answer"
+    assert events[0].type == "agent_start"
+    assert events[-1].type == "agent_end"
+    assert "".join(event.text for event in events if event.type == "message_delta") == "streamed answer"
+    assert result.new_messages
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_streams_tool_lifecycle_events() -> None:
+    async def lookup_weather(city: str) -> str:
+        return f"sunny in {city}"
+
+    pydantic_agent = PydanticAgent(
+        TestModel(call_tools=["lookup_weather"]), tools=[Tool(lookup_weather, takes_ctx=False)]
+    )
+    agent = ChatAgent(api_key="key", model="model", agent_factory=lambda _instructions: pydantic_agent)
+    events: list[AgentEvent] = []
+
+    await agent.run_streamed("weather", event_handler=events.append)
+
+    tool_events = [event for event in events if event.type in {"tool_start", "tool_end"}]
+    assert [event.type for event in tool_events] == ["tool_start", "tool_end"]
+    assert {event.tool_name for event in tool_events} == {"lookup_weather"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("sequential", "expected_max_active"), [(False, 2), (True, 1)])
+async def test_chat_agent_uses_parallel_tools_unless_one_requires_sequential(
+    sequential: bool, expected_max_active: int
+) -> None:
+    active = 0
+    max_active = 0
+
+    async def first_tool(value: int = 1) -> str:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return str(value)
+
+    async def second_tool(value: int = 2) -> str:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return str(value)
+
+    pydantic_agent = PydanticAgent(
+        TestModel(call_tools=["first_tool", "second_tool"]),
+        tools=[
+            Tool(first_tool, takes_ctx=False, sequential=sequential),
+            Tool(second_tool, takes_ctx=False),
+        ],
+    )
+    agent = ChatAgent(api_key="key", model="model", agent_factory=lambda _instructions: pydantic_agent)
+
+    await agent.run_streamed("run tools")
+
+    assert max_active == expected_max_active
 
 
 @pytest.mark.asyncio
@@ -172,6 +251,29 @@ async def test_chat_agent_falls_back_without_api_key() -> None:
 
     assert "OPENAI_API_KEY" in reply
     assert "問題" in reply
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_compacts_structured_history_without_tools() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.read().decode()
+        return httpx.Response(200, json={"choices": [{"message": {"content": "compact summary"}}]})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        agent = ChatAgent(api_key="key", model="model", base_url="https://example.test/v1", http_client=client)
+        summary = await agent.compact_history(
+            [
+                ModelRequest(parts=[UserPromptPart(content="old question")]),
+                ModelResponse(parts=[TextPart(content="old answer")]),
+            ]
+        )
+
+    assert summary == "compact summary"
+    assert "old question" in captured["body"]
+    assert "summar" in captured["body"].lower()
 
 
 @pytest.mark.asyncio

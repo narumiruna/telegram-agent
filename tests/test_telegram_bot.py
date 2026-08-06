@@ -10,6 +10,8 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData
 
 from telegramagent.actions import ProactiveActionTool
+from telegramagent.agent_runtime import AgentEvent
+from telegramagent.agent_runtime import AgentSubmission
 from telegramagent.context_files import ContextManagementTool
 from telegramagent.context_files import load_context_file
 from telegramagent.images import AgentReply
@@ -60,6 +62,182 @@ async def test_start_help_id_and_reset_commands() -> None:
     bot.histories[123] = [("user", "hi")]
     assert await build_reply(bot, 123, "/reset", user_id=456) == "已清除這個聊天室的對話記憶。"
     assert 123 not in bot.histories
+
+
+@pytest.mark.asyncio
+async def test_runtime_streams_by_editing_one_telegram_message() -> None:
+    class FakeRuntime:
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None):
+            del chat_id, prompt, images
+            assert event_handler is not None
+            await event_handler(AgentEvent("agent_start"))
+            await event_handler(AgentEvent("message_start"))
+            await event_handler(AgentEvent("message_delta", text="partial "))
+            await event_handler(AgentEvent("message_delta", text="answer"))
+            await event_handler(AgentEvent("agent_end", text="partial answer"))
+            return AgentSubmission(kind="completed", reply=AgentReply(text="partial answer"))
+
+        async def cancel(self, chat_id):
+            del chat_id
+            return False
+
+        def clear_history(self, chat_id):
+            del chat_id
+
+    telegram = FakeTelegram()
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=FakeAgent(),
+        agent_runtime=FakeRuntime(),
+        progress_edit_interval_seconds=0,
+    )
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 456},
+                "text": "hello",
+            },
+        }
+    )
+
+    assert telegram.sent == [(123, "處理中…", 10)]
+    assert telegram.edited[-1] == (123, 100, "partial answer")
+    assert bot.histories == {}
+
+
+@pytest.mark.asyncio
+async def test_ask_command_uses_runtime_progress_stream() -> None:
+    class FakeRuntime:
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None):
+            del chat_id, prompt, images
+            assert event_handler is not None
+            await event_handler(AgentEvent("agent_start"))
+            await event_handler(AgentEvent("agent_end", text="answer"))
+            return AgentSubmission(kind="completed", reply=AgentReply(text="answer"))
+
+        async def cancel(self, chat_id):
+            del chat_id
+            return False
+
+        def clear_history(self, chat_id):
+            del chat_id
+
+    telegram = FakeTelegram()
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), agent_runtime=FakeRuntime())
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 456},
+                "text": "/ask hello",
+            },
+        }
+    )
+
+    assert telegram.sent == [(123, "處理中…", 10)]
+    assert telegram.edited == [(123, 100, "answer")]
+
+
+@pytest.mark.asyncio
+async def test_polling_dispatches_different_chats_concurrently() -> None:
+    class PollingTelegram(FakeTelegram):
+        def __init__(self) -> None:
+            super().__init__()
+            self.polls = 0
+            self.stop_polling = asyncio.Event()
+
+        async def get_updates(self, *, offset, poll_timeout=30):
+            del offset, poll_timeout
+            self.polls += 1
+            if self.polls == 1:
+                return [
+                    {
+                        "update_id": 1,
+                        "message": {
+                            "message_id": 10,
+                            "chat": {"id": 1, "type": "private"},
+                            "from": {"id": 11},
+                            "text": "one",
+                        },
+                    },
+                    {
+                        "update_id": 2,
+                        "message": {
+                            "message_id": 20,
+                            "chat": {"id": 2, "type": "private"},
+                            "from": {"id": 22},
+                            "text": "two",
+                        },
+                    },
+                ]
+            await self.stop_polling.wait()
+            return []
+
+    class BlockingRuntime:
+        def __init__(self) -> None:
+            self.started: list[int] = []
+            self.both_started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None):
+            del prompt, images, event_handler
+            self.started.append(chat_id)
+            if len(self.started) == 2:
+                self.both_started.set()
+            await self.release.wait()
+            return AgentSubmission(kind="completed", reply=AgentReply(text=f"done {chat_id}"))
+
+        async def cancel(self, chat_id):
+            del chat_id
+            return False
+
+        def clear_history(self, chat_id):
+            del chat_id
+
+    telegram = PollingTelegram()
+    runtime = BlockingRuntime()
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), agent_runtime=runtime)
+    polling = asyncio.create_task(bot.run_forever())
+
+    await asyncio.wait_for(runtime.both_started.wait(), timeout=1)
+    assert set(runtime.started) == {1, 2}
+
+    runtime.release.set()
+    telegram.stop_polling.set()
+    polling.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await polling
+    await asyncio.gather(*bot._update_tasks)
+
+
+@pytest.mark.asyncio
+async def test_cancel_command_stops_active_runtime() -> None:
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self.cancelled: list[int] = []
+
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None):
+            raise AssertionError("submit should not be called")
+
+        async def cancel(self, chat_id):
+            self.cancelled.append(chat_id)
+            return True
+
+        def clear_history(self, chat_id):
+            del chat_id
+
+    runtime = FakeRuntime()
+    bot = TelegramBot(telegram=FakeTelegram(), agent=FakeAgent(), agent_runtime=runtime)
+
+    assert await build_reply(bot, 123, "/cancel") == "已取消目前任務。"
+    assert runtime.cancelled == [123]
 
 
 @pytest.mark.asyncio
