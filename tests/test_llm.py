@@ -10,7 +10,10 @@ from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai import Tool
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import TextPart
 from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.messages import UserPromptPart
 from pydantic_ai.models.test import TestModel
 
 from telegramagent.agent_runtime import AgentEvent
@@ -209,6 +212,29 @@ async def test_chat_agent_falls_back_without_api_key() -> None:
 
     assert "OPENAI_API_KEY" in reply
     assert "問題" in reply
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_compacts_structured_history_without_tools() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.read().decode()
+        return httpx.Response(200, json={"choices": [{"message": {"content": "compact summary"}}]})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        agent = ChatAgent(api_key="key", model="model", base_url="https://example.test/v1", http_client=client)
+        summary = await agent.compact_history(
+            [
+                ModelRequest(parts=[UserPromptPart(content="old question")]),
+                ModelResponse(parts=[TextPart(content="old answer")]),
+            ]
+        )
+
+    assert summary == "compact summary"
+    assert "old question" in captured["body"]
+    assert "summar" in captured["body"].lower()
 
 
 @pytest.mark.asyncio

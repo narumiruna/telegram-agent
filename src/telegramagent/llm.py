@@ -17,6 +17,7 @@ from pydantic_ai.messages import FilePart
 from pydantic_ai.messages import FunctionToolCallEvent
 from pydantic_ai.messages import FunctionToolResultEvent
 from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.messages import NativeToolCallPart
@@ -278,6 +279,23 @@ class ChatAgent:
         new_messages = getattr(result, "new_messages", None)
         messages = tuple(new_messages()) if callable(new_messages) else ()
         return AgentRunOutput(reply=AgentReply(text=text, images=tuple(_result_images(result))), new_messages=messages)
+
+    async def compact_history(self, messages: Sequence[ModelMessage]) -> str:
+        transcript = ModelMessagesTypeAdapter.dump_json(list(messages)).decode("utf-8")
+        return await self.client.complete(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Summarize the conversation state for a future assistant turn. Preserve user goals, "
+                        "decisions, constraints, relevant facts, unresolved questions, and important tool results. "
+                        "Do not invent information. Return only the compact summary."
+                    ),
+                },
+                {"role": "user", "content": transcript},
+            ],
+            temperature=0,
+        )
 
     def reload_skills(self, skills: list[AgentSkill]) -> None:
         self.skills = skills
