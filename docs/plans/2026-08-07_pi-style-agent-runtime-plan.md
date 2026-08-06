@@ -44,7 +44,7 @@ Confirmed product decisions:
 
 - [x] Establish a green baseline and create `feat/pi-style-agent-runtime`; verified 170 tests passed and the active branch is `feat/pi-style-agent-runtime`.
 - [x] Replace `src/telegramagent/session.py` with the structured v2 message/compaction store and update focused session tests; verified 34 focused session/Telegram tests plus Ruff and ty checks passed.
-- [ ] Add normalized agent events and the Pydantic AI streamed backend adapter in `src/telegramagent/agent_runtime.py` and `src/telegramagent/llm.py`, including parallel tool lifecycle events and exact message capture; verify with focused runtime/LLM tests, then commit.
+- [x] Add normalized agent events and the Pydantic AI streamed backend adapter in `src/telegramagent/agent_runtime.py` and `src/telegramagent/llm.py`, including parallel tool lifecycle events and exact message capture; verified 16 focused LLM/session tests plus Ruff and ty checks passed.
 - [ ] Add per-chat sessions, earliest-checkpoint steering, real cancellation, transient retry/backoff, automatic summary compaction, and runtime hooks; verify with deterministic async tests for each behavior, then commit.
 - [ ] Integrate the runtime into Telegram and CLI: concurrent update dispatch, throttled edit-in-place progress, `/cancel`, same-chat serialization, cross-chat parallelism, and structured history projection; verify with focused Telegram/CLI tests, then commit.
 - [ ] Add runtime settings to `Settings`, `.env.example`, and README, including the breaking session-format deployment note; verify settings/docs-related tests and commit.

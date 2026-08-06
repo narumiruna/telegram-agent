@@ -6,10 +6,14 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic_ai import Agent as PydanticAgent
+from pydantic_ai import Tool
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.models.test import TestModel
 
+from telegramagent.agent_runtime import AgentEvent
 from telegramagent.images import GeneratedImage
 from telegramagent.images import ImageAttachment
 from telegramagent.llm import ChatAgent
@@ -38,6 +42,39 @@ async def test_chat_agent_uses_pydantic_agent_with_history() -> None:
     assert "直接引用 display_items" in captured["instructions"]
     assert runnable.prompts == ["問題"]
     assert runnable.message_history_lengths == [2]
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_streams_normalized_lifecycle_events_and_messages() -> None:
+    pydantic_agent = PydanticAgent(TestModel(custom_output_text="streamed answer"))
+    agent = ChatAgent(api_key="key", model="model", agent_factory=lambda _instructions: pydantic_agent)
+    events: list[AgentEvent] = []
+
+    result = await agent.run_streamed("question", event_handler=events.append)
+
+    assert result.reply.text == "streamed answer"
+    assert events[0].type == "agent_start"
+    assert events[-1].type == "agent_end"
+    assert "".join(event.text for event in events if event.type == "message_delta") == "streamed answer"
+    assert result.new_messages
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_streams_tool_lifecycle_events() -> None:
+    async def lookup_weather(city: str) -> str:
+        return f"sunny in {city}"
+
+    pydantic_agent = PydanticAgent(
+        TestModel(call_tools=["lookup_weather"]), tools=[Tool(lookup_weather, takes_ctx=False)]
+    )
+    agent = ChatAgent(api_key="key", model="model", agent_factory=lambda _instructions: pydantic_agent)
+    events: list[AgentEvent] = []
+
+    await agent.run_streamed("weather", event_handler=events.append)
+
+    tool_events = [event for event in events if event.type in {"tool_start", "tool_end"}]
+    assert [event.type for event in tool_events] == ["tool_start", "tool_end"]
+    assert {event.tool_name for event in tool_events} == {"lookup_weather"}
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import re
 from collections.abc import Awaitable
 from collections.abc import Callable
@@ -13,16 +14,28 @@ import httpx
 from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.messages import FilePart
+from pydantic_ai.messages import FunctionToolCallEvent
+from pydantic_ai.messages import FunctionToolResultEvent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import NativeToolCallPart
+from pydantic_ai.messages import NativeToolReturnPart
+from pydantic_ai.messages import PartDeltaEvent
+from pydantic_ai.messages import PartStartEvent
+from pydantic_ai.messages import RetryPromptPart
 from pydantic_ai.messages import TextPart
+from pydantic_ai.messages import TextPartDelta
 from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.messages import UserContent
 from pydantic_ai.messages import UserPromptPart
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
+from telegramagent.agent_runtime import AgentEvent
+from telegramagent.agent_runtime import AgentEventHandler
+from telegramagent.agent_runtime import AgentRunControl
+from telegramagent.agent_runtime import AgentRunOutput
 from telegramagent.context_files import ContextFile
 from telegramagent.context_files import format_context_for_instructions
 from telegramagent.images import AgentReply
@@ -150,11 +163,121 @@ class ChatAgent:
                 )
             return AgentReply(text=f"我目前還沒設定 OPENAI_API_KEY, 所以先原樣回覆:\n\n{prompt}")
 
-        result = await self.agent.run(_user_prompt(prompt, images), message_history=_message_history(history))
+        result = await self.run_streamed(
+            prompt,
+            message_history=tuple(_message_history(history)),
+            images=tuple(images),
+        )
+        return result.reply
+
+    async def run_streamed(
+        self,
+        prompt: str,
+        *,
+        message_history: tuple[ModelMessage, ...] = (),
+        images: tuple[ImageAttachment, ...] = (),
+        event_handler: AgentEventHandler | None = None,
+        control_handler: Callable[[AgentRunControl], None] | None = None,
+    ) -> AgentRunOutput:
+        if not self.client.is_configured:
+            reply = await self.reply_with_artifacts(prompt, history=(), images=images)
+            return AgentRunOutput(reply=reply, new_messages=())
+
+        user_prompt = _user_prompt(prompt, images)
+        iter_run = getattr(self.agent, "iter", None)
+        if not callable(iter_run):
+            return await self._run_stream_fallback(
+                user_prompt,
+                message_history=message_history,
+                event_handler=event_handler,
+            )
+
+        return await self._run_pydantic_stream(
+            iter_run,
+            user_prompt=user_prompt,
+            message_history=message_history,
+            event_handler=event_handler,
+            control_handler=control_handler,
+        )
+
+    async def _run_pydantic_stream(
+        self,
+        iter_run: Callable[..., object],
+        *,
+        user_prompt: str | Sequence[UserContent],
+        message_history: tuple[ModelMessage, ...],
+        event_handler: AgentEventHandler | None,
+        control_handler: Callable[[AgentRunControl], None] | None,
+    ) -> AgentRunOutput:
+        await _emit_agent_event(event_handler, AgentEvent("agent_start"))
+        run_context = cast(Any, iter_run(user_prompt, message_history=message_history))
+        async with run_context as agent_run:
+            if control_handler is not None:
+                control_handler(_PydanticRunControl(agent_run))
+            node = agent_run.next_node
+            while not PydanticAgent.is_end_node(node):
+                current_node = node
+                if PydanticAgent.is_model_request_node(current_node):
+                    await self._stream_model_node(current_node, agent_run, event_handler)
+                elif PydanticAgent.is_call_tools_node(current_node):
+                    await self._stream_tool_node(current_node, agent_run, event_handler)
+                node = await agent_run.next(current_node)
+            result = agent_run.result
+
+        reply, new_messages = _reply_from_run_result(result)
+        await _emit_agent_event(event_handler, AgentEvent("agent_end", text=reply.text))
+        return AgentRunOutput(reply=reply, new_messages=new_messages)
+
+    @staticmethod
+    async def _stream_model_node(
+        current_node: object, agent_run: object, event_handler: AgentEventHandler | None
+    ) -> None:
+        current_node = cast(Any, current_node)
+        agent_run = cast(Any, agent_run)
+        await _emit_agent_event(event_handler, AgentEvent("turn_start"))
+        await _emit_agent_event(event_handler, AgentEvent("message_start"))
+        accumulated_text: list[str] = []
+        async with current_node.stream(agent_run.ctx) as stream:
+            async for stream_event in stream:
+                runtime_event = _model_stream_event(stream_event)
+                if runtime_event is not None:
+                    accumulated_text.append(runtime_event.text)
+                    await _emit_agent_event(event_handler, runtime_event)
+        await _emit_agent_event(event_handler, AgentEvent("message_end", text="".join(accumulated_text)))
+
+    @staticmethod
+    async def _stream_tool_node(
+        current_node: object, agent_run: object, event_handler: AgentEventHandler | None
+    ) -> None:
+        current_node = cast(Any, current_node)
+        agent_run = cast(Any, agent_run)
+        async with current_node.stream(agent_run.ctx) as stream:
+            async for stream_event in stream:
+                runtime_event = _tool_stream_event(stream_event)
+                if runtime_event is not None:
+                    await _emit_agent_event(event_handler, runtime_event)
+        await _emit_agent_event(event_handler, AgentEvent("turn_end"))
+
+    async def _run_stream_fallback(
+        self,
+        user_prompt: str | Sequence[UserContent],
+        *,
+        message_history: tuple[ModelMessage, ...],
+        event_handler: AgentEventHandler | None,
+    ) -> AgentRunOutput:
+        await _emit_agent_event(event_handler, AgentEvent("agent_start"))
+        await _emit_agent_event(event_handler, AgentEvent("turn_start"))
+        result = await self.agent.run(user_prompt, message_history=message_history)
         output = getattr(result, "output", result)
-        if not isinstance(output, str) or not output.strip():
-            return AgentReply(text="模型沒有回覆內容, 請稍後再試。", images=tuple(_result_images(result)))
-        return AgentReply(text=output.strip(), images=tuple(_result_images(result)))
+        text = output.strip() if isinstance(output, str) and output.strip() else "模型沒有回覆內容, 請稍後再試。"
+        await _emit_agent_event(event_handler, AgentEvent("message_start"))
+        await _emit_agent_event(event_handler, AgentEvent("message_delta", text=text))
+        await _emit_agent_event(event_handler, AgentEvent("message_end", text=text))
+        await _emit_agent_event(event_handler, AgentEvent("turn_end"))
+        await _emit_agent_event(event_handler, AgentEvent("agent_end", text=text))
+        new_messages = getattr(result, "new_messages", None)
+        messages = tuple(new_messages()) if callable(new_messages) else ()
+        return AgentRunOutput(reply=AgentReply(text=text, images=tuple(_result_images(result))), new_messages=messages)
 
     def reload_skills(self, skills: list[AgentSkill]) -> None:
         self.skills = skills
@@ -195,6 +318,82 @@ class ChatAgent:
             toolsets=cast(Any, self.mcp_toolsets),
             tool_timeout=self.kabigon_tool_timeout_seconds,
         )
+
+
+class _PydanticRunControl:
+    def __init__(self, agent_run: object) -> None:
+        self.agent_run = cast(Any, agent_run)
+
+    def steer(self, prompt: str, images: tuple[ImageAttachment, ...] = ()) -> None:
+        content = _user_prompt(prompt, images)
+        if isinstance(content, list):
+            self.agent_run.enqueue(*content, priority="asap")
+        else:
+            self.agent_run.enqueue(content, priority="asap")
+
+
+def _reply_from_run_result(result: object | None) -> tuple[AgentReply, tuple[ModelMessage, ...]]:
+    if result is None:
+        return AgentReply(text="模型沒有回覆內容, 請稍後再試。"), ()
+    output = getattr(result, "output", result)
+    text = output.strip() if isinstance(output, str) and output.strip() else "模型沒有回覆內容, 請稍後再試。"
+    new_messages = getattr(result, "new_messages", None)
+    messages = tuple(new_messages()) if callable(new_messages) else ()
+    return AgentReply(text=text, images=tuple(_result_images(result))), messages
+
+
+async def _emit_agent_event(handler: AgentEventHandler | None, event: AgentEvent) -> None:
+    if handler is None:
+        return
+    result = handler(event)
+    if inspect.isawaitable(result):
+        await result
+
+
+def _model_stream_event(event: object) -> AgentEvent | None:
+    if isinstance(event, PartStartEvent):
+        if isinstance(event.part, TextPart):
+            return AgentEvent("message_delta", text=event.part.content)
+        if isinstance(event.part, NativeToolCallPart):
+            return AgentEvent(
+                "tool_start",
+                tool_name=event.part.tool_name,
+                tool_call_id=event.part.tool_call_id or "",
+                data={"args": event.part.args},
+            )
+        if isinstance(event.part, NativeToolReturnPart):
+            return AgentEvent(
+                "tool_end",
+                tool_name=event.part.tool_name,
+                tool_call_id=event.part.tool_call_id or "",
+                data={"result": event.part.content},
+                is_error=event.part.outcome == "failed",
+            )
+    if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+        return AgentEvent("message_delta", text=event.delta.content_delta)
+    return None
+
+
+def _tool_stream_event(event: object) -> AgentEvent | None:
+    if isinstance(event, FunctionToolCallEvent):
+        return AgentEvent(
+            "tool_start",
+            tool_name=event.part.tool_name,
+            tool_call_id=event.part.tool_call_id or "",
+            data={"args": event.part.args},
+        )
+    if isinstance(event, FunctionToolResultEvent):
+        part = event.part
+        if part is None:
+            return None
+        return AgentEvent(
+            "tool_end",
+            tool_name=part.tool_name or "",
+            tool_call_id=part.tool_call_id or "",
+            data={"result": part.content},
+            is_error=isinstance(part, RetryPromptPart),
+        )
+    return None
 
 
 def _chat_instructions(*, skills: list[AgentSkill], soul: ContextFile | None, capability_summary: str = "") -> str:
