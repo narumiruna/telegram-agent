@@ -65,7 +65,6 @@ def test_agent_runtime_settings_parse_env(monkeypatch) -> None:
     monkeypatch.setenv("BOT_AGENT_CONTEXT_TOKEN_BUDGET", "64000")
     monkeypatch.setenv("BOT_AGENT_COMPACTION_TRIGGER_RATIO", "0.75")
     monkeypatch.setenv("BOT_AGENT_CHARS_PER_TOKEN", "3.5")
-    monkeypatch.setenv("BOT_AGENT_PROGRESS_EDIT_INTERVAL_SECONDS", "0.2")
 
     settings = Settings()
 
@@ -74,7 +73,6 @@ def test_agent_runtime_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_agent_context_token_budget == 64000
     assert settings.bot_agent_compaction_trigger_ratio == 0.75
     assert settings.bot_agent_chars_per_token == 3.5
-    assert settings.bot_agent_progress_edit_interval_seconds == 0.2
 
 
 def test_image_settings_parse_env(monkeypatch) -> None:

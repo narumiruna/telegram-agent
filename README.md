@@ -16,7 +16,7 @@ runtime tools such as kabigon, Yahoo Finance MCP, Firecrawl MCP, and container-l
   endpoint when enabled.
 - **Long replies**: replies over Telegram's practical limit are published to Telegraph and replaced with a link.
 - **Durable context**: `SOUL.md` and structured per-chat model transcripts survive restarts.
-- **Agent runtime**: per-chat execution, streamed Telegram edits, mid-run steering, `/cancel`, transient retries, and automatic context compaction.
+- **Agent runtime**: per-chat execution, a single final Telegram status edit, mid-run steering, `/cancel`, transient retries, and automatic context compaction.
 - **Agent Skills**: local `.agents/skills/*/SKILL.md` files are loaded as model instructions.
 - **Docker-ready**: Compose includes mounted runtime state, Playwright browser assets, and optional container tools.
 
@@ -29,7 +29,7 @@ Telegram updates
   -> telegramagent.agent_runtime (per-chat state, steering, retry, compaction)
   -> telegramagent.llm via Pydantic AI
   -> OpenAI-compatible API and tools
-  -> streamed Telegram edits and final response
+  -> one final Telegram status edit and response
 ```
 
 Important modules:
@@ -119,7 +119,6 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | `BOT_AGENT_CONTEXT_TOKEN_BUDGET` | `100000` | Approximate context budget that drives automatic compaction. |
 | `BOT_AGENT_COMPACTION_TRIGGER_RATIO` | `0.8` | Fraction of the context budget at which compaction starts. |
 | `BOT_AGENT_CHARS_PER_TOKEN` | `4` | Token-estimation fallback when the provider cannot count ahead. |
-| `BOT_AGENT_PROGRESS_EDIT_INTERVAL_SECONDS` | `0.5` | Minimum interval between Telegram streaming edits. |
 | `BOT_SKILLS_DIR` | `.agents/skills` | Directory for Agent Skills. |
 | `BOT_ENABLED_SKILLS` | empty | Comma-separated skill names. Empty loads every skill. |
 | `BOT_SKILL_ADMINS` | empty | Users/chats allowed to manage skills/context files. Empty reuses `BOT_WHITELIST`. |
