@@ -48,16 +48,16 @@ Confirmed product decisions:
 - [x] Add per-chat sessions, earliest-checkpoint steering, real cancellation, transient retry/backoff, automatic summary compaction, and runtime hooks; verified 24 focused runtime/LLM/session tests plus Ruff and ty checks passed.
 - [x] Integrate the runtime into Telegram and CLI: concurrent update dispatch, throttled edit-in-place progress, `/cancel`, same-chat serialization, cross-chat parallelism, and structured history projection; verified 45 focused Telegram/CLI/runtime tests plus Ruff and ty checks passed.
 - [x] Add runtime settings to `Settings`, `.env.example`, and README, including the breaking session-format deployment note; verified 57 focused settings/CLI/runtime/Telegram tests plus Ruff and ty checks passed.
-- [ ] Re-index changed source and audit the final dependency direction and diff; run `uv run ruff format --check`, `uv run ruff check .`, `uv run ty check .`, and `uv run pytest -q tests`.
+- [x] Re-index changed source and audit the final dependency direction and diff; graph index completed with 1,221 nodes/5,586 edges, all quality gates passed, and 191 tests passed.
 - [ ] Push `feat/pi-style-agent-runtime`, create a pull request against `main`, and verify the remote branch and PR URL.
 
 ## Completion Checklist
 
-- [ ] Same-chat messages steer an active run and different chats run concurrently.
-- [ ] Telegram uses one throttled editable progress message and finishes it with the final response.
-- [ ] `/cancel` stops the active run and discards queued steering messages.
-- [ ] Structured v2 sessions restore exact model history and persist compaction records; old files are explicitly unsupported.
-- [ ] Transient failures retry no more than three times with exponential backoff; permanent and cancellation failures do not retry.
-- [ ] Model, tool, retry, compaction, and lifecycle events are observable without duplicating Pydantic AI's tool loop.
-- [ ] All repository quality gates pass.
+- [x] Same-chat messages steer an active run and different chats run concurrently.
+- [x] Telegram uses one throttled editable progress message and finishes it with the final response.
+- [x] `/cancel` stops the active run and discards queued steering messages.
+- [x] Structured v2 sessions restore exact model history and persist compaction records; old files are explicitly unsupported.
+- [x] Transient failures retry no more than three times with exponential backoff; permanent and cancellation failures do not retry.
+- [x] Model, tool, retry, compaction, and lifecycle events are observable without duplicating Pydantic AI's tool loop.
+- [x] All repository quality gates pass.
 - [ ] Focused commits are pushed and a pull request is open.

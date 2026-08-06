@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -78,6 +79,44 @@ async def test_chat_agent_streams_tool_lifecycle_events() -> None:
     tool_events = [event for event in events if event.type in {"tool_start", "tool_end"}]
     assert [event.type for event in tool_events] == ["tool_start", "tool_end"]
     assert {event.tool_name for event in tool_events} == {"lookup_weather"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("sequential", "expected_max_active"), [(False, 2), (True, 1)])
+async def test_chat_agent_uses_parallel_tools_unless_one_requires_sequential(
+    sequential: bool, expected_max_active: int
+) -> None:
+    active = 0
+    max_active = 0
+
+    async def first_tool(value: int = 1) -> str:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return str(value)
+
+    async def second_tool(value: int = 2) -> str:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return str(value)
+
+    pydantic_agent = PydanticAgent(
+        TestModel(call_tools=["first_tool", "second_tool"]),
+        tools=[
+            Tool(first_tool, takes_ctx=False, sequential=sequential),
+            Tool(second_tool, takes_ctx=False),
+        ],
+    )
+    agent = ChatAgent(api_key="key", model="model", agent_factory=lambda _instructions: pydantic_agent)
+
+    await agent.run_streamed("run tools")
+
+    assert max_active == expected_max_active
 
 
 @pytest.mark.asyncio

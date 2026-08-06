@@ -15,6 +15,7 @@ from typing import cast
 import httpx
 from loguru import logger
 from mcp.shared.exceptions import McpError
+from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -144,6 +145,7 @@ class AgentRuntime:
         self.after_tool = after_tool
         self.sleep = sleep
         self._chat_sessions: dict[int, _ChatSession] = {}
+        self._volatile_history: dict[int, list[ModelMessage]] = {}
         self._listeners: set[AgentEventHandler] = set()
         self._lock = asyncio.Lock()
 
@@ -184,6 +186,10 @@ class AgentRuntime:
         await task
         return True
 
+    def clear_history(self, chat_id: int) -> None:
+        self._volatile_history.pop(chat_id, None)
+        self.sessions.clear_chat(chat_id)
+
     def pending_steering(self, chat_id: int) -> tuple[str, ...]:
         session = self._chat_sessions.get(chat_id)
         if session is None:
@@ -219,7 +225,7 @@ class AgentRuntime:
                 images=images,
                 event_handler=event_handler,
             )
-            self.sessions.append_messages(chat_id, output.new_messages)
+            self._record_output(chat_id, output.new_messages)
             return AgentSubmission(kind="completed", reply=output.reply)
         except asyncio.CancelledError:
             await self._dispatch(AgentEvent("cancelled", text="任務已取消。"), event_handler)
@@ -281,10 +287,25 @@ class AgentRuntime:
         if session is not None:
             session.control = None
 
+    def _record_output(self, chat_id: int, new_messages: Sequence[ModelMessage]) -> None:
+        volatile = self._volatile_history.get(chat_id, [])
+        messages = [*volatile, *new_messages]
+        try:
+            self.sessions.append_messages(chat_id, messages)
+        except Exception as exc:  # noqa: BLE001 - completed replies must survive persistence failures
+            logger.warning(
+                "Session append failed for chat_id={} with {}; retaining volatile history",
+                chat_id,
+                type(exc).__name__,
+            )
+            self._volatile_history[chat_id] = messages
+        else:
+            self._volatile_history.pop(chat_id, None)
+
     async def _compact_if_needed(
         self, chat_id: int, event_handler: AgentEventHandler | None
     ) -> tuple[ModelMessage, ...]:
-        history = tuple(self.sessions.model_history(chat_id))
+        history = (*self.sessions.model_history(chat_id), *self._volatile_history.get(chat_id, ()))
         if self.compactor is None or not _needs_compaction(history, self.config):
             return history
 
@@ -303,7 +324,16 @@ class AgentRuntime:
         summary_messages: tuple[ModelMessage, ...] = (
             ModelRequest(parts=[UserPromptPart(content=f"Earlier conversation summary:\n{summary}")]),
         )
-        self.sessions.append_compaction(chat_id, summary_messages, source_message_count=len(history))
+        try:
+            self.sessions.append_compaction(chat_id, summary_messages, source_message_count=len(history))
+        except Exception as exc:  # noqa: BLE001 - retain original context when compaction cannot be persisted
+            logger.warning("Compaction record failed with {}; retaining original history", type(exc).__name__)
+            await self._dispatch(
+                AgentEvent("compaction_end", text="對話摘要無法儲存, 沿用原始上下文。", is_error=True),
+                event_handler,
+            )
+            return tuple(history)
+        self._volatile_history.pop(chat_id, None)
         await self._dispatch(AgentEvent("compaction_end", data={"source_message_count": len(history)}), event_handler)
         return summary_messages
 
@@ -343,6 +373,8 @@ def _is_transient_error(exc: Exception) -> bool:
         return True
     if isinstance(exc, ModelHTTPError):
         return exc.status_code == 429 or exc.status_code >= 500
+    if isinstance(exc, ModelAPIError):
+        return True
     if isinstance(exc, McpError):
         return exc.error.code in {-32603, -32000, -32001, -32002}
     return False

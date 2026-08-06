@@ -130,7 +130,6 @@ class _TelegramAgentProgress:
 _TELEGRAM_API_ERRORS = (httpx.HTTPError, TelegramApiError)
 _LLM_REQUEST_ERRORS = (httpx.HTTPError, AgentRunError, McpError)
 _IMAGE_GENERATION_ERRORS = (httpx.HTTPError, TelegramApiError, RuntimeError, ValueError)
-_BACKGROUND_TASK_ERRORS = (asyncio.CancelledError, httpx.HTTPError, TelegramApiError)
 
 
 class TelegramBot:
@@ -438,7 +437,12 @@ class TelegramBot:
                     return AgentReply(text=tool_reply)
 
             command_reply = await self._handle_builtin_command(
-                chat_id=chat_id, text=text, user_id=user_id, images=images, reply_context=reply_context
+                chat_id=chat_id,
+                text=text,
+                user_id=user_id,
+                images=images,
+                reply_context=reply_context,
+                progress=progress,
             )
             if command_reply is not None:
                 return command_reply if isinstance(command_reply, AgentReply) else AgentReply(text=command_reply)
@@ -576,6 +580,12 @@ class TelegramBot:
 
     def _clear_history(self, chat_id: int) -> None:
         self.histories.pop(chat_id, None)
+        if self.agent_runtime is not None:
+            try:
+                self.agent_runtime.clear_history(chat_id)
+            except Exception as exc:  # noqa: BLE001 - reset still clears in-memory fallback state
+                logger.warning("Agent runtime history clear failed for chat_id={} with {}", chat_id, type(exc).__name__)
+            return
         if self.session_log is not None:
             try:
                 self.session_log.clear_chat(chat_id)
@@ -590,6 +600,7 @@ class TelegramBot:
         user_id: int | None,
         images: Sequence[ImageAttachment],
         reply_context: ReplyMessageContext | None = None,
+        progress: _TelegramAgentProgress | None = None,
     ) -> str | AgentReply | None:
         command, _, argument = text.partition(" ")
         command_name = command.split("@", maxsplit=1)[0].lower()
@@ -614,6 +625,7 @@ class TelegramBot:
                     chat_id,
                     _llm_prompt_with_reply_context(prompt or DEFAULT_IMAGE_PROMPT, reply_context=reply_context),
                     images=images,
+                    progress=progress,
                 )
             case "/skills" | "/soul":
                 return "這個 bot 尚未啟用這個管理功能。"
@@ -915,7 +927,9 @@ def _help_message() -> str:
 def _log_background_task_error(task: asyncio.Task[None]) -> None:
     try:
         task.result()
-    except _BACKGROUND_TASK_ERRORS:
+    except asyncio.CancelledError:
+        return
+    except Exception:  # noqa: BLE001 - background update failures must be observed without escaping callbacks
         logger.exception("Background Telegram task failed")
 
 

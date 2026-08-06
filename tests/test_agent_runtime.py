@@ -199,6 +199,51 @@ async def test_context_is_compacted_before_run_and_recorded(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_clear_history_removes_durable_and_volatile_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sessions = SessionLog(tmp_path / "sessions")
+    backend = FakeBackend()
+    runtime = AgentRuntime(backend=backend, sessions=sessions)
+    original_append = sessions.append_messages
+    fail_writes = True
+
+    def sometimes_fail(*args, **kwargs):
+        if fail_writes:
+            raise OSError("disk unavailable")
+        return original_append(*args, **kwargs)
+
+    monkeypatch.setattr(sessions, "append_messages", sometimes_fail)
+    await runtime.submit(1, "first")
+
+    runtime.clear_history(1)
+    fail_writes = False
+    await runtime.submit(1, "second")
+
+    assert backend.histories[1] == ()
+
+
+@pytest.mark.asyncio
+async def test_completed_reply_survives_session_write_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = SessionLog(tmp_path / "sessions")
+    backend = FakeBackend()
+    runtime = AgentRuntime(backend=backend, sessions=sessions)
+
+    def fail_append(*args, **kwargs) -> None:
+        del args, kwargs
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(sessions, "append_messages", fail_append)
+
+    first = await runtime.submit(1, "first")
+    second = await runtime.submit(1, "second")
+
+    assert first.kind == "completed"
+    assert second.kind == "completed"
+    assert len(backend.histories[1]) == 2
+
+
+@pytest.mark.asyncio
 async def test_tool_hooks_observe_events_without_breaking_run(tmp_path: Path) -> None:
     backend = FakeBackend()
     observed: list[str] = []

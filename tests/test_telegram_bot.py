@@ -81,6 +81,9 @@ async def test_runtime_streams_by_editing_one_telegram_message() -> None:
             del chat_id
             return False
 
+        def clear_history(self, chat_id):
+            del chat_id
+
     telegram = FakeTelegram()
     bot = TelegramBot(
         telegram=telegram,
@@ -104,6 +107,42 @@ async def test_runtime_streams_by_editing_one_telegram_message() -> None:
     assert telegram.sent == [(123, "處理中…", 10)]
     assert telegram.edited[-1] == (123, 100, "partial answer")
     assert bot.histories == {}
+
+
+@pytest.mark.asyncio
+async def test_ask_command_uses_runtime_progress_stream() -> None:
+    class FakeRuntime:
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None):
+            del chat_id, prompt, images
+            assert event_handler is not None
+            await event_handler(AgentEvent("agent_start"))
+            await event_handler(AgentEvent("agent_end", text="answer"))
+            return AgentSubmission(kind="completed", reply=AgentReply(text="answer"))
+
+        async def cancel(self, chat_id):
+            del chat_id
+            return False
+
+        def clear_history(self, chat_id):
+            del chat_id
+
+    telegram = FakeTelegram()
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), agent_runtime=FakeRuntime())
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 456},
+                "text": "/ask hello",
+            },
+        }
+    )
+
+    assert telegram.sent == [(123, "處理中…", 10)]
+    assert telegram.edited == [(123, 100, "answer")]
 
 
 @pytest.mark.asyncio
@@ -159,6 +198,9 @@ async def test_polling_dispatches_different_chats_concurrently() -> None:
             del chat_id
             return False
 
+        def clear_history(self, chat_id):
+            del chat_id
+
     telegram = PollingTelegram()
     runtime = BlockingRuntime()
     bot = TelegramBot(telegram=telegram, agent=FakeAgent(), agent_runtime=runtime)
@@ -187,6 +229,9 @@ async def test_cancel_command_stops_active_runtime() -> None:
         async def cancel(self, chat_id):
             self.cancelled.append(chat_id)
             return True
+
+        def clear_history(self, chat_id):
+            del chat_id
 
     runtime = FakeRuntime()
     bot = TelegramBot(telegram=FakeTelegram(), agent=FakeAgent(), agent_runtime=runtime)
