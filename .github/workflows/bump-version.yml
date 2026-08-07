@@ -13,11 +13,13 @@ on:
           - minor
           - patch
 
-permissions:
-  contents: write
-
 jobs:
   bump-version:
+    permissions:
+      contents: write
+    outputs:
+      bumped: ${{ steps.bump.outputs.bumped }}
+      current-version: ${{ steps.bump.outputs.current-version }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the code
@@ -28,11 +30,27 @@ jobs:
         uses: callowayproject/bump-my-version@1.5.0
         env:
           BUMPVERSION_TAG: "true"
+          GIT_AUTHOR_NAME: ${{ github.actor }}
+          GIT_COMMITTER_NAME: ${{ github.actor }}
         with:
           args: ${{ inputs.bump-type }}
-          # Use a Personal Access Token (PAT) to ensure the publish workflow is triggered on tag push
-          github-token: ${{ secrets.PAT_TOKEN }}
+          github-token: ${{ github.token }}
       - name: Check
         if: steps.bump.outputs.bumped == 'true'
         run: |
           echo "Version was bumped from ${{ steps.bump.outputs.previous-version }} to ${{ steps.bump.outputs.current-version }}!"
+
+  trigger-workflows:
+    needs: bump-version
+    if: needs.bump-version.outputs.bumped == 'true'
+    permissions:
+      actions: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger publish and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.bump-version.outputs.current-version }}
+        run: |
+          gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
