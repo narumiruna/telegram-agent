@@ -23,11 +23,21 @@ jobs:
       - name: Checkout the code
         uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
+      - name: Verify PAT_TOKEN
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          if [[ -z "$PAT_TOKEN" ]]; then
+            echo "::error::PAT_TOKEN repository secret is required to bump versions and trigger release workflows."
+            exit 1
+          fi
       - name: Bump version
         id: bump
         uses: callowayproject/bump-my-version@1.5.0
         env:
           BUMPVERSION_TAG: "true"
+          GIT_AUTHOR_NAME: ${{ github.actor }}
+          GIT_COMMITTER_NAME: ${{ github.actor }}
         with:
           args: ${{ inputs.bump-type }}
           # Use a Personal Access Token (PAT) to ensure the publish workflow is triggered on tag push
