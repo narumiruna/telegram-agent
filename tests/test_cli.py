@@ -2,9 +2,42 @@ from __future__ import annotations
 
 import logging
 
+from telegramagent.cli import _document_converter_from_settings
 from telegramagent.cli import _mcp_toolsets_from_settings
 from telegramagent.cli import configure_logging
 from telegramagent.settings import Settings
+
+
+def test_document_converter_from_settings_reports_enabled_capability() -> None:
+    settings = Settings.model_validate(
+        {
+            "BOT_DOCUMENT_INPUT_ENABLED": True,
+            "BOT_DOCUMENT_MAX_BYTES": 12345,
+            "BOT_DOCUMENT_MAX_MARKDOWN_CHARS": 6789,
+            "BOT_DOCUMENT_CONVERSION_TIMEOUT_SECONDS": 12.5,
+            "BOT_DOCUMENT_MAX_CONCURRENT_CONVERSIONS": 3,
+        }
+    )
+
+    converter, capability = _document_converter_from_settings(settings)
+
+    assert converter is not None
+    assert converter.max_markdown_chars == 6789
+    assert converter.timeout_seconds == 12.5
+    assert capability.name == "document_input.anydoc"
+    assert capability.available is True
+    assert capability.reason == ""
+
+
+def test_document_converter_from_settings_reports_disabled_capability() -> None:
+    settings = Settings.model_validate({"BOT_DOCUMENT_INPUT_ENABLED": False})
+
+    converter, capability = _document_converter_from_settings(settings)
+
+    assert converter is None
+    assert capability.name == "document_input.anydoc"
+    assert capability.available is False
+    assert capability.reason == "disabled"
 
 
 def test_mcp_toolsets_from_settings_registers_firecrawl_alongside_runtime_capability() -> None:

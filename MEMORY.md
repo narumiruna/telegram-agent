@@ -4,6 +4,7 @@
 - Symptom: Link messages can reply with raw `[Errno 17] File exists: '.telegramagent'`. Cause: background task/session persistence failures can happen after a successful agent run and leak `str(exc)` to Telegram. Fix: keep replies independent from durable history writes and use generic user-facing task failure text while logging server-side details.
 - Symptom: One malformed MCP tool call can repeatedly restart the bot on the same Telegram update. Cause: MCP JSON-RPC invalid-parameter errors can escape Pydantic AI as `McpError` before Telegram acknowledges the update. Fix: convert code `-32602` to `ModelRetry` at the MCP tool boundary and catch terminal MCP failures in user-response paths.
 - Symptom: A mutating tool can run twice after a transient model-stream failure. Cause: retrying the complete backend run replays work before the failed model request. Fix: retry from the last complete `ModelRequest` checkpoint and never replay the whole tool run.
+- Symptom: An attachment can consume unbounded memory even when Telegram metadata passes a size check. Cause: `file_size` may be absent or inaccurate and a whole-body download trusts it. Fix: enforce the configured byte limit while streaming every Telegram file.
 
 ## TASTE
 

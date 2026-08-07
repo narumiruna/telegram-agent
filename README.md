@@ -3,8 +3,8 @@
 Telegram AI bot powered by the Telegram Bot API, Pydantic AI, and an OpenAI-compatible Chat Completions endpoint.
 
 It can chat in private messages, behave politely in groups, read replied messages, enrich URLs with extracted content,
-summarize links, understand Telegram images, generate images, publish long replies to Telegraph, and expose optional
-runtime tools such as kabigon, Yahoo Finance MCP, Firecrawl MCP, and container-local file tools.
+summarize links, convert Telegram documents to Markdown, understand Telegram images, generate images, publish long
+replies to Telegraph, and expose optional runtime tools such as kabigon, Yahoo Finance MCP, Firecrawl MCP, and container-local file tools.
 
 ## ✨ Highlights
 
@@ -12,6 +12,8 @@ runtime tools such as kabigon, Yahoo Finance MCP, Firecrawl MCP, and container-l
 - **Reply context**: when mentioned in a group reply, the bot includes the replied message sender, type, date, text/caption,
   and URL context in the LLM prompt.
 - **URL enrichment**: HTTP(S), YouTube, X/Twitter, and general webpages are fetched or loaded through kabigon when possible.
+- **Document input**: Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV, and text-based PDF attachments are
+  converted locally to bounded Markdown with AnyDoc and kept in conversation context.
 - **Image input/output**: Telegram photos can be sent to a vision-capable model; `/image` can call an image-generation
   endpoint when enabled.
 - **Long replies**: replies over Telegram's practical limit are published to Telegraph and replaced with a link.
@@ -25,7 +27,7 @@ runtime tools such as kabigon, Yahoo Finance MCP, Firecrawl MCP, and container-l
 ```text
 Telegram updates
   -> telegramagent.telegram
-  -> command / image / reply-context / proactive URL routing
+  -> command / bounded document conversion / image / reply-context / proactive URL routing
   -> telegramagent.agent_runtime (per-chat state, steering/follow-up intent, lifecycle, compaction)
   -> telegramagent.llm via Pydantic AI
   -> OpenAI-compatible API and tools
@@ -38,6 +40,7 @@ Important modules:
 | --- | --- |
 | CLI and app wiring | `src/telegramagent/cli.py` |
 | Telegram Bot API client and handlers | `src/telegramagent/telegram.py` |
+| AnyDoc document conversion | `src/telegramagent/documents.py` |
 | Per-chat agent orchestration | `src/telegramagent/agent_runtime.py` |
 | LLM and Pydantic AI adapter | `src/telegramagent/llm.py` |
 | Structured session store | `src/telegramagent/session.py` |
@@ -136,6 +139,16 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | `BOT_PROACTIVE_PENDING_TTL_SECONDS` | `900` | How long follow-up actions can reuse a pending URL. |
 | `BOT_PROACTIVE_ALLOWED_SCHEMES` | `http,https` | URL schemes accepted by the proactive router. |
 
+### Documents
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOT_DOCUMENT_INPUT_ENABLED` | `true` | Convert supported Telegram documents to Markdown for the agent. |
+| `BOT_DOCUMENT_MAX_BYTES` | `20000000` | Reject downloads larger than this bounded byte limit. |
+| `BOT_DOCUMENT_MAX_MARKDOWN_CHARS` | `50000` | Maximum aggregate converted Markdown included in one agent turn. |
+| `BOT_DOCUMENT_CONVERSION_TIMEOUT_SECONDS` | `30` | Maximum caller wait for one local AnyDoc conversion. |
+| `BOT_DOCUMENT_MAX_CONCURRENT_CONVERSIONS` | `2` | Maximum local document conversions running concurrently. |
+
 ### Images
 
 | Variable | Default | Purpose |
@@ -165,7 +178,7 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 
 ### Private Chats
 
-In private chats, the bot replies to normal text, commands, images, and supported proactive URL actions.
+In private chats, the bot replies to normal text, commands, images, supported documents, and proactive URL actions.
 
 ### Groups and Supergroups
 
@@ -191,6 +204,22 @@ When a group message mentions the bot while replying to another message, the pro
 
 If the current message is only the bot mention, the bot is instructed to respond directly to the replied content instead
 of asking what to do.
+
+### Document Input 📄
+
+Send a supported document directly or mention the bot while replying to one. A caption becomes the instruction; without
+one, the bot reads and summarizes the document. Supported extensions are `.doc`, `.docx`, `.docm`, `.ppt`, `.pps`,
+`.pot`, `.pptx`, `.pptm`, `.ppsx`, `.ppsm`, `.xls`, `.xlsx`, `.xlsm`, `.xlsb`, `.odt`, `.ods`, `.odp`, `.rtf`, `.epub`,
+`.csv`, and `.pdf`.
+
+The file is downloaded into a bounded in-memory buffer, converted locally by `firecrawl-anydoc`, and sent to the agent as
+untrusted Markdown reference material. The original bytes are not sent to the model or stored. Converted Markdown is
+stored in the normal session transcript so follow-up questions can refer to it; long output is truncated with a visible
+marker. Image documents continue to use vision input.
+
+Local AnyDoc conversion does not OCR scanned/image-only PDFs and does not pass embedded document assets to the vision
+model. Encrypted, malformed, unsupported, oversized, overly complex, empty, or timed-out conversions return an explicit
+failure instead of silently dropping the attachment.
 
 ## 🔗 URL Handling
 

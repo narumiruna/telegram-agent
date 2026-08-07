@@ -75,6 +75,22 @@ def test_agent_runtime_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_agent_chars_per_token == 3.5
 
 
+def test_document_settings_parse_env(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_DOCUMENT_INPUT_ENABLED", "false")
+    monkeypatch.setenv("BOT_DOCUMENT_MAX_BYTES", "12345")
+    monkeypatch.setenv("BOT_DOCUMENT_MAX_MARKDOWN_CHARS", "6789")
+    monkeypatch.setenv("BOT_DOCUMENT_CONVERSION_TIMEOUT_SECONDS", "12.5")
+    monkeypatch.setenv("BOT_DOCUMENT_MAX_CONCURRENT_CONVERSIONS", "3")
+
+    settings = Settings()
+
+    assert settings.bot_document_input_enabled is False
+    assert settings.bot_document_max_bytes == 12345
+    assert settings.bot_document_max_markdown_chars == 6789
+    assert settings.bot_document_conversion_timeout_seconds == 12.5
+    assert settings.bot_document_max_concurrent_conversions == 3
+
+
 def test_image_settings_parse_env(monkeypatch) -> None:
     monkeypatch.setenv("BOT_IMAGE_INPUT_ENABLED", "false")
     monkeypatch.setenv("BOT_IMAGE_MAX_BYTES", "12345")

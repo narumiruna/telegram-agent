@@ -14,20 +14,25 @@ from pydantic_ai.exceptions import AgentRunError
 
 from telegramagent.agent_runtime import AgentEvent
 from telegramagent.agent_runtime import SubmissionIntent
+from telegramagent.documents import ConvertedDocument
 from telegramagent.images import AgentReply
 from telegramagent.images import ImageAttachment
 from telegramagent.images import as_telegram_photo
 from telegramagent.session import SessionLog
 from telegramagent.tasks import TaskQueue
+from telegramagent.telegram_attachments import load_message_attachments
 from telegramagent.telegram_client import TelegramApiError
 from telegramagent.telegram_client import TelegramClient
+from telegramagent.telegram_messages import DEFAULT_DOCUMENT_PROMPT
 from telegramagent.telegram_messages import DEFAULT_IMAGE_PROMPT
 from telegramagent.telegram_messages import IMAGE_COMMANDS
 from telegramagent.telegram_messages import _failed_url_context_from_exception
 from telegramagent.telegram_messages import _history_text_with_reply_context
 from telegramagent.telegram_messages import _history_user_text
 from telegramagent.telegram_messages import _image_generation_prompt
+from telegramagent.telegram_messages import _llm_prompt_with_documents
 from telegramagent.telegram_messages import _llm_prompt_with_reply_context
+from telegramagent.telegram_messages import _message_document_refs
 from telegramagent.telegram_messages import _message_image_ref
 from telegramagent.telegram_messages import _message_image_refs
 from telegramagent.telegram_messages import _message_text
@@ -36,6 +41,7 @@ from telegramagent.telegram_messages import _reply_context_urls
 from telegramagent.telegram_messages import _reply_message_context
 from telegramagent.telegram_types import Agent
 from telegramagent.telegram_types import AgentRuntimeGateway
+from telegramagent.telegram_types import DocumentConverter
 from telegramagent.telegram_types import ImageGenerator
 from telegramagent.telegram_types import ProactiveTool
 from telegramagent.telegram_types import ReplyMessageContext
@@ -52,10 +58,6 @@ from telegramagent.telegram_types import UrlContextLoader
 from telegramagent.url_context import extract_url_context
 
 __all__ = ["TelegramBot", "TelegramClient", "TelegramFile", "TelegramUpdate"]
-
-
-class TelegramImageError(RuntimeError):
-    """Raised when a Telegram image cannot be safely downloaded for vision input."""
 
 
 class _TelegramAgentProgress:
@@ -136,6 +138,10 @@ class TelegramBot:
         image_input_enabled: bool = True,
         image_max_bytes: int = 8_000_000,
         image_generator: ImageGenerator | None = None,
+        document_input_enabled: bool = True,
+        document_max_bytes: int = 20_000_000,
+        document_max_markdown_chars: int = 50_000,
+        document_converter: DocumentConverter | None = None,
         url_context_extractor: UrlContextLoader | None = None,
     ) -> None:
         self.telegram = telegram
@@ -155,6 +161,10 @@ class TelegramBot:
         self.image_input_enabled = image_input_enabled
         self.image_max_bytes = image_max_bytes
         self.image_generator = image_generator
+        self.document_input_enabled = document_input_enabled
+        self.document_max_bytes = document_max_bytes
+        self.document_max_markdown_chars = document_max_markdown_chars
+        self.document_converter = document_converter
         self.url_context_extractor = url_context_extractor or extract_url_context
         self.bot_reply_streaks: dict[int, int] = {}
         self.histories: dict[int, list[tuple[str, str]]] = {}
@@ -194,8 +204,9 @@ class TelegramBot:
         text = _message_text(message)
         image_ref = _message_image_ref(message)
         image_refs = _message_image_refs(message)
+        document_refs = _message_document_refs(message)
         chat = message.get("chat")
-        if (not text and not image_refs) or not chat:
+        if (not text and not image_refs and not document_refs) or not chat:
             return
 
         chat_id = chat["id"]
@@ -214,7 +225,13 @@ class TelegramBot:
             logger.debug("Ignored unaddressed group message in chat_id={}", chat_id)
             return
 
-        prompt = self._strip_bot_mention(text) if text else DEFAULT_IMAGE_PROMPT
+        prompt = (
+            self._strip_bot_mention(text)
+            if text
+            else DEFAULT_DOCUMENT_PROMPT
+            if document_refs
+            else DEFAULT_IMAGE_PROMPT
+        )
         if await self._should_end_bot_topic(chat_id=chat_id, sender=sender, prompt=prompt):
             logger.info("Topic-end judge stopped bot-to-bot reply loop in chat_id={} sender_id={}", chat_id, user_id)
             return
@@ -229,13 +246,26 @@ class TelegramBot:
         if await self._handle_image_generation_command(chat_id=chat_id, prompt=prompt, reply_to_message_id=message_id):
             return
 
-        images = await self._message_images(chat_id=chat_id, image_refs=image_refs, reply_to_message_id=message_id)
-        if images is None:
+        attachments = await load_message_attachments(
+            telegram=self.telegram,
+            chat_id=chat_id,
+            image_refs=image_refs,
+            document_refs=document_refs,
+            reply_to_message_id=message_id,
+            image_enabled=self.image_input_enabled,
+            image_max_bytes=self.image_max_bytes,
+            document_enabled=self.document_input_enabled,
+            document_max_bytes=self.document_max_bytes,
+            document_converter=self.document_converter,
+        )
+        if attachments is None:
             return
+        images, documents = attachments
 
         if (
             self.task_queue is not None
             and not images
+            and not documents
             and not prompt.startswith("/")
             and _is_likely_long_running_action(prompt)
         ):
@@ -266,6 +296,7 @@ class TelegramBot:
             prompt,
             user_id=user_id,
             images=images,
+            documents=documents,
             reply_context=reply_context,
             progress=progress,
         )
@@ -285,6 +316,7 @@ class TelegramBot:
         *,
         user_id: int | None = None,
         images: Sequence[ImageAttachment] = (),
+        documents: Sequence[ConvertedDocument] = (),
         reply_context: ReplyMessageContext | None = None,
         progress: _TelegramAgentProgress | None = None,
     ) -> AgentReply:
@@ -295,6 +327,7 @@ class TelegramBot:
             allow_management=True,
             synthetic=False,
             images=images,
+            documents=documents,
             reply_context=reply_context,
             progress=progress,
         )
@@ -378,6 +411,7 @@ class TelegramBot:
         allow_management: bool,
         synthetic: bool,
         images: Sequence[ImageAttachment],
+        documents: Sequence[ConvertedDocument] = (),
         reply_context: ReplyMessageContext | None = None,
         progress: _TelegramAgentProgress | None = None,
         submission_intent: SubmissionIntent = "steer",
@@ -388,6 +422,7 @@ class TelegramBot:
             user_id=user_id,
             allow_management=allow_management,
             images=images,
+            documents=documents,
             reply_context=reply_context,
             progress=progress,
             submission_intent=submission_intent,
@@ -400,7 +435,10 @@ class TelegramBot:
             self._record_turn(
                 chat_id,
                 user_text=_history_user_text(
-                    _history_text_with_reply_context(text, reply_context=reply_context), images=images
+                    _history_text_with_reply_context(text, reply_context=reply_context),
+                    images=images,
+                    documents=documents,
+                    document_max_markdown_chars=self.document_max_markdown_chars,
                 ),
                 assistant_text=reply.text,
                 synthetic=synthetic,
@@ -415,6 +453,7 @@ class TelegramBot:
         user_id: int | None,
         allow_management: bool,
         images: Sequence[ImageAttachment],
+        documents: Sequence[ConvertedDocument] = (),
         reply_context: ReplyMessageContext | None = None,
         progress: _TelegramAgentProgress | None = None,
         submission_intent: SubmissionIntent = "steer",
@@ -430,6 +469,7 @@ class TelegramBot:
                 text=text,
                 user_id=user_id,
                 images=images,
+                documents=documents,
                 reply_context=reply_context,
                 progress=progress,
             )
@@ -438,13 +478,17 @@ class TelegramBot:
         elif _is_management_command(text):
             return AgentReply(text="Event 訊息不允許執行管理指令。")
 
-        if not images:
+        if not images and not documents:
             proactive_reply = await self._handle_proactive_action(chat_id=chat_id, text=text)
             if proactive_reply is not None:
                 return AgentReply(text=proactive_reply)
         return await self._ask_agent_response(
             chat_id,
-            _llm_prompt_with_reply_context(text.strip(), reply_context=reply_context),
+            _llm_prompt_with_documents(
+                _llm_prompt_with_reply_context(text.strip(), reply_context=reply_context),
+                documents=documents,
+                max_markdown_chars=self.document_max_markdown_chars,
+            ),
             images=images,
             progress=progress,
             intent=submission_intent,
@@ -589,6 +633,7 @@ class TelegramBot:
         text: str,
         user_id: int | None,
         images: Sequence[ImageAttachment],
+        documents: Sequence[ConvertedDocument] = (),
         reply_context: ReplyMessageContext | None = None,
         progress: _TelegramAgentProgress | None = None,
     ) -> str | AgentReply | None:
@@ -609,11 +654,20 @@ class TelegramBot:
             case "/cancel":
                 return await self._cancel_active_run(chat_id)
             case "/ask":
-                if not prompt and not images:
+                if not prompt and not images and not documents:
                     return "請在 /ask 後面加上你想問的內容。"
+                default_prompt = DEFAULT_DOCUMENT_PROMPT if documents else DEFAULT_IMAGE_PROMPT
+                agent_prompt = _llm_prompt_with_reply_context(
+                    prompt or default_prompt,
+                    reply_context=reply_context,
+                )
                 return await self._ask_agent_response(
                     chat_id,
-                    _llm_prompt_with_reply_context(prompt or DEFAULT_IMAGE_PROMPT, reply_context=reply_context),
+                    _llm_prompt_with_documents(
+                        agent_prompt,
+                        documents=documents,
+                        max_markdown_chars=self.document_max_markdown_chars,
+                    ),
                     images=images,
                     progress=progress,
                 )
@@ -720,46 +774,6 @@ class TelegramBot:
             return True
         await self._send_generated_image(chat_id=chat_id, prompt=image_prompt, reply_to_message_id=reply_to_message_id)
         return True
-
-    async def _message_images(
-        self, *, chat_id: int, image_refs: Sequence[TelegramImageRef], reply_to_message_id: int | None
-    ) -> list[ImageAttachment] | None:
-        if not image_refs:
-            return []
-        if not self.image_input_enabled:
-            await self.telegram.send_message(
-                chat_id, "圖片理解功能目前未啟用。", reply_to_message_id=reply_to_message_id
-            )
-            return None
-        try:
-            return [await self._download_image(image_ref) for image_ref in image_refs]
-        except TelegramImageError as exc:
-            await self.telegram.send_message(chat_id, str(exc), reply_to_message_id=reply_to_message_id)
-        except _TELEGRAM_API_ERRORS:
-            logger.exception("Failed to download Telegram image")
-            await self.telegram.send_message(
-                chat_id,
-                "我有收到圖片，但目前下載失敗，請稍後再試或改用較小的圖片。",
-                reply_to_message_id=reply_to_message_id,
-            )
-        return None
-
-    async def _download_image(self, image_ref: TelegramImageRef) -> ImageAttachment:
-        if image_ref.file_size is not None and image_ref.file_size > self.image_max_bytes:
-            raise TelegramImageError("這張圖片太大了，我先不讀取；請改傳較小的圖片。")
-
-        file_info = await self.telegram.get_file(image_ref.file_id)
-        file_size = file_info.get("file_size")
-        if isinstance(file_size, int) and file_size > self.image_max_bytes:
-            raise TelegramImageError("這張圖片太大了，我先不讀取；請改傳較小的圖片。")
-        file_path = file_info.get("file_path")
-        if not isinstance(file_path, str) or not file_path:
-            raise TelegramImageError("我有收到圖片，但 Telegram 沒有提供可下載的檔案路徑。")
-
-        data = await self.telegram.download_file(file_path)
-        if len(data) > self.image_max_bytes:
-            raise TelegramImageError("這張圖片太大了，我先不讀取；請改傳較小的圖片。")
-        return ImageAttachment(data=data, media_type=image_ref.media_type, filename=image_ref.filename)
 
     async def _send_generated_image(self, *, chat_id: int, prompt: str, reply_to_message_id: int | None) -> None:
         if self.image_generator is None:
@@ -915,12 +929,13 @@ def _help_message() -> str:
             "/cancel - 取消目前執行中的任務",
             "/ask <問題> - 詢問 AI 助理",
             "/image <描述> - 產生圖片（需要 provider 支援 /images/generations）",
+            "直接傳送 PDF、Office、OpenDocument、RTF、EPUB 或 CSV 文件即可閱讀",
             "/skills add <package> - 使用 npx skills add 安裝 Agent Skills",
             "/skills list - 列出已安裝 Agent Skills",
             "/soul show|reload|path - 管理 SOUL.md",
             "/events list|show|cancel|reload - 管理 immediate events",
             "/tasks list|show|cancel - 管理 proactive tasks",
-            "也可以直接傳一般文字給我。",
+            "也可以直接傳一般文字、支援的文件或圖片給我。",
         ]
     )
 

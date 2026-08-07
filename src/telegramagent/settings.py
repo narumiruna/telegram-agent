@@ -59,6 +59,23 @@ class Settings(BaseSettings):
     )
     bot_agent_chars_per_token: float = Field(default=4.0, gt=0, alias="BOT_AGENT_CHARS_PER_TOKEN")
     bot_tasks_max_concurrent_per_chat: int = Field(default=1, ge=1, alias="BOT_TASKS_MAX_CONCURRENT_PER_CHAT")
+    bot_document_input_enabled: bool = Field(default=True, alias="BOT_DOCUMENT_INPUT_ENABLED")
+    bot_document_max_bytes: int = Field(default=20_000_000, ge=1, alias="BOT_DOCUMENT_MAX_BYTES")
+    bot_document_max_markdown_chars: int = Field(
+        default=50_000,
+        ge=1,
+        alias="BOT_DOCUMENT_MAX_MARKDOWN_CHARS",
+    )
+    bot_document_conversion_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        alias="BOT_DOCUMENT_CONVERSION_TIMEOUT_SECONDS",
+    )
+    bot_document_max_concurrent_conversions: int = Field(
+        default=2,
+        ge=1,
+        alias="BOT_DOCUMENT_MAX_CONCURRENT_CONVERSIONS",
+    )
     bot_image_input_enabled: bool = Field(default=True, alias="BOT_IMAGE_INPUT_ENABLED")
     bot_image_max_bytes: int = Field(default=8_000_000, ge=1, alias="BOT_IMAGE_MAX_BYTES")
     bot_image_generation_enabled: bool = Field(default=False, alias="BOT_IMAGE_GENERATION_ENABLED")

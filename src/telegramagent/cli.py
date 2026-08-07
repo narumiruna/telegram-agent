@@ -24,6 +24,7 @@ from telegramagent.container_tools import is_running_in_container
 from telegramagent.context_files import ContextFile
 from telegramagent.context_files import ContextManagementTool
 from telegramagent.context_files import load_context_file
+from telegramagent.documents import AnyDocConverter
 from telegramagent.events import EventManagementTool
 from telegramagent.events import EventSettings
 from telegramagent.events import EventWatcher
@@ -160,6 +161,18 @@ def _mcp_toolsets_from_settings(settings: Settings) -> tuple[tuple[Any, ...], tu
     return (*yfinance_toolsets, *firecrawl_toolsets), capabilities
 
 
+def _document_converter_from_settings(settings: Settings) -> tuple[AnyDocConverter | None, Capability]:
+    description = "Bounded local conversion of Telegram documents to Markdown with firecrawl-anydoc"
+    if not settings.bot_document_input_enabled:
+        return None, Capability("document_input.anydoc", False, description, "disabled")
+    converter = AnyDocConverter(
+        max_markdown_chars=settings.bot_document_max_markdown_chars,
+        timeout_seconds=settings.bot_document_conversion_timeout_seconds,
+        max_concurrent=settings.bot_document_max_concurrent_conversions,
+    )
+    return converter, Capability("document_input.anydoc", True, description)
+
+
 def _image_generation_unavailable_reason(settings: Settings) -> str:
     if not settings.bot_image_generation_enabled:
         return "disabled"
@@ -232,6 +245,8 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         logger.info("Loaded {} Agent Skill(s) from {}", len(skills), settings.bot_skills_dir)
 
     capabilities = CapabilityRegistry()
+    document_converter, document_capability = _document_converter_from_settings(settings)
+    capabilities.set(document_capability)
     mcp_toolsets, mcp_capabilities = _mcp_toolsets_from_settings(settings)
     for mcp_capability in mcp_capabilities:
         capabilities.set(mcp_capability)
@@ -397,6 +412,10 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         image_input_enabled=settings.bot_image_input_enabled,
         image_max_bytes=settings.bot_image_max_bytes,
         image_generator=image_generator,
+        document_input_enabled=settings.bot_document_input_enabled,
+        document_max_bytes=settings.bot_document_max_bytes,
+        document_max_markdown_chars=settings.bot_document_max_markdown_chars,
+        document_converter=document_converter,
         tools=[
             ContextManagementTool(
                 command_name="soul",

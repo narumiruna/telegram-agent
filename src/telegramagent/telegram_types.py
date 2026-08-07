@@ -9,6 +9,7 @@ from typing import TypedDict
 from telegramagent.agent_runtime import AgentEventHandler
 from telegramagent.agent_runtime import AgentSubmission
 from telegramagent.agent_runtime import SubmissionIntent
+from telegramagent.documents import ConvertedDocument
 from telegramagent.images import GeneratedImage
 from telegramagent.images import ImageAttachment
 from telegramagent.url_context import UrlContext
@@ -117,6 +118,10 @@ class ImageGenerator(Protocol):
     async def generate(self, prompt: str) -> GeneratedImage: ...
 
 
+class DocumentConverter(Protocol):
+    async def convert(self, data: bytes, *, filename: str, media_type: str) -> ConvertedDocument: ...
+
+
 class SkillTool(Protocol):
     async def handle(self, text: str, *, chat_id: int, user_id: int | None) -> str | None: ...
 
@@ -157,7 +162,7 @@ class TelegramGateway(Protocol):
 
     async def get_file(self, file_id: str) -> TelegramFile: ...
 
-    async def download_file(self, file_path: str) -> bytes: ...
+    async def download_file(self, file_path: str, *, max_bytes: int | None = None) -> bytes: ...
 
     async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> int | None: ...
 
@@ -177,6 +182,14 @@ class TelegramGateway(Protocol):
 
 @dataclass(frozen=True)
 class TelegramImageRef:
+    file_id: str
+    media_type: str
+    filename: str
+    file_size: int | None = None
+
+
+@dataclass(frozen=True)
+class TelegramDocumentRef:
     file_id: str
     media_type: str
     filename: str

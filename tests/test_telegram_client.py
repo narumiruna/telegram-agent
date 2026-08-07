@@ -7,8 +7,64 @@ import httpx
 import pytest
 
 from telegramagent.telegram import TelegramClient
+from telegramagent.telegram_client import TelegramDownloadTooLargeError
 from telegramagent.telegraph_pages import TelegraphPublishError
 from tests.telegram_test_support import FakeTelegraphPublisher
+
+
+class TrackingByteStream(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks = chunks
+        self.iterated = False
+
+    async def __aiter__(self):
+        self.iterated = True
+        for chunk in self.chunks:
+            yield chunk
+
+
+@pytest.mark.asyncio
+async def test_download_file_rejects_content_length_before_reading_body() -> None:
+    stream = TrackingByteStream([b"too-large"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-length": "9"}, stream=stream)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        telegram = TelegramClient("token", http_client=client)
+        with pytest.raises(TelegramDownloadTooLargeError):
+            await telegram.download_file("documents/report.pdf", max_bytes=5)
+
+    assert stream.iterated is False
+
+
+@pytest.mark.asyncio
+async def test_download_file_rejects_stream_that_crosses_limit_without_content_length() -> None:
+    stream = TrackingByteStream([b"abc", b"def"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        telegram = TelegramClient("token", http_client=client)
+        with pytest.raises(TelegramDownloadTooLargeError):
+            await telegram.download_file("documents/report.pdf", max_bytes=5)
+
+    assert stream.iterated is True
+
+
+@pytest.mark.asyncio
+async def test_download_file_returns_body_at_exact_limit() -> None:
+    stream = TrackingByteStream([b"abc", b"de"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        telegram = TelegramClient("token", http_client=client)
+        content = await telegram.download_file("documents/report.pdf", max_bytes=5)
+
+    assert content == b"abcde"
 
 
 @pytest.mark.asyncio

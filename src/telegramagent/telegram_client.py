@@ -20,6 +20,10 @@ class TelegramApiError(RuntimeError):
     """Raised when Telegram Bot API returns an error response."""
 
 
+class TelegramDownloadTooLargeError(TelegramApiError):
+    """Raised before a Telegram file download can exceed its byte limit."""
+
+
 class TelegramClient:
     def __init__(
         self,
@@ -59,11 +63,13 @@ class TelegramClient:
             raise TelegramApiError("Telegram getFile did not return an object")
         return cast(TelegramFile, result)
 
-    async def download_file(self, file_path: str) -> bytes:
+    async def download_file(self, file_path: str, *, max_bytes: int | None = None) -> bytes:
+        if max_bytes is not None and max_bytes < 1:
+            raise ValueError("max_bytes must be positive")
         if self.http_client is None:
             async with httpx.AsyncClient(timeout=60) as client:
-                return await self._get_file_content(client, file_path)
-        return await self._get_file_content(self.http_client, file_path)
+                return await self._get_file_content(client, file_path, max_bytes=max_bytes)
+        return await self._get_file_content(self.http_client, file_path, max_bytes=max_bytes)
 
     async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> int | None:
         last_message_id: int | None = None
@@ -177,10 +183,30 @@ class TelegramClient:
         response = await client.post(f"{self.base_url}/{method}", data=payload, files=files)
         return _telegram_result(response)
 
-    async def _get_file_content(self, client: httpx.AsyncClient, file_path: str) -> bytes:
-        response = await client.get(f"https://api.telegram.org/file/bot{self.token}/{file_path}")
-        response.raise_for_status()
-        return response.content
+    async def _get_file_content(
+        self,
+        client: httpx.AsyncClient,
+        file_path: str,
+        *,
+        max_bytes: int | None,
+    ) -> bytes:
+        async with client.stream("GET", f"https://api.telegram.org/file/bot{self.token}/{file_path}") as response:
+            response.raise_for_status()
+            content_length = response.headers.get("content-length")
+            if max_bytes is not None and content_length is not None:
+                try:
+                    declared_bytes = int(content_length)
+                except ValueError:
+                    declared_bytes = -1
+                if declared_bytes > max_bytes:
+                    raise TelegramDownloadTooLargeError("Telegram file exceeds the configured byte limit")
+
+            content = bytearray()
+            async for chunk in response.aiter_bytes():
+                if max_bytes is not None and len(content) + len(chunk) > max_bytes:
+                    raise TelegramDownloadTooLargeError("Telegram file exceeds the configured byte limit")
+                content.extend(chunk)
+            return bytes(content)
 
 
 def _telegram_result(response: httpx.Response) -> object:

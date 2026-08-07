@@ -8,8 +8,94 @@ from telegramagent.telegram import TelegramBot
 from telegramagent.url_context import UrlContext
 from tests.telegram_test_support import FakeAgent
 from tests.telegram_test_support import FakeArtifactAgent
+from tests.telegram_test_support import FakeDocumentConverter
 from tests.telegram_test_support import FakeTelegram
 from tests.telegram_test_support import FakeTopicEndJudge
+
+
+@pytest.mark.asyncio
+async def test_group_mention_reply_document_converts_replied_document() -> None:
+    telegram = FakeTelegram()
+    telegram.files["report"] = {"file_id": "report", "file_path": "documents/report.docx", "file_size": 20}
+    telegram.file_contents["documents/report.docx"] = b"docx-bytes"
+    converter = FakeDocumentConverter("# Replied report", document_format="docx")
+    agent = FakeArtifactAgent(AgentReply("ok"))
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=agent,
+        document_converter=converter,
+        bot_username="fakebot",
+        bot_user_id=42,
+    )
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 789, "username": "bob"},
+                "reply_to_message": {
+                    "message_id": 10,
+                    "from": {"id": 456, "username": "alice"},
+                    "document": {
+                        "file_id": "report",
+                        "file_name": "report.docx",
+                        "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "file_size": 20,
+                    },
+                },
+                "text": "@FakeBot 幫我整理這份文件",
+            },
+        }
+    )
+
+    assert telegram.downloaded_paths == ["documents/report.docx"]
+    assert converter.calls == [
+        (
+            b"docx-bytes",
+            "replied-report.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+    ]
+    prompt = agent.calls[0][0]
+    assert "Current user message:\n幫我整理這份文件" in prompt
+    assert "Filename: replied-report.docx" in prompt
+    assert "# Replied report" in prompt
+
+
+@pytest.mark.asyncio
+async def test_unaddressed_group_document_is_not_downloaded() -> None:
+    telegram = FakeTelegram()
+    converter = FakeDocumentConverter()
+    bot = TelegramBot(
+        telegram=telegram,
+        agent=FakeAgent(),
+        document_converter=converter,
+        bot_username="fakebot",
+        bot_user_id=42,
+    )
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 456},
+                "document": {
+                    "file_id": "report",
+                    "file_name": "report.pdf",
+                    "mime_type": "application/pdf",
+                    "file_size": 20,
+                },
+            },
+        }
+    )
+
+    assert telegram.downloaded_paths == []
+    assert converter.calls == []
+    assert telegram.sent == []
 
 
 @pytest.mark.asyncio

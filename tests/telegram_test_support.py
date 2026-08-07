@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from telegramagent.actions import ActionContent
+from telegramagent.documents import ConvertedDocument
 from telegramagent.images import AgentReply
 from telegramagent.images import GeneratedImage
 from telegramagent.images import ImageAttachment
@@ -13,6 +14,7 @@ from telegramagent.skills import SkillInstallResult
 from telegramagent.telegram import TelegramBot
 from telegramagent.telegram import TelegramFile
 from telegramagent.telegram import TelegramUpdate
+from telegramagent.telegram_client import TelegramDownloadTooLargeError
 from telegramagent.telegraph_pages import TelegraphPublishError
 
 
@@ -35,9 +37,12 @@ class FakeTelegram:
     async def get_file(self, file_id: str) -> TelegramFile:
         return self.files.get(file_id, {"file_id": file_id, "file_path": f"photos/{file_id}.jpg"})
 
-    async def download_file(self, file_path: str) -> bytes:
+    async def download_file(self, file_path: str, *, max_bytes: int | None = None) -> bytes:
         self.downloaded_paths.append(file_path)
-        return self.file_contents.get(file_path, b"image-bytes")
+        content = self.file_contents.get(file_path, b"image-bytes")
+        if max_bytes is not None and len(content) > max_bytes:
+            raise TelegramDownloadTooLargeError("too large")
+        return content
 
     async def send_message(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None) -> int | None:
         self.sent.append((chat_id, text, reply_to_message_id))
@@ -120,6 +125,31 @@ class FakeVisionAgent:
         image_list = [*images]
         self.calls.append((prompt, [*history], image_list))
         return f"vision: {prompt} ({len(image_list)})"
+
+
+class FakeDocumentConverter:
+    def __init__(
+        self,
+        markdown: str = "# Converted document",
+        *,
+        document_format: str | None = "pdf",
+        error: Exception | None = None,
+    ) -> None:
+        self.markdown = markdown
+        self.document_format = document_format
+        self.error = error
+        self.calls: list[tuple[bytes, str, str]] = []
+
+    async def convert(self, data: bytes, *, filename: str, media_type: str) -> ConvertedDocument:
+        self.calls.append((data, filename, media_type))
+        if self.error is not None:
+            raise self.error
+        return ConvertedDocument(
+            filename=filename,
+            media_type=media_type,
+            format=self.document_format,
+            markdown=self.markdown,
+        )
 
 
 class FakeImageGenerator:

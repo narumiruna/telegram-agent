@@ -56,7 +56,9 @@ async def test_start_help_id_and_reset_commands() -> None:
     bot = TelegramBot(telegram=FakeTelegram(), agent=FakeAgent())
 
     assert "Telegram AI 助理" in await build_reply(bot, 123, "/start", user_id=456)
-    assert "/ask <問題>" in await build_reply(bot, 123, "/help", user_id=456)
+    help_text = await build_reply(bot, 123, "/help", user_id=456)
+    assert "/ask <問題>" in help_text
+    assert "PDF、Office、OpenDocument、RTF、EPUB 或 CSV" in help_text
     assert await build_reply(bot, 123, "/id", user_id=456) == "chat_id: 123\nuser_id: 456"
 
     bot.histories[123] = [("user", "hi")]

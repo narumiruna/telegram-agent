@@ -7,6 +7,7 @@ requires-python = ">=3.14"
 authors         = [{ name = "narumi", email = "toucans-cutouts0f@icloud.com" }]
 dependencies    = [
   "fastmcp>=3.4.2",
+  "firecrawl-anydoc>=0.1.6",
   "gurume>=0.0.12",
   "httpx>=0.28.1",
   "kabigon>=0.19.5",
@@ -82,13 +83,14 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**.py"                             = ["ANN", "TRY", "PERF", "RUF001"]
-"src/telegramagent/actions.py"            = ["RUF001"]
-"src/telegramagent/llm.py"                = ["RUF001"]
-"src/telegramagent/telegram.py"           = ["RUF001"]
-"src/telegramagent/telegram_messages.py"  = ["RUF001"]
-"src/telegramagent/telegram_rendering.py" = ["RUF001"]
-"src/telegramagent/url_context.py"        = ["RUF001"]
+"tests/**.py"                               = ["ANN", "TRY", "PERF", "RUF001"]
+"src/telegramagent/actions.py"              = ["RUF001"]
+"src/telegramagent/llm.py"                  = ["RUF001"]
+"src/telegramagent/telegram.py"             = ["RUF001"]
+"src/telegramagent/telegram_attachments.py" = ["RUF001"]
+"src/telegramagent/telegram_messages.py"    = ["RUF001"]
+"src/telegramagent/telegram_rendering.py"   = ["RUF001"]
+"src/telegramagent/url_context.py"          = ["RUF001"]
 
 [tool.ruff.lint.isort]
 force-single-line = true
