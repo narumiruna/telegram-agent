@@ -16,7 +16,7 @@ runtime tools such as kabigon, Yahoo Finance MCP, Firecrawl MCP, and container-l
   endpoint when enabled.
 - **Long replies**: replies over Telegram's practical limit are published to Telegraph and replaced with a link.
 - **Durable context**: `SOUL.md` and structured per-chat model transcripts survive restarts.
-- **Agent runtime**: per-chat execution, a single final Telegram status edit, mid-run steering, `/cancel`, transient retries, and automatic context compaction.
+- **Agent runtime**: per-chat execution, a single final Telegram status edit, mid-run steering, idle follow-ups for synthetic events, `/cancel`, request-level transient retries, and per-request context compaction.
 - **Agent Skills**: local `.agents/skills/*/SKILL.md` files are loaded as model instructions.
 - **Docker-ready**: Compose includes mounted runtime state, Playwright browser assets, and optional container tools.
 
@@ -26,7 +26,7 @@ runtime tools such as kabigon, Yahoo Finance MCP, Firecrawl MCP, and container-l
 Telegram updates
   -> telegramagent.telegram
   -> command / image / reply-context / proactive URL routing
-  -> telegramagent.agent_runtime (per-chat state, steering, retry, compaction)
+  -> telegramagent.agent_runtime (per-chat state, steering/follow-up intent, lifecycle, compaction)
   -> telegramagent.llm via Pydantic AI
   -> OpenAI-compatible API and tools
   -> one final Telegram status edit and response
@@ -114,8 +114,8 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | --- | --- | --- |
 | `BOT_SOUL_PATH` | `SOUL.md` | Persona and voice instructions. |
 | `BOT_SESSION_LOG_DIR` | `.telegramagent/sessions` | Structured v2 per-chat Pydantic AI transcripts used after restarts. |
-| `BOT_AGENT_MAX_ATTEMPTS` | `3` | Maximum attempts for transient provider/MCP failures. |
-| `BOT_AGENT_RETRY_BASE_DELAY_SECONDS` | `1` | Initial exponential retry delay. |
+| `BOT_AGENT_MAX_ATTEMPTS` | `3` | Maximum attempts for one transient model request/assistant turn; completed tools are not replayed. |
+| `BOT_AGENT_RETRY_BASE_DELAY_SECONDS` | `1` | Initial cancellable exponential delay between model-request attempts. |
 | `BOT_AGENT_CONTEXT_TOKEN_BUDGET` | `100000` | Approximate context budget that drives automatic compaction. |
 | `BOT_AGENT_COMPACTION_TRIGGER_RATIO` | `0.8` | Fraction of the context budget at which compaction starts. |
 | `BOT_AGENT_CHARS_PER_TOKEN` | `4` | Token-estimation fallback when the provider cannot count ahead. |
@@ -304,7 +304,7 @@ Pydantic AI tool, or MCP toolset.
 | `/help` | Show help. |
 | `/id` | Show current chat/user ID for allowlist setup. |
 | `/reset` | Clear conversation memory for the current chat. |
-| `/cancel` | Cancel the active run for this chat and discard pending steering input. |
+| `/cancel` | Cancel the active run for this chat and discard pending steering and follow-up input. |
 | `/ask <question>` | Ask the AI assistant directly. |
 | `/image <prompt>` | Generate an image when image output is enabled. |
 | `/skills add <package>` | Install Agent Skills with `npx`. |

@@ -15,13 +15,17 @@ from pydantic_ai.messages import ModelResponse
 from pydantic_ai.messages import TextPart
 from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.messages import UserPromptPart
+from pydantic_ai.models.function import DeltaToolCall
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from telegramagent.agent_runtime import AgentEvent
+from telegramagent.agent_runtime import AgentRuntime
 from telegramagent.images import GeneratedImage
 from telegramagent.images import ImageAttachment
 from telegramagent.llm import ChatAgent
 from telegramagent.llm import TopicEndAgent
+from telegramagent.session import SessionLog
 from telegramagent.skills import AgentSkill
 from tests.telegram_test_support import FakeRunnableAgent
 from tests.telegram_test_support import FakeRunResult
@@ -49,7 +53,7 @@ async def test_chat_agent_uses_pydantic_agent_with_history() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_agent_streams_normalized_lifecycle_events_and_messages() -> None:
+async def test_chat_agent_streams_normalized_turn_events_and_messages() -> None:
     pydantic_agent = PydanticAgent(TestModel(custom_output_text="streamed answer"))
     agent = ChatAgent(api_key="key", model="model", agent_factory=lambda _instructions: pydantic_agent)
     events: list[AgentEvent] = []
@@ -57,10 +61,337 @@ async def test_chat_agent_streams_normalized_lifecycle_events_and_messages() -> 
     result = await agent.run_streamed("question", event_handler=events.append)
 
     assert result.reply.text == "streamed answer"
-    assert events[0].type == "agent_start"
-    assert events[-1].type == "agent_end"
+    assert events[0].type == "turn_start"
+    assert events[-1].type == "turn_end"
+    assert all(event.type not in {"agent_start", "agent_end"} for event in events)
     assert "".join(event.text for event in events if event.type == "message_delta") == "streamed answer"
     assert result.new_messages
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_retries_transient_model_request_without_restarting_tool_run() -> None:
+    calls = 0
+    tool_calls = 0
+
+    async def mutate_counter(value: int = 1) -> str:
+        nonlocal tool_calls
+        tool_calls += value
+        return str(tool_calls)
+
+    async def stream_function(messages, _info):
+        del messages
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            yield {
+                0: DeltaToolCall(
+                    name="mutate_counter",
+                    json_args='{"value":1}',
+                    tool_call_id="mutate-1",
+                )
+            }
+        elif calls == 2:
+            raise httpx.ConnectError("stream dropped")
+        else:
+            yield "done"
+
+    pydantic_agent = PydanticAgent(
+        FunctionModel(stream_function=stream_function), tools=[Tool(mutate_counter, takes_ctx=False)]
+    )
+    events: list[AgentEvent] = []
+    agent = ChatAgent(
+        api_key="key",
+        model="model",
+        agent_factory=lambda _instructions: pydantic_agent,
+        max_attempts=2,
+        retry_base_delay_seconds=0,
+    )
+
+    result = await agent.run_streamed("mutate", event_handler=events.append)
+
+    assert result.reply.text == "done"
+    assert calls == 3
+    assert tool_calls == 1
+    assert [event.type for event in events].count("retry_scheduled") == 1
+    assert any(
+        isinstance(message, ModelRequest) and any(isinstance(part, ToolReturnPart) for part in message.parts)
+        for message in result.new_messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_never_retries_an_escaped_tool_failure() -> None:
+    model_calls = 0
+    tool_calls = 0
+
+    async def mutate_then_fail() -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        raise httpx.ConnectError("tool transport failed")
+
+    async def stream_function(messages, _info):
+        del messages
+        nonlocal model_calls
+        model_calls += 1
+        yield {0: DeltaToolCall(name="mutate_then_fail", json_args="{}", tool_call_id=f"mutate-{model_calls}")}
+
+    agent = ChatAgent(
+        api_key="key",
+        model="model",
+        agent_factory=lambda _instructions: PydanticAgent(
+            FunctionModel(stream_function=stream_function), tools=[Tool(mutate_then_fail, takes_ctx=False)]
+        ),
+        max_attempts=3,
+        retry_base_delay_seconds=0,
+    )
+
+    with pytest.raises(httpx.ConnectError, match="tool transport failed"):
+        await agent.run_streamed("mutate")
+
+    assert model_calls == 1
+    assert tool_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_retries_are_bounded_with_exponential_backoff() -> None:
+    calls = 0
+    delays: list[float] = []
+
+    async def stream_function(messages, _info):
+        del messages
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise httpx.ConnectError("offline")
+        yield "recovered"
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    agent = ChatAgent(
+        api_key="key",
+        model="model",
+        agent_factory=lambda _instructions: PydanticAgent(FunctionModel(stream_function=stream_function)),
+        max_attempts=3,
+        retry_base_delay_seconds=0.25,
+        retry_sleep=record_sleep,
+    )
+
+    result = await agent.run_streamed("question")
+
+    assert result.reply.text == "recovered"
+    assert calls == 3
+    assert delays == [0.25, 0.5]
+
+
+@pytest.mark.asyncio
+async def test_runtime_emits_one_error_lifecycle_after_retry_exhaustion(tmp_path: Path) -> None:
+    calls = 0
+
+    async def stream_function(messages, _info):
+        del messages
+        nonlocal calls
+        calls += 1
+        if False:
+            yield ""
+        raise httpx.ConnectError("offline")
+
+    agent = ChatAgent(
+        api_key="key",
+        model="model",
+        agent_factory=lambda _instructions: PydanticAgent(FunctionModel(stream_function=stream_function)),
+        max_attempts=2,
+        retry_base_delay_seconds=0,
+    )
+    runtime = AgentRuntime(backend=agent, sessions=SessionLog(tmp_path / "sessions"))
+    events: list[AgentEvent] = []
+
+    with pytest.raises(httpx.ConnectError, match="offline"):
+        await runtime.submit(1, "question", event_handler=events.append)
+
+    assert calls == 2
+    assert [event.type for event in events].count("agent_start") == 1
+    assert [event.type for event in events].count("retry_scheduled") == 1
+    assert [event.type for event in events].count("agent_error") == 1
+    assert events[0].type == "agent_start"
+    assert events[-1].type == "agent_error"
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_does_not_retry_permanent_model_failure() -> None:
+    calls = 0
+
+    async def stream_function(messages, _info):
+        del messages
+        nonlocal calls
+        calls += 1
+        if False:
+            yield ""
+        raise ValueError("bad request")
+
+    agent = ChatAgent(
+        api_key="key",
+        model="model",
+        agent_factory=lambda _instructions: PydanticAgent(FunctionModel(stream_function=stream_function)),
+        max_attempts=3,
+        retry_base_delay_seconds=0,
+    )
+
+    with pytest.raises(ValueError, match="bad request"):
+        await agent.run_streamed("question")
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_retry_backoff_is_cancellable() -> None:
+    sleeping = asyncio.Event()
+
+    async def stream_function(messages, _info):
+        del messages
+        if False:
+            yield ""
+        raise httpx.ConnectError("offline")
+
+    async def blocking_sleep(_delay: float) -> None:
+        sleeping.set()
+        await asyncio.Event().wait()
+
+    agent = ChatAgent(
+        api_key="key",
+        model="model",
+        agent_factory=lambda _instructions: PydanticAgent(FunctionModel(stream_function=stream_function)),
+        max_attempts=3,
+        retry_base_delay_seconds=1,
+        retry_sleep=blocking_sleep,
+    )
+    task = asyncio.create_task(agent.run_streamed("question"))
+    await sleeping.wait()
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_runtime_and_chat_agent_emit_one_lifecycle_across_retry(tmp_path: Path) -> None:
+    calls = 0
+
+    async def stream_function(messages, _info):
+        del messages
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ConnectError("offline")
+        yield "recovered"
+
+    agent = ChatAgent(
+        api_key="key",
+        model="model",
+        agent_factory=lambda _instructions: PydanticAgent(FunctionModel(stream_function=stream_function)),
+        max_attempts=2,
+        retry_base_delay_seconds=0,
+    )
+    runtime = AgentRuntime(backend=agent, sessions=SessionLog(tmp_path / "sessions"))
+    events: list[AgentEvent] = []
+
+    result = await runtime.submit(1, "question", event_handler=events.append)
+
+    assert result.kind == "completed"
+    assert [event.type for event in events].count("agent_start") == 1
+    assert [event.type for event in events].count("retry_scheduled") == 1
+    assert [event.type for event in events].count("agent_end") == 1
+    assert events[0].type == "agent_start"
+    assert events[-1].type == "agent_end"
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_discards_abandoned_partial_text_when_retrying_stream() -> None:
+    calls = 0
+
+    async def stream_function(messages, _info):
+        del messages
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            yield "abandoned"
+            raise httpx.ReadError("stream dropped")
+        yield "recovered"
+
+    agent = ChatAgent(
+        api_key="key",
+        model="model",
+        agent_factory=lambda _instructions: PydanticAgent(FunctionModel(stream_function=stream_function)),
+        max_attempts=2,
+        retry_base_delay_seconds=0,
+    )
+    events: list[AgentEvent] = []
+
+    result = await agent.run_streamed("question", event_handler=events.append)
+
+    assert result.reply.text == "recovered"
+    assert "".join(event.text for event in events if event.type == "message_delta") == "recovered"
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_maps_follow_up_to_when_idle_queue() -> None:
+    seen_user_text: list[str] = []
+
+    async def stream_function(messages, _info):
+        seen_user_text.append(str(messages[-1]))
+        yield "first" if len(seen_user_text) == 1 else "second"
+
+    agent = ChatAgent(
+        api_key="key",
+        model="model",
+        agent_factory=lambda _instructions: PydanticAgent(FunctionModel(stream_function=stream_function)),
+    )
+
+    result = await agent.run_streamed(
+        "initial",
+        control_handler=lambda control: control.follow_up("later"),
+    )
+
+    assert result.reply.text == "second"
+    assert len(seen_user_text) == 2
+    assert "initial" in seen_user_text[0]
+    assert "later" in seen_user_text[1]
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_processes_history_before_every_model_request() -> None:
+    calls = 0
+    processed_lengths: list[int] = []
+
+    async def lookup(value: int = 1) -> str:
+        return str(value)
+
+    async def stream_function(messages, _info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            yield {0: DeltaToolCall(name="lookup", json_args='{"value":1}', tool_call_id="lookup-1")}
+        else:
+            yield "done"
+
+    async def process_history(messages):
+        processed_lengths.append(len(messages))
+        return messages
+
+    agent = ChatAgent(
+        api_key="key",
+        model="model",
+        agent_factory=lambda _instructions: PydanticAgent(
+            FunctionModel(stream_function=stream_function), tools=[Tool(lookup, takes_ctx=False)]
+        ),
+    )
+
+    result = await agent.run_streamed("question", history_processor=process_history)
+
+    assert result.reply.text == "done"
+    assert len(processed_lengths) == 2
+    assert processed_lengths[1] > processed_lengths[0]
 
 
 @pytest.mark.asyncio

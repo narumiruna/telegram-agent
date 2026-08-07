@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import re
 from collections.abc import Awaitable
@@ -7,11 +8,15 @@ from collections.abc import Callable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from typing import Any
+from typing import Literal
 from typing import Protocol
 from typing import cast
 
 import httpx
 from pydantic_ai import Agent as PydanticAgent
+from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.messages import FilePart
 from pydantic_ai.messages import FunctionToolCallEvent
@@ -37,6 +42,7 @@ from telegramagent.agent_runtime import AgentEvent
 from telegramagent.agent_runtime import AgentEventHandler
 from telegramagent.agent_runtime import AgentRunControl
 from telegramagent.agent_runtime import AgentRunOutput
+from telegramagent.agent_runtime import HistoryProcessor
 from telegramagent.context_files import ContextFile
 from telegramagent.context_files import format_context_for_instructions
 from telegramagent.images import AgentReply
@@ -126,6 +132,9 @@ class ChatAgent:
         kabigon_tool_timeout_seconds: float = 180.0,
         mcp_toolsets: Sequence[Any] = (),
         tools: Sequence[Any] = (),
+        max_attempts: int = 3,
+        retry_base_delay_seconds: float = 1.0,
+        retry_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.client = OpenAIChatClient(api_key=api_key, model=model, base_url=base_url, http_client=http_client)
         self.skills = skills or []
@@ -135,6 +144,13 @@ class ChatAgent:
         self.kabigon_tool_timeout_seconds = kabigon_tool_timeout_seconds
         self.mcp_toolsets = tuple(mcp_toolsets)
         self.tools = tuple(tools)
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
+        if retry_base_delay_seconds < 0:
+            raise ValueError("retry_base_delay_seconds must not be negative")
+        self.max_attempts = max_attempts
+        self.retry_base_delay_seconds = retry_base_delay_seconds
+        self.retry_sleep = retry_sleep
         self.agent = self._create_agent(api_key=api_key, model=model, base_url=base_url, agent_factory=agent_factory)
 
     @property
@@ -179,39 +195,74 @@ class ChatAgent:
         images: tuple[ImageAttachment, ...] = (),
         event_handler: AgentEventHandler | None = None,
         control_handler: Callable[[AgentRunControl], None] | None = None,
+        history_processor: HistoryProcessor | None = None,
     ) -> AgentRunOutput:
         if not self.client.is_configured:
             reply = await self.reply_with_artifacts(prompt, history=(), images=images)
             return AgentRunOutput(reply=reply, new_messages=())
 
-        user_prompt = _user_prompt(prompt, images)
+        user_prompt: str | Sequence[UserContent] | None = _user_prompt(prompt, images)
         iter_run = getattr(self.agent, "iter", None)
         if not callable(iter_run):
             return await self._run_stream_fallback(
-                user_prompt,
+                cast(str | Sequence[UserContent], user_prompt),
                 message_history=message_history,
                 event_handler=event_handler,
             )
 
-        return await self._run_pydantic_stream(
-            iter_run,
-            user_prompt=user_prompt,
-            message_history=message_history,
-            event_handler=event_handler,
-            control_handler=control_handler,
-        )
+        original_history_count = len(message_history)
+        checkpoint_messages = message_history
+        capabilities = [ProcessHistory(history_processor)] if history_processor is not None else []
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                output = await self._run_pydantic_stream(
+                    iter_run,
+                    user_prompt=user_prompt,
+                    message_history=checkpoint_messages,
+                    event_handler=event_handler,
+                    control_handler=control_handler,
+                    capabilities=capabilities,
+                )
+            except _ModelRunError as failure:
+                if attempt >= self.max_attempts or not _is_transient_model_error(failure.error):
+                    raise failure.error from failure
+                checkpoint_messages = _retry_checkpoint(failure.messages)
+                user_prompt = None
+                delay = self.retry_base_delay_seconds * (2 ** (attempt - 1))
+                await _emit_agent_event(
+                    event_handler,
+                    AgentEvent(
+                        "retry_scheduled",
+                        text="暫時性模型錯誤，準備重試。",
+                        data={"attempt": attempt + 1, "delay_seconds": delay},
+                    ),
+                )
+                await self.retry_sleep(delay)
+                continue
+
+            if checkpoint_messages is message_history:
+                return output
+            checkpoint_new_messages = checkpoint_messages[original_history_count:]
+            return AgentRunOutput(
+                reply=output.reply,
+                new_messages=(*checkpoint_new_messages, *output.new_messages),
+            )
+        raise RuntimeError("model run retry loop ended unexpectedly")  # pragma: no cover
 
     async def _run_pydantic_stream(
         self,
         iter_run: Callable[..., object],
         *,
-        user_prompt: str | Sequence[UserContent],
+        user_prompt: str | Sequence[UserContent] | None,
         message_history: tuple[ModelMessage, ...],
         event_handler: AgentEventHandler | None,
         control_handler: Callable[[AgentRunControl], None] | None,
+        capabilities: Sequence[object],
     ) -> AgentRunOutput:
-        await _emit_agent_event(event_handler, AgentEvent("agent_start"))
-        run_context = cast(Any, iter_run(user_prompt, message_history=message_history))
+        run_context = cast(
+            Any,
+            iter_run(user_prompt, message_history=message_history, capabilities=capabilities),
+        )
         async with run_context as agent_run:
             if control_handler is not None:
                 control_handler(_PydanticRunControl(agent_run))
@@ -219,14 +270,18 @@ class ChatAgent:
             while not PydanticAgent.is_end_node(node):
                 current_node = node
                 if PydanticAgent.is_model_request_node(current_node):
-                    await self._stream_model_node(current_node, agent_run, event_handler)
+                    try:
+                        await self._stream_model_node(current_node, agent_run, event_handler)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        raise _ModelRunError(exc, tuple(agent_run.all_messages())) from exc
                 elif PydanticAgent.is_call_tools_node(current_node):
                     await self._stream_tool_node(current_node, agent_run, event_handler)
                 node = await agent_run.next(current_node)
             result = agent_run.result
 
         reply, new_messages = _reply_from_run_result(result)
-        await _emit_agent_event(event_handler, AgentEvent("agent_end", text=reply.text))
         return AgentRunOutput(reply=reply, new_messages=new_messages)
 
     @staticmethod
@@ -235,16 +290,18 @@ class ChatAgent:
     ) -> None:
         current_node = cast(Any, current_node)
         agent_run = cast(Any, agent_run)
-        await _emit_agent_event(event_handler, AgentEvent("turn_start"))
-        await _emit_agent_event(event_handler, AgentEvent("message_start"))
-        accumulated_text: list[str] = []
+        buffered_events: list[AgentEvent] = []
         async with current_node.stream(agent_run.ctx) as stream:
             async for stream_event in stream:
                 runtime_event = _model_stream_event(stream_event)
                 if runtime_event is not None:
-                    accumulated_text.append(runtime_event.text)
-                    await _emit_agent_event(event_handler, runtime_event)
-        await _emit_agent_event(event_handler, AgentEvent("message_end", text="".join(accumulated_text)))
+                    buffered_events.append(runtime_event)
+        await _emit_agent_event(event_handler, AgentEvent("turn_start"))
+        await _emit_agent_event(event_handler, AgentEvent("message_start"))
+        for runtime_event in buffered_events:
+            await _emit_agent_event(event_handler, runtime_event)
+        text = "".join(event.text for event in buffered_events if event.type == "message_delta")
+        await _emit_agent_event(event_handler, AgentEvent("message_end", text=text))
 
     @staticmethod
     async def _stream_tool_node(
@@ -266,7 +323,6 @@ class ChatAgent:
         message_history: tuple[ModelMessage, ...],
         event_handler: AgentEventHandler | None,
     ) -> AgentRunOutput:
-        await _emit_agent_event(event_handler, AgentEvent("agent_start"))
         await _emit_agent_event(event_handler, AgentEvent("turn_start"))
         result = await self.agent.run(user_prompt, message_history=message_history)
         output = getattr(result, "output", result)
@@ -275,7 +331,6 @@ class ChatAgent:
         await _emit_agent_event(event_handler, AgentEvent("message_delta", text=text))
         await _emit_agent_event(event_handler, AgentEvent("message_end", text=text))
         await _emit_agent_event(event_handler, AgentEvent("turn_end"))
-        await _emit_agent_event(event_handler, AgentEvent("agent_end", text=text))
         new_messages = getattr(result, "new_messages", None)
         messages = tuple(new_messages()) if callable(new_messages) else ()
         return AgentRunOutput(reply=AgentReply(text=text, images=tuple(_result_images(result))), new_messages=messages)
@@ -338,16 +393,35 @@ class ChatAgent:
         )
 
 
+class _ModelRunError(Exception):
+    def __init__(self, error: Exception, messages: tuple[ModelMessage, ...]) -> None:
+        super().__init__(str(error))
+        self.error = error
+        self.messages = messages
+
+
 class _PydanticRunControl:
     def __init__(self, agent_run: object) -> None:
         self.agent_run = cast(Any, agent_run)
 
     def steer(self, prompt: str, images: tuple[ImageAttachment, ...] = ()) -> None:
+        self._enqueue(prompt, images, priority="asap")
+
+    def follow_up(self, prompt: str, images: tuple[ImageAttachment, ...] = ()) -> None:
+        self._enqueue(prompt, images, priority="when_idle")
+
+    def _enqueue(
+        self,
+        prompt: str,
+        images: tuple[ImageAttachment, ...],
+        *,
+        priority: Literal["asap", "when_idle"],
+    ) -> None:
         content = _user_prompt(prompt, images)
         if isinstance(content, list):
-            self.agent_run.enqueue(*content, priority="asap")
+            self.agent_run.enqueue(*content, priority=priority)
         else:
-            self.agent_run.enqueue(content, priority="asap")
+            self.agent_run.enqueue(content, priority=priority)
 
 
 def _reply_from_run_result(result: object | None) -> tuple[AgentReply, tuple[ModelMessage, ...]]:
@@ -366,6 +440,23 @@ async def _emit_agent_event(handler: AgentEventHandler | None, event: AgentEvent
     result = handler(event)
     if inspect.isawaitable(result):
         await result
+
+
+def _retry_checkpoint(messages: Sequence[ModelMessage]) -> tuple[ModelMessage, ...]:
+    for index in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[index], ModelRequest):
+            return tuple(messages[: index + 1])
+    return tuple(messages)
+
+
+def _is_transient_model_error(exc: Exception) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    if isinstance(exc, httpx.TransportError):
+        return True
+    if isinstance(exc, ModelHTTPError):
+        return exc.status_code == 429 or exc.status_code >= 500
+    return isinstance(exc, ModelAPIError)
 
 
 def _model_stream_event(event: object) -> AgentEvent | None:

@@ -12,14 +12,11 @@ from typing import Literal
 from typing import Protocol
 from typing import cast
 
-import httpx
 from loguru import logger
-from mcp.shared.exceptions import McpError
-from pydantic_ai.exceptions import ModelAPIError
-from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.messages import UserPromptPart
 
 from telegramagent.images import AgentReply
@@ -29,6 +26,7 @@ from telegramagent.session import SessionLog
 AgentEventType = Literal[
     "agent_start",
     "agent_end",
+    "agent_error",
     "turn_start",
     "turn_end",
     "message_start",
@@ -41,7 +39,8 @@ AgentEventType = Literal[
     "compaction_end",
     "cancelled",
 ]
-SubmissionKind = Literal["completed", "steered", "cancelled"]
+SubmissionKind = Literal["completed", "steered", "followed_up", "cancelled"]
+SubmissionIntent = Literal["steer", "follow_up"]
 
 
 @dataclass(frozen=True)
@@ -55,6 +54,7 @@ class AgentEvent:
 
 
 AgentEventHandler = Callable[[AgentEvent], Awaitable[None] | None]
+HistoryProcessor = Callable[[list[ModelMessage]], Awaitable[list[ModelMessage]]]
 
 
 @dataclass(frozen=True)
@@ -71,17 +71,11 @@ class AgentSubmission:
 
 @dataclass(frozen=True)
 class AgentRuntimeConfig:
-    max_attempts: int = 3
-    retry_base_delay_seconds: float = 1.0
     context_token_budget: int = 100_000
     compaction_trigger_ratio: float = 0.8
     chars_per_token: float = 4.0
 
     def __post_init__(self) -> None:
-        if self.max_attempts < 1:
-            raise ValueError("max_attempts must be at least 1")
-        if self.retry_base_delay_seconds < 0:
-            raise ValueError("retry_base_delay_seconds must not be negative")
         if self.context_token_budget < 1:
             raise ValueError("context_token_budget must be at least 1")
         if not 0 < self.compaction_trigger_ratio <= 1:
@@ -93,6 +87,8 @@ class AgentRuntimeConfig:
 class AgentRunControl(Protocol):
     def steer(self, prompt: str, images: tuple[ImageAttachment, ...] = ()) -> None: ...
 
+    def follow_up(self, prompt: str, images: tuple[ImageAttachment, ...] = ()) -> None: ...
+
 
 class AgentBackend(Protocol):
     async def run_streamed(
@@ -103,6 +99,7 @@ class AgentBackend(Protocol):
         images: tuple[ImageAttachment, ...] = (),
         event_handler: AgentEventHandler | None = None,
         control_handler: Callable[[AgentRunControl], None] | None = None,
+        history_processor: HistoryProcessor | None = None,
     ) -> AgentRunOutput: ...
 
 
@@ -111,16 +108,17 @@ class HistoryCompactor(Protocol):
 
 
 @dataclass
-class _PendingSteering:
+class _PendingSubmission:
     prompt: str
     images: tuple[ImageAttachment, ...]
+    intent: SubmissionIntent
 
 
 @dataclass
 class _ChatSession:
     task: asyncio.Task[AgentSubmission] | None = None
     control: AgentRunControl | None = None
-    pending: list[_PendingSteering] = field(default_factory=list)
+    pending: list[_PendingSubmission] = field(default_factory=list)
 
 
 class AgentRuntime:
@@ -135,7 +133,6 @@ class AgentRuntime:
         config: AgentRuntimeConfig | None = None,
         before_tool: AgentEventHandler | None = None,
         after_tool: AgentEventHandler | None = None,
-        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.backend = backend
         self.sessions = sessions
@@ -143,7 +140,6 @@ class AgentRuntime:
         self.config = config or AgentRuntimeConfig()
         self.before_tool = before_tool
         self.after_tool = after_tool
-        self.sleep = sleep
         self._chat_sessions: dict[int, _ChatSession] = {}
         self._volatile_history: dict[int, list[ModelMessage]] = {}
         self._listeners: set[AgentEventHandler] = set()
@@ -156,16 +152,22 @@ class AgentRuntime:
         *,
         images: Sequence[ImageAttachment] = (),
         event_handler: AgentEventHandler | None = None,
+        intent: SubmissionIntent = "steer",
     ) -> AgentSubmission:
         image_tuple = tuple(images)
         async with self._lock:
             session = self._chat_sessions.setdefault(chat_id, _ChatSession())
             if session.task is not None and not session.task.done():
-                steering = _PendingSteering(prompt, image_tuple)
+                pending = _PendingSubmission(prompt, image_tuple, intent)
                 if session.control is None:
-                    session.pending.append(steering)
+                    session.pending.append(pending)
                 else:
-                    session.control.steer(prompt, image_tuple)
+                    _enqueue_submission(session.control, pending)
+                if intent == "follow_up":
+                    return AgentSubmission(
+                        kind="followed_up",
+                        reply=AgentReply(text="已將新訊息排在目前任務完成後處理。"),
+                    )
                 return AgentSubmission(kind="steered", reply=AgentReply(text="已將新訊息加入目前任務。"))
 
             current_task = asyncio.current_task()
@@ -216,20 +218,40 @@ class AgentRuntime:
         event_handler: AgentEventHandler | None,
     ) -> AgentSubmission:
         current_task = asyncio.current_task()
+        await self._dispatch(AgentEvent("agent_start"), event_handler)
         try:
-            history = await self._compact_if_needed(chat_id, event_handler)
-            output = await self._run_with_retry(
-                chat_id,
-                prompt,
-                history=history,
-                images=images,
+            history = (*self.sessions.model_history(chat_id), *self._volatile_history.get(chat_id, ()))
+            history_compactor = _RunHistoryCompactor(
+                runtime=self,
+                chat_id=chat_id,
+                initial_history_count=len(history),
                 event_handler=event_handler,
             )
-            self._record_output(chat_id, output.new_messages)
+            output = await self.backend.run_streamed(
+                prompt,
+                message_history=history,
+                images=images,
+                event_handler=lambda event: self._dispatch(event, event_handler),
+                control_handler=lambda control: self._bind_control(chat_id, control),
+                history_processor=history_compactor.process,
+            )
+            self._record_output(chat_id, output.new_messages[history_compactor.processed_new_message_count :])
+            await self._dispatch(AgentEvent("agent_end", text=output.reply.text), event_handler)
             return AgentSubmission(kind="completed", reply=output.reply)
         except asyncio.CancelledError:
             await self._dispatch(AgentEvent("cancelled", text="任務已取消。"), event_handler)
             return AgentSubmission(kind="cancelled", reply=AgentReply(text="已取消目前任務。"))
+        except Exception as exc:
+            await self._dispatch(
+                AgentEvent(
+                    "agent_error",
+                    text="AI 服務暫時無法使用, 請稍後再試。",
+                    data={"error_type": type(exc).__name__},
+                    is_error=True,
+                ),
+                event_handler,
+            )
+            raise
         finally:
             async with self._lock:
                 session = self._chat_sessions.get(chat_id)
@@ -238,54 +260,13 @@ class AgentRuntime:
                     session.control = None
                     session.pending.clear()
 
-    async def _run_with_retry(
-        self,
-        chat_id: int,
-        prompt: str,
-        *,
-        history: tuple[ModelMessage, ...],
-        images: tuple[ImageAttachment, ...],
-        event_handler: AgentEventHandler | None,
-    ) -> AgentRunOutput:
-        for attempt in range(1, self.config.max_attempts + 1):
-            try:
-                return await self.backend.run_streamed(
-                    prompt,
-                    message_history=history,
-                    images=images,
-                    event_handler=lambda event: self._dispatch(event, event_handler),
-                    control_handler=lambda control: self._bind_control(chat_id, control),
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                self._clear_control(chat_id)
-                if attempt >= self.config.max_attempts or not _is_transient_error(exc):
-                    raise
-                delay = self.config.retry_base_delay_seconds * (2 ** (attempt - 1))
-                await self._dispatch(
-                    AgentEvent(
-                        "retry_scheduled",
-                        text="暫時性錯誤, 準備重試。",
-                        data={"attempt": attempt + 1, "delay_seconds": delay},
-                    ),
-                    event_handler,
-                )
-                await self.sleep(delay)
-        raise RuntimeError("retry loop ended unexpectedly")  # pragma: no cover
-
     def _bind_control(self, chat_id: int, control: AgentRunControl) -> None:
         session = self._chat_sessions.setdefault(chat_id, _ChatSession())
         session.control = control
         pending = tuple(session.pending)
         session.pending.clear()
-        for steering in pending:
-            control.steer(steering.prompt, steering.images)
-
-    def _clear_control(self, chat_id: int) -> None:
-        session = self._chat_sessions.get(chat_id)
-        if session is not None:
-            session.control = None
+        for item in pending:
+            _enqueue_submission(control, item)
 
     def _record_output(self, chat_id: int, new_messages: Sequence[ModelMessage]) -> None:
         volatile = self._volatile_history.get(chat_id, [])
@@ -302,41 +283,6 @@ class AgentRuntime:
         else:
             self._volatile_history.pop(chat_id, None)
 
-    async def _compact_if_needed(
-        self, chat_id: int, event_handler: AgentEventHandler | None
-    ) -> tuple[ModelMessage, ...]:
-        history = (*self.sessions.model_history(chat_id), *self._volatile_history.get(chat_id, ()))
-        if self.compactor is None or not _needs_compaction(history, self.config):
-            return history
-
-        await self._dispatch(AgentEvent("compaction_start", data={"source_message_count": len(history)}), event_handler)
-        try:
-            summary = (await self.compactor.compact_history(history)).strip()
-            if not summary:
-                raise ValueError("compactor returned an empty summary")
-        except Exception as exc:  # noqa: BLE001 - compaction failure must preserve the usable original context
-            logger.warning("Context compaction failed with {}; retaining original history", type(exc).__name__)
-            await self._dispatch(
-                AgentEvent("compaction_end", text="對話摘要失敗, 沿用原始上下文。", is_error=True), event_handler
-            )
-            return history
-
-        summary_messages: tuple[ModelMessage, ...] = (
-            ModelRequest(parts=[UserPromptPart(content=f"Earlier conversation summary:\n{summary}")]),
-        )
-        try:
-            self.sessions.append_compaction(chat_id, summary_messages, source_message_count=len(history))
-        except Exception as exc:  # noqa: BLE001 - retain original context when compaction cannot be persisted
-            logger.warning("Compaction record failed with {}; retaining original history", type(exc).__name__)
-            await self._dispatch(
-                AgentEvent("compaction_end", text="對話摘要無法儲存, 沿用原始上下文。", is_error=True),
-                event_handler,
-            )
-            return tuple(history)
-        self._volatile_history.pop(chat_id, None)
-        await self._dispatch(AgentEvent("compaction_end", data={"source_message_count": len(history)}), event_handler)
-        return summary_messages
-
     async def _dispatch(self, event: AgentEvent, event_handler: AgentEventHandler | None) -> None:
         if event.type == "tool_start":
             await _safe_notify(self.before_tool, event)
@@ -345,6 +291,99 @@ class AgentRuntime:
             await _safe_notify(listener, event)
         if event.type == "tool_end":
             await _safe_notify(self.after_tool, event)
+
+
+def _enqueue_submission(control: AgentRunControl, submission: _PendingSubmission) -> None:
+    if submission.intent == "follow_up":
+        control.follow_up(submission.prompt, submission.images)
+    else:
+        control.steer(submission.prompt, submission.images)
+
+
+@dataclass
+class _RunHistoryCompactor:
+    runtime: AgentRuntime
+    chat_id: int
+    initial_history_count: int
+    event_handler: AgentEventHandler | None
+    raw_cut: int = 0
+    processed_new_message_count: int = 0
+    summary_messages: tuple[ModelMessage, ...] = ()
+    compacting: bool = False
+
+    async def process(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        current = [*self.summary_messages, *messages[self.raw_cut :]] if self.summary_messages else list(messages)
+        if self.runtime.compactor is None or self.compacting or not _needs_compaction(current, self.runtime.config):
+            return current
+
+        cut = _safe_compaction_cut(messages)
+        if cut <= self.raw_cut:
+            return current
+        source = [*self.summary_messages, *messages[self.raw_cut : cut]]
+        await self.runtime._dispatch(
+            AgentEvent("compaction_start", data={"source_message_count": cut}), self.event_handler
+        )
+        self.compacting = True
+        try:
+            summary = (await self.runtime.compactor.compact_history(source)).strip()
+            if not summary:
+                raise ValueError("compactor returned an empty summary")
+        except Exception as exc:  # noqa: BLE001 - preserve the last usable context
+            logger.warning("Context compaction failed with {}; retaining original history", type(exc).__name__)
+            await self.runtime._dispatch(
+                AgentEvent("compaction_end", text="對話摘要失敗, 沿用原始上下文。", is_error=True),
+                self.event_handler,
+            )
+            return current
+        finally:
+            self.compacting = False
+
+        summary_messages: tuple[ModelMessage, ...] = (
+            ModelRequest(parts=[UserPromptPart(content=f"Earlier conversation summary:\n{summary}")]),
+        )
+        try:
+            self.runtime.sessions.append_compaction(self.chat_id, summary_messages, source_message_count=cut)
+        except Exception as exc:  # noqa: BLE001 - preserve context when the checkpoint is not durable
+            logger.warning("Compaction record failed with {}; retaining original history", type(exc).__name__)
+            await self.runtime._dispatch(
+                AgentEvent("compaction_end", text="對話摘要無法儲存, 沿用原始上下文。", is_error=True),
+                self.event_handler,
+            )
+            return current
+
+        self.summary_messages = summary_messages
+        self.raw_cut = cut
+        self.processed_new_message_count = max(0, cut - self.initial_history_count)
+        self.runtime._volatile_history.pop(self.chat_id, None)
+        await self.runtime._dispatch(
+            AgentEvent("compaction_end", data={"source_message_count": cut}), self.event_handler
+        )
+        return [*summary_messages, *messages[cut:]]
+
+
+def _safe_compaction_cut(messages: Sequence[ModelMessage]) -> int:
+    if len(messages) < 2 or not isinstance(messages[-1], ModelRequest):
+        return 0
+    last_request = messages[-1]
+    return_ids = {
+        part.tool_call_id
+        for part in last_request.parts
+        if hasattr(part, "tool_call_id") and getattr(part, "tool_call_id", None)
+    }
+    if not return_ids:
+        return len(messages) - 1
+    for index in range(len(messages) - 2, -1, -1):
+        message = messages[index]
+        if not isinstance(message, ModelResponse):
+            continue
+        call_ids = {
+            part.tool_call_id
+            for part in message.parts
+            if hasattr(part, "tool_call_id") and getattr(part, "tool_call_id", None)
+        }
+        if return_ids <= call_ids:
+            return index
+    return 0
 
 
 def _needs_compaction(messages: Sequence[ModelMessage], config: AgentRuntimeConfig) -> bool:
@@ -364,17 +403,3 @@ async def _safe_notify(handler: AgentEventHandler | None, event: AgentEvent) -> 
             await result
     except Exception as exc:  # noqa: BLE001 - lifecycle observers must not break execution
         logger.warning("Agent event handler failed for type={} with {}", event.type, type(exc).__name__)
-
-
-def _is_transient_error(exc: Exception) -> bool:
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code == 429 or exc.response.status_code >= 500
-    if isinstance(exc, httpx.TransportError):
-        return True
-    if isinstance(exc, ModelHTTPError):
-        return exc.status_code == 429 or exc.status_code >= 500
-    if isinstance(exc, ModelAPIError):
-        return True
-    if isinstance(exc, McpError):
-        return exc.error.code in {-32603, -32000, -32001, -32002}
-    return False

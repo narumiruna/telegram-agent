@@ -8,6 +8,7 @@ from typing import TypedDict
 
 from telegramagent.agent_runtime import AgentEventHandler
 from telegramagent.agent_runtime import AgentSubmission
+from telegramagent.agent_runtime import SubmissionIntent
 from telegramagent.images import GeneratedImage
 from telegramagent.images import ImageAttachment
 from telegramagent.url_context import UrlContext
@@ -104,6 +105,7 @@ class AgentRuntimeGateway(Protocol):
         *,
         images: Sequence[ImageAttachment] = (),
         event_handler: AgentEventHandler | None = None,
+        intent: SubmissionIntent = "steer",
     ) -> AgentSubmission: ...
 
     async def cancel(self, chat_id: int) -> bool: ...

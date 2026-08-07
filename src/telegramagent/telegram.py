@@ -13,6 +13,7 @@ from mcp.shared.exceptions import McpError
 from pydantic_ai.exceptions import AgentRunError
 
 from telegramagent.agent_runtime import AgentEvent
+from telegramagent.agent_runtime import SubmissionIntent
 from telegramagent.images import AgentReply
 from telegramagent.images import ImageAttachment
 from telegramagent.images import as_telegram_photo
@@ -76,6 +77,8 @@ class _TelegramAgentProgress:
             await self._ensure_message()
         elif event.type == "agent_end":
             await self.finish(event.text)
+        elif event.type == "agent_error":
+            await self.finish(event.text or "AI 服務暫時無法使用，請稍後再試。")
         elif event.type == "cancelled":
             await self.finish(event.text or "已取消目前任務。")
 
@@ -322,7 +325,13 @@ class TelegramBot:
 
         async def action(_task: object) -> str:
             reply = await self._build_response(
-                chat_id, text, user_id=None, allow_management=False, synthetic=synthetic, images=()
+                chat_id,
+                text,
+                user_id=None,
+                allow_management=False,
+                synthetic=synthetic,
+                images=(),
+                submission_intent="follow_up",
             )
             return reply.text
 
@@ -371,6 +380,7 @@ class TelegramBot:
         images: Sequence[ImageAttachment],
         reply_context: ReplyMessageContext | None = None,
         progress: _TelegramAgentProgress | None = None,
+        submission_intent: SubmissionIntent = "steer",
     ) -> AgentReply:
         reply = await self._generate_response(
             chat_id,
@@ -380,6 +390,7 @@ class TelegramBot:
             images=images,
             reply_context=reply_context,
             progress=progress,
+            submission_intent=submission_intent,
         )
         if (
             not reply.session_recorded
@@ -406,6 +417,7 @@ class TelegramBot:
         images: Sequence[ImageAttachment],
         reply_context: ReplyMessageContext | None = None,
         progress: _TelegramAgentProgress | None = None,
+        submission_intent: SubmissionIntent = "steer",
     ) -> AgentReply:
         if allow_management:
             for tool in self._management_tools():
@@ -435,6 +447,7 @@ class TelegramBot:
             _llm_prompt_with_reply_context(text.strip(), reply_context=reply_context),
             images=images,
             progress=progress,
+            intent=submission_intent,
         )
 
     async def _reply_context_for_llm(self, *, message: TelegramMessage, text: str) -> ReplyMessageContext | None:
@@ -626,15 +639,26 @@ class TelegramBot:
         *,
         images: Sequence[ImageAttachment] = (),
         progress: _TelegramAgentProgress | None = None,
+        intent: SubmissionIntent = "steer",
     ) -> AgentReply:
         try:
             if self.agent_runtime is not None:
-                submission = await self.agent_runtime.submit(
-                    chat_id,
-                    prompt,
-                    images=images,
-                    event_handler=progress.handle if progress is not None else None,
-                )
+                event_handler = progress.handle if progress is not None else None
+                if intent == "follow_up":
+                    submission = await self.agent_runtime.submit(
+                        chat_id,
+                        prompt,
+                        images=images,
+                        event_handler=event_handler,
+                        intent=intent,
+                    )
+                else:
+                    submission = await self.agent_runtime.submit(
+                        chat_id,
+                        prompt,
+                        images=images,
+                        event_handler=event_handler,
+                    )
                 return replace(submission.reply, session_recorded=True)
 
             history = self._history(chat_id)

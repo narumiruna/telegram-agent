@@ -269,6 +269,8 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         kabigon_tool_timeout_seconds=settings.bot_kabigon_timeout_seconds,
         mcp_toolsets=mcp_toolsets,
         tools=(*gurume_tools, *container_tools),
+        max_attempts=settings.bot_agent_max_attempts,
+        retry_base_delay_seconds=settings.bot_agent_retry_base_delay_seconds,
     )
     topic_end_judge = TopicEndAgent(
         api_key=settings.openai_api_key,
@@ -347,8 +349,6 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         sessions=session_log,
         compactor=agent,
         config=AgentRuntimeConfig(
-            max_attempts=settings.bot_agent_max_attempts,
-            retry_base_delay_seconds=settings.bot_agent_retry_base_delay_seconds,
             context_token_budget=settings.bot_agent_context_token_budget,
             compaction_trigger_ratio=settings.bot_agent_compaction_trigger_ratio,
             chars_per_token=settings.bot_agent_chars_per_token,

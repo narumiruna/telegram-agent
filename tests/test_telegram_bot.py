@@ -67,8 +67,8 @@ async def test_start_help_id_and_reset_commands() -> None:
 @pytest.mark.asyncio
 async def test_runtime_edits_processing_status_once_with_final_answer() -> None:
     class FakeRuntime:
-        async def submit(self, chat_id, prompt, *, images=(), event_handler=None):
-            del chat_id, prompt, images
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer"):
+            del chat_id, prompt, images, intent
             assert event_handler is not None
             await event_handler(AgentEvent("agent_start"))
             await event_handler(AgentEvent("message_start"))
@@ -109,10 +109,38 @@ async def test_runtime_edits_processing_status_once_with_final_answer() -> None:
 
 
 @pytest.mark.asyncio
+async def test_synthetic_message_queues_as_follow_up() -> None:
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self.intents: list[str] = []
+
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer"):
+            del chat_id, prompt, images, event_handler
+            self.intents.append(intent)
+            return AgentSubmission(kind="completed", reply=AgentReply(text="done"))
+
+        async def cancel(self, chat_id):
+            del chat_id
+            return False
+
+        def clear_history(self, chat_id):
+            del chat_id
+
+    telegram = FakeTelegram()
+    runtime = FakeRuntime()
+    bot = TelegramBot(telegram=telegram, agent=FakeAgent(), agent_runtime=runtime)
+
+    await bot.dispatch_synthetic_message(chat_id=123, text="scheduled")
+
+    assert runtime.intents == ["follow_up"]
+    assert telegram.sent == [(123, "done", None)]
+
+
+@pytest.mark.asyncio
 async def test_ask_command_edits_processing_status_once() -> None:
     class FakeRuntime:
-        async def submit(self, chat_id, prompt, *, images=(), event_handler=None):
-            del chat_id, prompt, images
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer"):
+            del chat_id, prompt, images, intent
             assert event_handler is not None
             await event_handler(AgentEvent("agent_start"))
             await event_handler(AgentEvent("agent_end", text="answer"))
@@ -185,8 +213,8 @@ async def test_polling_dispatches_different_chats_concurrently() -> None:
             self.both_started = asyncio.Event()
             self.release = asyncio.Event()
 
-        async def submit(self, chat_id, prompt, *, images=(), event_handler=None):
-            del prompt, images, event_handler
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer"):
+            del prompt, images, event_handler, intent
             self.started.append(chat_id)
             if len(self.started) == 2:
                 self.both_started.set()
@@ -222,7 +250,8 @@ async def test_cancel_command_stops_active_runtime() -> None:
         def __init__(self) -> None:
             self.cancelled: list[int] = []
 
-        async def submit(self, chat_id, prompt, *, images=(), event_handler=None):
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer"):
+            del chat_id, prompt, images, event_handler, intent
             raise AssertionError("submit should not be called")
 
         async def cancel(self, chat_id):
