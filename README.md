@@ -264,11 +264,7 @@ Instruction order:
 core rules -> SOUL.md -> Agent Skills -> conversation history -> user message
 ```
 
-Start from templates:
-
-```bash
-cp SOUL.md.example SOUL.md
-```
+Edit the repository's `SOUL.md` to customize the bot's identity and voice.
 
 Reload at runtime:
 
