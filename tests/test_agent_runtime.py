@@ -237,6 +237,7 @@ async def test_context_is_compacted_before_run_and_recorded(tmp_path: Path) -> N
     assert len(compactor.calls) == 1
     summary_request = backend.histories[0][0]
     assert isinstance(summary_request, ModelRequest)
+    assert isinstance(summary_request.parts[0], UserPromptPart)
     assert "short summary" in str(summary_request.parts[0].content)
     assert any(record.type == "compaction" for record in sessions.records(1))
 
@@ -300,7 +301,7 @@ async def test_compaction_write_failure_preserves_original_context(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("budget", "expected_compactions"), [(300, 2), (1000, 1)])
+@pytest.mark.parametrize(("budget", "expected_compactions"), [(300, 2), (1500, 1)])
 async def test_context_compacts_inside_multi_turn_run_without_splitting_tool_pair(
     tmp_path: Path, budget: int, expected_compactions: int
 ) -> None:

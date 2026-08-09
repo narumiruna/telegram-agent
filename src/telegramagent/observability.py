@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from importlib import import_module
 from typing import Protocol
 
-import httpx
 import logfire
 from logfire import ScrubbingOptions
 from loguru import logger
@@ -33,8 +32,22 @@ class _Span(Protocol):
     def set_attribute(self, key: str, value: str) -> None: ...
 
 
+class _HttpxUrl(Protocol):
+    @property
+    def raw_path(self) -> bytes: ...
+
+    @property
+    def query(self) -> bytes: ...
+
+    @property
+    def path(self) -> str: ...
+
+    def __str__(self) -> str: ...
+
+
 class _HttpxRequest(Protocol):
-    url: httpx.URL
+    @property
+    def url(self) -> _HttpxUrl: ...
 
 
 def configure_logfire(config: LogfireConfig, *, verbose: bool = False) -> bool:
@@ -109,7 +122,7 @@ async def _redact_httpx_async_request_span(span: _Span, request: _HttpxRequest) 
     _set_redacted_url_attributes(span, request.url)
 
 
-def _set_redacted_url_attributes(span: _Span, url: httpx.URL) -> None:
+def _set_redacted_url_attributes(span: _Span, url: _HttpxUrl) -> None:
     raw_target = url.raw_path.decode("ascii", errors="ignore")
     query = url.query.decode("ascii", errors="ignore")
 
