@@ -112,6 +112,32 @@ async def test_same_chat_message_steers_active_run(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_replied_message_branch_waits_for_active_run_instead_of_steering_it(tmp_path: Path) -> None:
+    backend = FakeBackend()
+    backend.wait = True
+    runtime = AgentRuntime(backend=backend, sessions=SessionLog(tmp_path / "sessions"))
+    branch_history = (
+        ModelRequest(parts=[UserPromptPart(content="older question")]),
+        ModelResponse(parts=[TextPart(content="older answer")]),
+    )
+
+    active = asyncio.create_task(runtime.submit(1, "unrelated active request"))
+    await asyncio.sleep(0)
+    branched = asyncio.create_task(runtime.submit(1, "branch reply", message_history=branch_history))
+    await asyncio.sleep(0)
+
+    assert backend.controls[0].steering == []
+    assert backend.started == ["unrelated active request"]
+
+    backend.release.set()
+    assert (await active).kind == "completed"
+    branch_result = await branched
+    assert branch_result.kind == "completed"
+    assert backend.started == ["unrelated active request", "branch reply"]
+    assert backend.histories[1] == branch_history
+
+
+@pytest.mark.asyncio
 async def test_same_chat_message_can_wait_until_active_run_is_idle(tmp_path: Path) -> None:
     backend = FakeBackend()
     backend.wait = True
@@ -130,6 +156,31 @@ async def test_same_chat_message_can_wait_until_active_run_is_idle(tmp_path: Pat
     assert backend.controls[0].followup_images == [(image,), ()]
     backend.release.set()
     assert (await active).kind == "completed"
+
+
+@pytest.mark.asyncio
+async def test_submit_can_override_history_for_a_replied_message_branch(tmp_path: Path) -> None:
+    sessions = SessionLog(tmp_path / "sessions")
+    sessions.append_turn(1, user_text="first", assistant_text="first answer")
+    sessions.append_messages(1, [ModelRequest(parts=[UserPromptPart(content="unrelated")])])
+    backend = FakeBackend()
+    runtime = AgentRuntime(backend=backend, sessions=sessions)
+    branch_history = (
+        ModelRequest(parts=[UserPromptPart(content="first")]),
+        ModelResponse(parts=[TextPart(content="first answer")]),
+    )
+
+    result = await runtime.submit(1, "branched follow-up", message_history=branch_history)
+
+    assert backend.histories == [branch_history]
+    assert result.message_history[:2] == branch_history
+    assert len(result.message_history) == 4
+    assert isinstance(result.message_history[2], ModelRequest)
+    assert isinstance(result.message_history[2].parts[0], UserPromptPart)
+    assert result.message_history[2].parts[0].content == "branched follow-up"
+    assert isinstance(result.message_history[3], ModelResponse)
+    assert isinstance(result.message_history[3].parts[0], TextPart)
+    assert result.message_history[3].parts[0].content == "answer: branched follow-up"
 
 
 @pytest.mark.asyncio
@@ -384,6 +435,29 @@ async def test_clear_history_removes_durable_and_volatile_context(
     await runtime.submit(1, "second")
 
     assert backend.histories[1] == ()
+
+
+@pytest.mark.asyncio
+async def test_durable_telegram_thread_deduplicates_volatile_runtime_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sessions = SessionLog(tmp_path / "sessions")
+    backend = FakeBackend()
+    runtime = AgentRuntime(backend=backend, sessions=sessions)
+    original_append = sessions.append_messages
+
+    def fail_append(*args, **kwargs):
+        del args, kwargs
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(sessions, "append_messages", fail_append)
+    first = await runtime.submit(1, "first")
+    sessions.append_telegram_thread(1, 100, first.message_history, parent_message_id=None)
+    monkeypatch.setattr(sessions, "append_messages", original_append)
+
+    await runtime.submit(1, "second")
+
+    assert len(backend.histories[1]) == 2
 
 
 @pytest.mark.asyncio

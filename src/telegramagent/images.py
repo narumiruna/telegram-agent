@@ -5,8 +5,12 @@ import binascii
 import io
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:
+    from pydantic_ai.messages import ModelMessage
 
 
 @dataclass(frozen=True)
@@ -28,6 +32,7 @@ class AgentReply:
     text: str
     images: tuple[GeneratedImage, ...] = ()
     session_recorded: bool = False
+    message_history: tuple[ModelMessage, ...] | None = None
 
 
 class ImageGenerationError(RuntimeError):

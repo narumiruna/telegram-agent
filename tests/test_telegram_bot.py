@@ -69,8 +69,8 @@ async def test_start_help_id_and_reset_commands() -> None:
 @pytest.mark.asyncio
 async def test_runtime_edits_processing_status_once_with_final_answer() -> None:
     class FakeRuntime:
-        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer"):
-            del chat_id, prompt, images, intent
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer", message_history=None):
+            del chat_id, prompt, images, intent, message_history
             assert event_handler is not None
             await event_handler(AgentEvent("agent_start"))
             await event_handler(AgentEvent("message_start"))
@@ -116,8 +116,8 @@ async def test_synthetic_message_queues_as_follow_up() -> None:
         def __init__(self) -> None:
             self.intents: list[str] = []
 
-        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer"):
-            del chat_id, prompt, images, event_handler
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer", message_history=None):
+            del chat_id, prompt, images, event_handler, message_history
             self.intents.append(intent)
             return AgentSubmission(kind="completed", reply=AgentReply(text="done"))
 
@@ -141,8 +141,8 @@ async def test_synthetic_message_queues_as_follow_up() -> None:
 @pytest.mark.asyncio
 async def test_ask_command_edits_processing_status_once() -> None:
     class FakeRuntime:
-        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer"):
-            del chat_id, prompt, images, intent
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer", message_history=None):
+            del chat_id, prompt, images, intent, message_history
             assert event_handler is not None
             await event_handler(AgentEvent("agent_start"))
             await event_handler(AgentEvent("agent_end", text="answer"))
@@ -215,8 +215,8 @@ async def test_polling_dispatches_different_chats_concurrently() -> None:
             self.both_started = asyncio.Event()
             self.release = asyncio.Event()
 
-        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer"):
-            del prompt, images, event_handler, intent
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer", message_history=None):
+            del prompt, images, event_handler, intent, message_history
             self.started.append(chat_id)
             if len(self.started) == 2:
                 self.both_started.set()
@@ -252,8 +252,8 @@ async def test_cancel_command_stops_active_runtime() -> None:
         def __init__(self) -> None:
             self.cancelled: list[int] = []
 
-        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer"):
-            del chat_id, prompt, images, event_handler, intent
+        async def submit(self, chat_id, prompt, *, images=(), event_handler=None, intent="steer", message_history=None):
+            del chat_id, prompt, images, event_handler, intent, message_history
             raise AssertionError("submit should not be called")
 
         async def cancel(self, chat_id):

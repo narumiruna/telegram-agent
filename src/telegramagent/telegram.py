@@ -11,6 +11,11 @@ import httpx
 from loguru import logger
 from mcp.shared.exceptions import McpError
 from pydantic_ai.exceptions import AgentRunError
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import TextPart
+from pydantic_ai.messages import UserPromptPart
 
 from telegramagent.agent_runtime import AgentEvent
 from telegramagent.agent_runtime import SubmissionIntent
@@ -19,6 +24,7 @@ from telegramagent.images import AgentReply
 from telegramagent.images import ImageAttachment
 from telegramagent.images import as_telegram_photo
 from telegramagent.session import SessionLog
+from telegramagent.session import project_history
 from telegramagent.tasks import TaskQueue
 from telegramagent.telegram_attachments import load_message_attachments
 from telegramagent.telegram_client import TelegramApiError
@@ -168,6 +174,8 @@ class TelegramBot:
         self.url_context_extractor = url_context_extractor or extract_url_context
         self.bot_reply_streaks: dict[int, int] = {}
         self.histories: dict[int, list[tuple[str, str]]] = {}
+        self._telegram_histories: dict[int, dict[int, list[tuple[str, str]]]] = {}
+        self._telegram_thread_heads: dict[int, int] = {}
         self._update_tasks: set[asyncio.Task[None]] = set()
 
     async def run_forever(self) -> None:
@@ -197,7 +205,7 @@ class TelegramBot:
                 logger.warning("Telegram polling failed with {}; retrying soon", type(exc).__name__)
                 await asyncio.sleep(5)
 
-    async def handle_update(self, update: TelegramUpdate) -> None:
+    async def handle_update(self, update: TelegramUpdate) -> None:  # noqa: C901
         message = update.get("message")
         if not message:
             return
@@ -281,6 +289,10 @@ class TelegramBot:
             background_task.add_done_callback(_log_background_task_error)
             return
 
+        parent_message_id, effective_history, effective_model_history, is_reply_branch = self._conversation_context(
+            chat_id=chat_id,
+            message=message,
+        )
         reply_context = await self._reply_context_for_llm(message=message, text=text)
         progress = (
             _TelegramAgentProgress(
@@ -299,15 +311,25 @@ class TelegramBot:
             documents=documents,
             reply_context=reply_context,
             progress=progress,
+            history=effective_history,
+            message_history=effective_model_history,
+            override_runtime_history=is_reply_branch,
         )
         if progress is not None:
             await progress.finish(reply.text)
-        await self._send_agent_reply(
+        sent_message_id = await self._send_agent_reply(
             chat_id,
             reply,
             reply_to_message_id=message_id,
             existing_message_id=progress.message_id if progress is not None else None,
         )
+        if sent_message_id is not None and reply.message_history is not None:
+            self._record_telegram_thread(
+                chat_id=chat_id,
+                message_id=sent_message_id,
+                parent_message_id=parent_message_id,
+                message_history=reply.message_history,
+            )
 
     async def build_response(
         self,
@@ -319,6 +341,9 @@ class TelegramBot:
         documents: Sequence[ConvertedDocument] = (),
         reply_context: ReplyMessageContext | None = None,
         progress: _TelegramAgentProgress | None = None,
+        history: Sequence[tuple[str, str]] | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
+        override_runtime_history: bool = False,
     ) -> AgentReply:
         return await self._build_response(
             chat_id,
@@ -330,9 +355,12 @@ class TelegramBot:
             documents=documents,
             reply_context=reply_context,
             progress=progress,
+            history=history,
+            message_history=message_history,
+            override_runtime_history=override_runtime_history,
         )
 
-    async def dispatch_synthetic_message(
+    async def dispatch_synthetic_message(  # noqa: C901
         self,
         *,
         chat_id: int,
@@ -341,6 +369,10 @@ class TelegramBot:
         reply_mode: str = "send",
         synthetic: bool = True,
     ) -> None:
+        parent_message_id, effective_history, effective_model_history, is_reply_branch = (
+            self._conversation_context_for_reply(chat_id=chat_id, replied_message_id=reply_to_message_id)
+        )
+        completed_history: tuple[ModelMessage, ...] | None = None
         status_message_id: int | None = None
         if reply_mode == "edit-status":
             try:
@@ -357,6 +389,7 @@ class TelegramBot:
                 return
 
         async def action(_task: object) -> str:
+            nonlocal completed_history
             reply = await self._build_response(
                 chat_id,
                 text,
@@ -365,7 +398,11 @@ class TelegramBot:
                 synthetic=synthetic,
                 images=(),
                 submission_intent="follow_up",
+                history=effective_history,
+                message_history=effective_model_history,
+                override_runtime_history=is_reply_branch,
             )
+            completed_history = reply.message_history
             return reply.text
 
         if self.task_queue is not None:
@@ -385,6 +422,7 @@ class TelegramBot:
             reply = await action(object())
 
         if reply_mode == "edit-status" and status_message_id is not None:
+            sent_message_id: int | None = status_message_id
             try:
                 await self.telegram.edit_message_text(chat_id, status_message_id, reply)
             except _TELEGRAM_API_ERRORS as exc:
@@ -393,14 +431,32 @@ class TelegramBot:
                     type(exc).__name__,
                 )
                 try:
-                    await self.telegram.send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+                    sent_message_id = await self.telegram.send_message(
+                        chat_id, reply, reply_to_message_id=reply_to_message_id
+                    )
                 except _TELEGRAM_API_ERRORS as send_exc:
+                    sent_message_id = None
                     logger.warning("Failed to send synthetic fallback reply with {}", type(send_exc).__name__)
+            if sent_message_id is not None and completed_history is not None:
+                self._record_telegram_thread(
+                    chat_id=chat_id,
+                    message_id=sent_message_id,
+                    parent_message_id=parent_message_id,
+                    message_history=completed_history,
+                )
             return
         try:
-            await self.telegram.send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+            sent_message_id = await self.telegram.send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
         except _TELEGRAM_API_ERRORS as exc:
             logger.warning("Failed to send synthetic reply with {}", type(exc).__name__)
+            return
+        if sent_message_id is not None and completed_history is not None:
+            self._record_telegram_thread(
+                chat_id=chat_id,
+                message_id=sent_message_id,
+                parent_message_id=parent_message_id,
+                message_history=completed_history,
+            )
 
     async def _build_response(
         self,
@@ -415,6 +471,9 @@ class TelegramBot:
         reply_context: ReplyMessageContext | None = None,
         progress: _TelegramAgentProgress | None = None,
         submission_intent: SubmissionIntent = "steer",
+        history: Sequence[tuple[str, str]] | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
+        override_runtime_history: bool = False,
     ) -> AgentReply:
         reply = await self._generate_response(
             chat_id,
@@ -426,13 +485,16 @@ class TelegramBot:
             reply_context=reply_context,
             progress=progress,
             submission_intent=submission_intent,
+            history=history,
+            message_history=message_history,
+            override_runtime_history=override_runtime_history,
         )
         if (
             not reply.session_recorded
             and not _is_reset_command(text)
             and not (not allow_management and _is_management_command(text))
         ):
-            self._record_turn(
+            completed_history = self._record_turn(
                 chat_id,
                 user_text=_history_user_text(
                     _history_text_with_reply_context(text, reply_context=reply_context),
@@ -442,7 +504,10 @@ class TelegramBot:
                 ),
                 assistant_text=reply.text,
                 synthetic=synthetic,
+                history=history,
+                message_history=message_history,
             )
+            reply = replace(reply, message_history=completed_history)
         return reply
 
     async def _generate_response(
@@ -457,6 +522,9 @@ class TelegramBot:
         reply_context: ReplyMessageContext | None = None,
         progress: _TelegramAgentProgress | None = None,
         submission_intent: SubmissionIntent = "steer",
+        history: Sequence[tuple[str, str]] | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
+        override_runtime_history: bool = False,
     ) -> AgentReply:
         if allow_management:
             for tool in self._management_tools():
@@ -472,6 +540,9 @@ class TelegramBot:
                 documents=documents,
                 reply_context=reply_context,
                 progress=progress,
+                history=history,
+                message_history=message_history,
+                override_runtime_history=override_runtime_history,
             )
             if command_reply is not None:
                 return command_reply if isinstance(command_reply, AgentReply) else AgentReply(text=command_reply)
@@ -479,7 +550,7 @@ class TelegramBot:
             return AgentReply(text="Event 訊息不允許執行管理指令。")
 
         if not images and not documents:
-            proactive_reply = await self._handle_proactive_action(chat_id=chat_id, text=text)
+            proactive_reply = await self._handle_proactive_action(chat_id=chat_id, text=text, history=history)
             if proactive_reply is not None:
                 return AgentReply(text=proactive_reply)
         return await self._ask_agent_response(
@@ -492,6 +563,8 @@ class TelegramBot:
             images=images,
             progress=progress,
             intent=submission_intent,
+            history=history,
+            message_history=message_history if override_runtime_history else None,
         )
 
     async def _reply_context_for_llm(self, *, message: TelegramMessage, text: str) -> ReplyMessageContext | None:
@@ -530,12 +603,124 @@ class TelegramBot:
             tools.insert(0, self.skill_tool)
         return tools
 
-    async def _handle_proactive_action(self, *, chat_id: int, text: str) -> str | None:
+    async def _handle_proactive_action(
+        self,
+        *,
+        chat_id: int,
+        text: str,
+        history: Sequence[tuple[str, str]] | None = None,
+    ) -> str | None:
         if self.proactive_tool is None:
             return None
+        effective_history = list(history) if history is not None else self._history(chat_id)
         return await self.proactive_tool.handle(
-            text.strip(), chat_id=chat_id, agent=self.agent, history=self._history(chat_id)
+            text.strip(), chat_id=chat_id, agent=self.agent, history=effective_history
         )
+
+    def _conversation_context(
+        self,
+        *,
+        chat_id: int,
+        message: TelegramMessage,
+    ) -> tuple[int | None, list[tuple[str, str]], tuple[ModelMessage, ...], bool]:
+        replied_message = message.get("reply_to_message")
+        replied_message_id = replied_message.get("message_id") if isinstance(replied_message, Mapping) else None
+        return self._conversation_context_for_reply(
+            chat_id=chat_id,
+            replied_message_id=replied_message_id if isinstance(replied_message_id, int) else None,
+        )
+
+    def _conversation_context_for_reply(
+        self,
+        *,
+        chat_id: int,
+        replied_message_id: int | None,
+    ) -> tuple[int | None, list[tuple[str, str]], tuple[ModelMessage, ...], bool]:
+        if replied_message_id is not None:
+            if self.session_log is not None:
+                try:
+                    replied_history = self.session_log.telegram_thread_history(chat_id, replied_message_id)
+                except Exception as exc:  # noqa: BLE001 - thread lookup must not block a reply
+                    logger.warning(
+                        "Telegram thread history failed for chat_id={} message_id={} with {}",
+                        chat_id,
+                        replied_message_id,
+                        type(exc).__name__,
+                    )
+                else:
+                    if replied_history is not None:
+                        return (
+                            replied_message_id,
+                            project_history(replied_history, limit=20),
+                            replied_history,
+                            True,
+                        )
+            memory_history = self._telegram_histories.get(chat_id, {}).get(replied_message_id)
+            if memory_history is not None:
+                return (
+                    replied_message_id,
+                    [*memory_history],
+                    tuple(_model_history_from_text(memory_history)),
+                    True,
+                )
+
+        parent_message_id = self._telegram_thread_head_message_id(chat_id)
+        model_history = self._current_model_history(chat_id)
+        return parent_message_id, project_history(model_history, limit=20), model_history, False
+
+    def _current_model_history(self, chat_id: int) -> tuple[ModelMessage, ...]:
+        if self.session_log is not None:
+            try:
+                return tuple(self.session_log.model_history(chat_id))
+            except Exception as exc:  # noqa: BLE001 - broken durable history must not block replies
+                logger.warning(
+                    "Session model history failed for chat_id={} with {}; using in-memory history",
+                    chat_id,
+                    type(exc).__name__,
+                )
+        return tuple(_model_history_from_text(self.histories.get(chat_id, ())))
+
+    def _telegram_thread_head_message_id(self, chat_id: int) -> int | None:
+        if self.session_log is not None:
+            try:
+                durable_head = self.session_log.telegram_thread_head_message_id(chat_id)
+            except Exception as exc:  # noqa: BLE001 - use the in-memory thread index when storage is broken
+                logger.warning(
+                    "Telegram thread head lookup failed for chat_id={} with {}",
+                    chat_id,
+                    type(exc).__name__,
+                )
+            else:
+                if durable_head is not None:
+                    return durable_head
+        return self._telegram_thread_heads.get(chat_id)
+
+    def _record_telegram_thread(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        parent_message_id: int | None,
+        message_history: Sequence[ModelMessage],
+    ) -> None:
+        history = tuple(message_history)
+        if self.session_log is not None:
+            try:
+                self.session_log.append_telegram_thread(
+                    chat_id,
+                    message_id,
+                    history,
+                    parent_message_id=parent_message_id,
+                )
+            except Exception as exc:  # noqa: BLE001 - the Telegram reply was already delivered
+                logger.warning(
+                    "Telegram thread append failed for chat_id={} message_id={} with {}",
+                    chat_id,
+                    message_id,
+                    type(exc).__name__,
+                )
+        self._telegram_histories.setdefault(chat_id, {})[message_id] = project_history(history, limit=20)
+        self._telegram_thread_heads[chat_id] = message_id
 
     def _history(self, chat_id: int) -> list[tuple[str, str]]:
         memory_history = self.histories.get(chat_id)
@@ -550,11 +735,32 @@ class TelegramBot:
                 )
             else:
                 if memory_history:
+                    if memory_history[: len(durable_history)] == durable_history:
+                        return memory_history[-20:]
+                    if durable_history[: len(memory_history)] == memory_history:
+                        return durable_history
                     return [*durable_history, *memory_history][-20:]
                 return durable_history
         return self.histories.setdefault(chat_id, [])
 
-    def _record_turn(self, chat_id: int, *, user_text: str, assistant_text: str, synthetic: bool = False) -> None:
+    def _record_turn(
+        self,
+        chat_id: int,
+        *,
+        user_text: str,
+        assistant_text: str,
+        synthetic: bool = False,
+        history: Sequence[tuple[str, str]] | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
+    ) -> tuple[ModelMessage, ...]:
+        base_history = list(history) if history is not None else [*self._history(chat_id)]
+        base_model_history = (
+            tuple(message_history) if message_history is not None else tuple(_model_history_from_text(base_history))
+        )
+        new_messages: tuple[ModelMessage, ...] = (
+            ModelRequest(parts=[UserPromptPart(content=user_text)]),
+            ModelResponse(parts=[TextPart(content=assistant_text)]),
+        )
         if self.session_log is not None:
             try:
                 self.session_log.append_turn(
@@ -567,8 +773,10 @@ class TelegramBot:
                     type(exc).__name__,
                 )
             else:
-                return
-        self._append_in_memory_history(chat_id, ("user", user_text), ("assistant", assistant_text))
+                return (*base_model_history, *new_messages)
+        updated_history = [*base_history, ("user", user_text), ("assistant", assistant_text)][-20:]
+        self.histories[chat_id] = updated_history
+        return (*base_model_history, *new_messages)
 
     def _append_in_memory_history(self, chat_id: int, *turns: tuple[str, str]) -> None:
         history = self.histories.setdefault(chat_id, [])
@@ -592,6 +800,10 @@ class TelegramBot:
         if not passive_text:
             return
         message_id = message.get("message_id")
+        parent_message_id = self._telegram_thread_head_message_id(chat_id)
+        base_model_history = self._current_model_history(chat_id)
+        passive_message = ModelRequest(parts=[UserPromptPart(content=passive_text)])
+        recorded = False
         if self.session_log is not None:
             try:
                 self.session_log.append(
@@ -609,11 +821,22 @@ class TelegramBot:
                     type(exc).__name__,
                 )
             else:
-                return
-        self._append_in_memory_history(chat_id, ("user", passive_text))
+                recorded = True
+        if not recorded:
+            base_history = project_history(base_model_history, limit=20)
+            self.histories[chat_id] = [*base_history, ("user", passive_text)][-20:]
+        if isinstance(message_id, int):
+            self._record_telegram_thread(
+                chat_id=chat_id,
+                message_id=message_id,
+                parent_message_id=parent_message_id,
+                message_history=(*base_model_history, passive_message),
+            )
 
     def _clear_history(self, chat_id: int) -> None:
         self.histories.pop(chat_id, None)
+        self._telegram_histories.pop(chat_id, None)
+        self._telegram_thread_heads.pop(chat_id, None)
         if self.agent_runtime is not None:
             try:
                 self.agent_runtime.clear_history(chat_id)
@@ -636,6 +859,9 @@ class TelegramBot:
         documents: Sequence[ConvertedDocument] = (),
         reply_context: ReplyMessageContext | None = None,
         progress: _TelegramAgentProgress | None = None,
+        history: Sequence[tuple[str, str]] | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
+        override_runtime_history: bool = False,
     ) -> str | AgentReply | None:
         command, _, argument = text.partition(" ")
         command_name = command.split("@", maxsplit=1)[0].lower()
@@ -670,6 +896,8 @@ class TelegramBot:
                     ),
                     images=images,
                     progress=progress,
+                    history=history,
+                    message_history=message_history if override_runtime_history else None,
                 )
             case "/skills" | "/soul":
                 return "這個 bot 尚未啟用這個管理功能。"
@@ -694,11 +922,13 @@ class TelegramBot:
         images: Sequence[ImageAttachment] = (),
         progress: _TelegramAgentProgress | None = None,
         intent: SubmissionIntent = "steer",
+        history: Sequence[tuple[str, str]] | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> AgentReply:
         try:
             if self.agent_runtime is not None:
                 event_handler = progress.handle if progress is not None else None
-                if intent == "follow_up":
+                if message_history is None:
                     submission = await self.agent_runtime.submit(
                         chat_id,
                         prompt,
@@ -712,17 +942,23 @@ class TelegramBot:
                         prompt,
                         images=images,
                         event_handler=event_handler,
+                        intent=intent,
+                        message_history=message_history,
                     )
-                return replace(submission.reply, session_recorded=True)
+                return replace(
+                    submission.reply,
+                    session_recorded=True,
+                    message_history=submission.message_history or None,
+                )
 
-            history = self._history(chat_id)
+            effective_history = list(history) if history is not None else self._history(chat_id)
             rich_reply = getattr(self.agent, "reply_with_artifacts", None)
             if callable(rich_reply):
-                return await rich_reply(prompt, history=history, images=images)
+                return await rich_reply(prompt, history=effective_history, images=images)
             if images:
-                reply = await self.agent.reply(prompt, history=history, images=images)
+                reply = await self.agent.reply(prompt, history=effective_history, images=images)
             else:
-                reply = await self.agent.reply(prompt, history=history)
+                reply = await self.agent.reply(prompt, history=effective_history)
         except _LLM_REQUEST_ERRORS:
             logger.exception("LLM request failed")
             if images:
@@ -737,7 +973,7 @@ class TelegramBot:
         *,
         reply_to_message_id: int | None = None,
         existing_message_id: int | None = None,
-    ) -> None:
+    ) -> int | None:
         parent_message_id = existing_message_id
         if parent_message_id is None:
             parent_message_id = await self.telegram.send_message(
@@ -760,6 +996,7 @@ class TelegramBot:
                     "我有產生一張圖表，但目前無法透過 Telegram 傳送。",
                     reply_to_message_id=parent_message_id or reply_to_message_id,
                 )
+        return parent_message_id
 
     async def _handle_image_generation_command(
         self, *, chat_id: int, prompt: str, reply_to_message_id: int | None
@@ -906,6 +1143,18 @@ class TelegramBot:
             return True
         chat = message.get("chat")
         return bool(chat and chat.get("type") == "private")
+
+
+def _model_history_from_text(history: Sequence[tuple[str, str]]) -> list[ModelMessage]:
+    messages: list[ModelMessage] = []
+    for role, content in history:
+        if not content:
+            continue
+        if role == "user":
+            messages.append(ModelRequest(parts=[UserPromptPart(content=content)]))
+        elif role == "assistant":
+            messages.append(ModelResponse(parts=[TextPart(content=content)]))
+    return messages
 
 
 def _generated_image_caption(prompt: str) -> str:

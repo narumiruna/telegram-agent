@@ -62,6 +62,46 @@ def test_compaction_record_replaces_prior_model_context(tmp_path: Path) -> None:
     assert compaction.metadata == {"source_message_count": 2}
 
 
+def test_telegram_thread_history_follows_replied_message_branch(tmp_path: Path) -> None:
+    log = SessionLog(tmp_path / "sessions")
+    first_turn = [
+        ModelRequest(parts=[UserPromptPart(content="幫我查某資料")]),
+        ModelResponse(parts=[TextPart(content="此資料為 blablabla")]),
+    ]
+    passive_message = ModelRequest(parts=[UserPromptPart(content="昨天的晚餐很難吃")])
+    branched_turn = [
+        ModelRequest(parts=[UserPromptPart(content="幫我查另一種情況")]),
+        ModelResponse(parts=[TextPart(content="另一種情況的結果")]),
+    ]
+
+    log.append_telegram_thread(123, 100, first_turn, parent_message_id=None)
+    log.append_telegram_thread(123, 12, [*first_turn, passive_message], parent_message_id=100)
+    log.append_telegram_thread(123, 101, [*first_turn, *branched_turn], parent_message_id=100)
+
+    assert log.telegram_thread_history(123, 100) == tuple(first_turn)
+    assert log.telegram_thread_history(123, 12) == (*first_turn, passive_message)
+    assert log.telegram_thread_history(123, 101) == (*first_turn, *branched_turn)
+    assert log.model_history(123) == [*first_turn, *branched_turn]
+    assert [len(record.messages) for record in log.telegram_thread_records(123)] == [2, 1, 2]
+
+
+def test_telegram_thread_history_survives_restart_and_is_cleared(tmp_path: Path) -> None:
+    root = tmp_path / "sessions"
+    first_log = SessionLog(root)
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content="question")]),
+        ModelResponse(parts=[TextPart(content="answer")]),
+    ]
+    first_log.append_telegram_thread(123, 100, messages, parent_message_id=None)
+
+    restarted_log = SessionLog(root)
+    assert restarted_log.telegram_thread_head_message_id(123) == 100
+    assert restarted_log.telegram_thread_history(123, 100) == tuple(messages)
+
+    restarted_log.clear_chat(123)
+    assert restarted_log.telegram_thread_head_history(123) is None
+
+
 def test_v2_session_store_does_not_read_legacy_log(tmp_path: Path) -> None:
     log = SessionLog(tmp_path / "sessions")
     legacy_path = log.root / "123" / "log.jsonl"

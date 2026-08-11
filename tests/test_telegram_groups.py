@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from telegramagent.images import AgentReply
 from telegramagent.images import ImageAttachment
+from telegramagent.session import SessionLog
 from telegramagent.telegram import TelegramBot
 from telegramagent.url_context import UrlContext
 from tests.telegram_test_support import FakeAgent
@@ -221,6 +224,146 @@ async def test_group_passive_context_is_used_when_bot_is_later_addressed() -> No
         ("user", "[群組旁聽訊息 from @alice] 我想吃牛肉麵"),
         ("user", "剛剛大家說什麼？"),
         ("assistant", "AI: 剛剛大家說什麼？ (1)"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reply_to_agent_message_uses_that_message_as_conversation_head() -> None:
+    class BranchAgent:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, list[tuple[str, str]]]] = []
+
+        async def reply(self, prompt, *, history, images=()):
+            del images
+            self.calls.append((prompt, [*history]))
+            return "第一筆資料" if len(self.calls) == 1 else "另一種情況"
+
+    telegram = FakeTelegram()
+    agent = BranchAgent()
+    bot = TelegramBot(telegram=telegram, agent=agent, bot_username="fakebot", bot_user_id=42)
+
+    await bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 456},
+                "text": "@fakebot 幫我查某資料",
+            },
+        }
+    )
+    await bot.handle_update(
+        {
+            "update_id": 2,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 789},
+                "text": "我覺得昨天的晚餐很難吃",
+            },
+        }
+    )
+    await bot.handle_update(
+        {
+            "update_id": 3,
+            "message": {
+                "message_id": 12,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 456},
+                "reply_to_message": {
+                    "message_id": 100,
+                    "from": {"id": 42, "username": "fakebot"},
+                    "text": "第一筆資料",
+                },
+                "text": "幫我查另一種情況",
+            },
+        }
+    )
+
+    assert agent.calls[1] == (
+        "幫我查另一種情況",
+        [("user", "幫我查某資料"), ("assistant", "第一筆資料")],
+    )
+    assert bot.histories[-100] == [
+        ("user", "幫我查某資料"),
+        ("assistant", "第一筆資料"),
+        ("user", "幫我查另一種情況"),
+        ("assistant", "另一種情況"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_replied_message_branch_survives_bot_restart(tmp_path: Path) -> None:
+    session_log = SessionLog(tmp_path / "sessions")
+    first_telegram = FakeTelegram()
+    first_agent = FakeArtifactAgent(AgentReply("第一筆資料"))
+    first_bot = TelegramBot(
+        telegram=first_telegram,
+        agent=first_agent,
+        session_log=session_log,
+        bot_username="fakebot",
+        bot_user_id=42,
+    )
+    await first_bot.handle_update(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 456},
+                "text": "@fakebot 幫我查某資料",
+            },
+        }
+    )
+    await first_bot.handle_update(
+        {
+            "update_id": 2,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 789},
+                "text": "我覺得昨天的晚餐很難吃",
+            },
+        }
+    )
+
+    restarted_telegram = FakeTelegram()
+    restarted_telegram.next_message_id = 101
+    restarted_agent = FakeArtifactAgent(AgentReply("另一種情況"))
+    restarted_bot = TelegramBot(
+        telegram=restarted_telegram,
+        agent=restarted_agent,
+        session_log=session_log,
+        bot_username="fakebot",
+        bot_user_id=42,
+    )
+    await restarted_bot.handle_update(
+        {
+            "update_id": 3,
+            "message": {
+                "message_id": 12,
+                "chat": {"id": -100, "type": "supergroup"},
+                "from": {"id": 456},
+                "reply_to_message": {
+                    "message_id": 100,
+                    "from": {"id": 42, "username": "fakebot"},
+                    "text": "第一筆資料",
+                },
+                "text": "幫我查另一種情況",
+            },
+        }
+    )
+
+    assert restarted_agent.calls[0][1] == [
+        ("user", "幫我查某資料"),
+        ("assistant", "第一筆資料"),
+    ]
+    assert session_log.history(-100) == [
+        ("user", "幫我查某資料"),
+        ("assistant", "第一筆資料"),
+        ("user", "幫我查另一種情況"),
+        ("assistant", "另一種情況"),
     ]
 
 

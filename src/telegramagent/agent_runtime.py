@@ -67,6 +67,7 @@ class AgentRunOutput:
 class AgentSubmission:
     kind: SubmissionKind
     reply: AgentReply
+    message_history: tuple[ModelMessage, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -153,28 +154,57 @@ class AgentRuntime:
         images: Sequence[ImageAttachment] = (),
         event_handler: AgentEventHandler | None = None,
         intent: SubmissionIntent = "steer",
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> AgentSubmission:
         image_tuple = tuple(images)
+        branch_predecessor: asyncio.Task[AgentSubmission] | None = None
         async with self._lock:
             session = self._chat_sessions.setdefault(chat_id, _ChatSession())
             if session.task is not None and not session.task.done():
-                pending = _PendingSubmission(prompt, image_tuple, intent)
-                if session.control is None:
-                    session.pending.append(pending)
+                if message_history is not None:
+                    branch_predecessor = session.task
                 else:
-                    _enqueue_submission(session.control, pending)
-                if intent == "follow_up":
-                    return AgentSubmission(
-                        kind="followed_up",
-                        reply=AgentReply(text="已將新訊息排在目前任務完成後處理。"),
-                    )
-                return AgentSubmission(kind="steered", reply=AgentReply(text="已將新訊息加入目前任務。"))
+                    pending = _PendingSubmission(prompt, image_tuple, intent)
+                    if session.control is None:
+                        session.pending.append(pending)
+                    else:
+                        _enqueue_submission(session.control, pending)
+                    if intent == "follow_up":
+                        return AgentSubmission(
+                            kind="followed_up",
+                            reply=AgentReply(text="已將新訊息排在目前任務完成後處理。"),
+                        )
+                    return AgentSubmission(kind="steered", reply=AgentReply(text="已將新訊息加入目前任務。"))
+            else:
+                current_task = asyncio.current_task()
+                if current_task is None:  # pragma: no cover - submit always runs in an event loop task
+                    raise RuntimeError("agent submission requires an active asyncio task")
+                session.task = cast(asyncio.Task[AgentSubmission], current_task)
 
-            current_task = asyncio.current_task()
-            if current_task is None:  # pragma: no cover - submit always runs in an event loop task
-                raise RuntimeError("agent submission requires an active asyncio task")
-            session.task = cast(asyncio.Task[AgentSubmission], current_task)
-        return await self._execute(chat_id, prompt, images=image_tuple, event_handler=event_handler)
+        if branch_predecessor is not None:
+            try:
+                await asyncio.shield(branch_predecessor)
+            except Exception as exc:  # noqa: BLE001 - an unrelated failed branch must not discard this reply
+                logger.warning(
+                    "Previous agent run failed before replied-message branch with {}; continuing branch",
+                    type(exc).__name__,
+                )
+            return await self.submit(
+                chat_id,
+                prompt,
+                images=image_tuple,
+                event_handler=event_handler,
+                intent=intent,
+                message_history=message_history,
+            )
+
+        return await self._execute(
+            chat_id,
+            prompt,
+            images=image_tuple,
+            event_handler=event_handler,
+            message_history=message_history,
+        )
 
     async def cancel(self, chat_id: int) -> bool:
         async with self._lock:
@@ -216,11 +246,20 @@ class AgentRuntime:
         *,
         images: tuple[ImageAttachment, ...],
         event_handler: AgentEventHandler | None,
+        message_history: Sequence[ModelMessage] | None,
     ) -> AgentSubmission:
         current_task = asyncio.current_task()
         await self._dispatch(AgentEvent("agent_start"), event_handler)
         try:
-            history = (*self.sessions.model_history(chat_id), *self._volatile_history.get(chat_id, ()))
+            if message_history is not None:
+                history = tuple(message_history)
+            else:
+                durable_history = tuple(self.sessions.model_history(chat_id))
+                volatile_history = tuple(self._volatile_history.get(chat_id, ()))
+                if volatile_history and durable_history[-len(volatile_history) :] == volatile_history:
+                    volatile_history = ()
+                    self._volatile_history.pop(chat_id, None)
+                history = (*durable_history, *volatile_history)
             history_compactor = _RunHistoryCompactor(
                 runtime=self,
                 chat_id=chat_id,
@@ -235,9 +274,18 @@ class AgentRuntime:
                 control_handler=lambda control: self._bind_control(chat_id, control),
                 history_processor=history_compactor.process,
             )
-            self._record_output(chat_id, output.new_messages[history_compactor.processed_new_message_count :])
+            self._record_output(
+                chat_id,
+                output.new_messages[history_compactor.processed_new_message_count :],
+                include_volatile=message_history is None,
+            )
+            completed_history = history_compactor.final_history((*history, *output.new_messages))
             await self._dispatch(AgentEvent("agent_end", text=output.reply.text), event_handler)
-            return AgentSubmission(kind="completed", reply=output.reply)
+            return AgentSubmission(
+                kind="completed",
+                reply=output.reply,
+                message_history=completed_history,
+            )
         except asyncio.CancelledError:
             await self._dispatch(AgentEvent("cancelled", text="任務已取消。"), event_handler)
             return AgentSubmission(kind="cancelled", reply=AgentReply(text="已取消目前任務。"))
@@ -268,8 +316,14 @@ class AgentRuntime:
         for item in pending:
             _enqueue_submission(control, item)
 
-    def _record_output(self, chat_id: int, new_messages: Sequence[ModelMessage]) -> None:
-        volatile = self._volatile_history.get(chat_id, [])
+    def _record_output(
+        self,
+        chat_id: int,
+        new_messages: Sequence[ModelMessage],
+        *,
+        include_volatile: bool = True,
+    ) -> None:
+        volatile = self._volatile_history.get(chat_id, []) if include_volatile else []
         messages = [*volatile, *new_messages]
         try:
             self.sessions.append_messages(chat_id, messages)
@@ -311,8 +365,13 @@ class _RunHistoryCompactor:
     summary_messages: tuple[ModelMessage, ...] = ()
     compacting: bool = False
 
+    def final_history(self, messages: Sequence[ModelMessage]) -> tuple[ModelMessage, ...]:
+        if self.summary_messages:
+            return (*self.summary_messages, *messages[self.raw_cut :])
+        return tuple(messages)
+
     async def process(self, messages: list[ModelMessage]) -> list[ModelMessage]:
-        current = [*self.summary_messages, *messages[self.raw_cut :]] if self.summary_messages else list(messages)
+        current = list(self.final_history(messages))
         if self.runtime.compactor is None or self.compacting or not _needs_compaction(current, self.runtime.config):
             return current
 

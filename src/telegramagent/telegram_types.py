@@ -6,6 +6,8 @@ from typing import NotRequired
 from typing import Protocol
 from typing import TypedDict
 
+from pydantic_ai.messages import ModelMessage
+
 from telegramagent.agent_runtime import AgentEventHandler
 from telegramagent.agent_runtime import AgentSubmission
 from telegramagent.agent_runtime import SubmissionIntent
@@ -107,6 +109,7 @@ class AgentRuntimeGateway(Protocol):
         images: Sequence[ImageAttachment] = (),
         event_handler: AgentEventHandler | None = None,
         intent: SubmissionIntent = "steer",
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> AgentSubmission: ...
 
     async def cancel(self, chat_id: int) -> bool: ...
