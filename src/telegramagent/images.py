@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx
+from PIL import Image
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
@@ -37,6 +38,9 @@ class AgentReply:
 
 class ImageGenerationError(RuntimeError):
     """Raised when an image generation provider returns no usable image."""
+
+
+_TELEGRAM_PHOTO_MAX_DIMENSION_SUM = 10_000
 
 
 class OpenAIImageGenerator:
@@ -126,23 +130,31 @@ def image_from_binary(data: bytes, *, media_type: str, filename_prefix: str = "i
 
 
 def as_telegram_photo(image: GeneratedImage) -> GeneratedImage:
-    if image.media_type in {"image/jpeg", "image/png"}:
-        return image
-    try:
-        from PIL import Image
-    except ImportError:
-        return image
-
+    supported_media_types = {"image/jpeg", "image/png"}
     try:
         with Image.open(io.BytesIO(image.data)) as opened_image:
-            converted = opened_image.convert("RGBA")
+            target_size = _fit_telegram_photo_size(*opened_image.size)
+            if image.media_type in supported_media_types and target_size == opened_image.size:
+                return image
+
+            output_media_type = image.media_type if image.media_type in supported_media_types else "image/png"
+            converted = opened_image.convert("RGB" if output_media_type == "image/jpeg" else "RGBA")
+            if converted.size != target_size:
+                converted = converted.resize(target_size, Image.Resampling.LANCZOS)
             buffer = io.BytesIO()
-            converted.save(buffer, format="PNG")
-    except OSError:
+            converted.save(buffer, format="JPEG" if output_media_type == "image/jpeg" else "PNG")
+    except OSError, Image.DecompressionBombError:
         return image
-    return GeneratedImage(
-        data=buffer.getvalue(), media_type="image/png", filename=_filename_for_media_type("image/png")
-    )
+
+    filename = image.filename if output_media_type == image.media_type else _filename_for_media_type(output_media_type)
+    return GeneratedImage(data=buffer.getvalue(), media_type=output_media_type, filename=filename)
+
+
+def _fit_telegram_photo_size(width: int, height: int) -> tuple[int, int]:
+    if width + height <= _TELEGRAM_PHOTO_MAX_DIMENSION_SUM:
+        return width, height
+    scale = _TELEGRAM_PHOTO_MAX_DIMENSION_SUM / (width + height)
+    return max(1, int(width * scale)), max(1, int(height * scale))
 
 
 def _filename_for_media_type(media_type: str, prefix: str = "generated-image") -> str:

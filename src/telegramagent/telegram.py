@@ -624,7 +624,11 @@ class TelegramBot:
         message: TelegramMessage,
     ) -> tuple[int | None, list[tuple[str, str]], tuple[ModelMessage, ...], bool]:
         replied_message = message.get("reply_to_message")
-        replied_message_id = replied_message.get("message_id") if isinstance(replied_message, Mapping) else None
+        replied_message_id = (
+            cast(Mapping[str, object], replied_message).get("message_id")
+            if isinstance(replied_message, Mapping)
+            else None
+        )
         return self._conversation_context_for_reply(
             chat_id=chat_id,
             replied_message_id=replied_message_id if isinstance(replied_message_id, int) else None,
@@ -1026,7 +1030,7 @@ class TelegramBot:
             reply_to_message_id=reply_to_message_id,
         )
         try:
-            generated = await self.image_generator.generate(prompt)
+            generated = as_telegram_photo(await self.image_generator.generate(prompt))
             await self.telegram.send_photo(
                 chat_id,
                 generated.data,

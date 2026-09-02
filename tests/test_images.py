@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import base64
+import io
 
 import httpx
 import pytest
+from PIL import Image
 
+import telegramagent.images as images_module
+from telegramagent.images import GeneratedImage
 from telegramagent.images import ImageGenerationError
 from telegramagent.images import OpenAIImageGenerator
+from telegramagent.images import as_telegram_photo
 
 
 @pytest.mark.asyncio
@@ -55,6 +60,28 @@ async def test_openai_image_generator_downloads_url_result() -> None:
     assert image.data == b"webp"
     assert image.media_type == "image/webp"
     assert image.filename == "generated-image.webp"
+
+
+def test_as_telegram_photo_keeps_supported_image_within_dimension_limit_unchanged() -> None:
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 4), "white").save(buffer, format="PNG")
+    image = GeneratedImage(data=buffer.getvalue(), media_type="image/png", filename="chart.png")
+
+    assert as_telegram_photo(image) is image
+
+
+def test_as_telegram_photo_resizes_image_that_exceeds_dimension_limit(monkeypatch) -> None:
+    monkeypatch.setattr(images_module, "_TELEGRAM_PHOTO_MAX_DIMENSION_SUM", 10)
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 4), "white").save(buffer, format="PNG")
+    image = GeneratedImage(data=buffer.getvalue(), media_type="image/png", filename="chart.png")
+
+    resized = as_telegram_photo(image)
+
+    with Image.open(io.BytesIO(resized.data)) as opened_image:
+        assert opened_image.size == (6, 3)
+    assert resized.media_type == "image/png"
+    assert resized.filename == "chart.png"
 
 
 @pytest.mark.asyncio
