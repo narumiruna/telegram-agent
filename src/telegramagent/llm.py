@@ -523,6 +523,12 @@ def _chat_instructions(*, skills: list[AgentSkill], soul: ContextFile | None, ca
             "可以自然、克制地加入少量 emoji。實務與開發問題優先精確、可執行與可驗證。"
         ),
         (
+            "## 輸出格式\n"
+            "需要圖表時，一律使用 Mermaid 語法，並放在標記為 mermaid 的 fenced code block 中。\n"
+            "書寫數學內容或公式時使用 LaTeX；行內公式用 `$...$`，獨立公式用 `$$...$$`。\n"
+            "程式碼使用附語言標記的 fenced code block；只有短識別字、參數或指令使用 inline code。"
+        ),
+        (
             "## 對話上下文\n"
             "對話歷史會以真正的 prior messages 提供；回覆前先檢查近期對話。使用者提到「剛剛那個」、"
             "「不是丟過了」或要求沿用前文 URL 時，應從近期歷史取得內容，不要要求重新貼上已提供的資料。\n"
