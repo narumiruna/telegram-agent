@@ -43,7 +43,7 @@ class MorselPublisher:
         if not self.api_key:
             raise MorselNotConfiguredError("MORSEL_API_KEY is not configured")
 
-        payload = json.dumps({"content": text}, ensure_ascii=False).encode()
+        payload = json.dumps({"content": text, "preview": True}, ensure_ascii=False).encode()
         if self.http_client is not None:
             return await self._publish_with_client(self.http_client, payload)
 

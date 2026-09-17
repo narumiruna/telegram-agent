@@ -165,7 +165,7 @@ class FakeImageGenerator:
 class FakeMorselPublisher:
     def __init__(
         self,
-        url: str = "https://morsel.narumi.dev/#/s/long-reply",
+        url: str = "https://morsel.narumi.dev/s/long-reply",
         error: MorselPublishError | None = None,
     ) -> None:
         self.url = url

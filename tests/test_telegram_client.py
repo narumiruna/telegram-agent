@@ -117,7 +117,7 @@ async def test_telegram_client_formats_commonmark_markdown_as_safe_html() -> Non
 @pytest.mark.asyncio
 async def test_telegram_client_publishes_messages_over_1000_chars_to_morsel() -> None:
     payloads: list[dict[str, Any]] = []
-    publisher = FakeMorselPublisher(url="https://morsel.narumi.dev/#/s/share-token")
+    publisher = FakeMorselPublisher(url="https://morsel.narumi.dev/s/share-token")
     text = "x" * 1001
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -131,7 +131,7 @@ async def test_telegram_client_publishes_messages_over_1000_chars_to_morsel() ->
 
     assert message_id == 99
     assert publisher.published == [text]
-    expected_url = '<a href="https://morsel.narumi.dev/#/s/share-token">https://morsel.narumi.dev/#/s/share-token</a>'
+    expected_url = '<a href="https://morsel.narumi.dev/s/share-token">https://morsel.narumi.dev/s/share-token</a>'
     assert payloads == [
         {
             "chat_id": 123,
@@ -166,7 +166,7 @@ async def test_telegram_client_does_not_publish_messages_at_1000_chars() -> None
 @pytest.mark.asyncio
 async def test_telegram_client_edits_long_messages_to_morsel_url() -> None:
     payloads: list[dict[str, Any]] = []
-    publisher = FakeMorselPublisher(url="https://morsel.narumi.dev/#/s/status")
+    publisher = FakeMorselPublisher(url="https://morsel.narumi.dev/s/status")
 
     def handler(request: httpx.Request) -> httpx.Response:
         payloads.append(json.loads(request.read().decode()))
@@ -178,7 +178,7 @@ async def test_telegram_client_edits_long_messages_to_morsel_url() -> None:
         await telegram.edit_message_text(123, 99, "x" * 1001)
 
     assert publisher.published == ["x" * 1001]
-    expected_url = '<a href="https://morsel.narumi.dev/#/s/status">https://morsel.narumi.dev/#/s/status</a>'
+    expected_url = '<a href="https://morsel.narumi.dev/s/status">https://morsel.narumi.dev/s/status</a>'
     assert payloads == [
         {
             "chat_id": 123,
