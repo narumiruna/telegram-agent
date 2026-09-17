@@ -6,10 +6,10 @@ from typing import Any
 import httpx
 import pytest
 
+from telegramagent.morsel import MorselPublishError
 from telegramagent.telegram import TelegramClient
 from telegramagent.telegram_client import TelegramDownloadTooLargeError
-from telegramagent.telegraph_pages import TelegraphPublishError
-from tests.telegram_test_support import FakeTelegraphPublisher
+from tests.telegram_test_support import FakeMorselPublisher
 
 
 class TrackingByteStream(httpx.AsyncByteStream):
@@ -114,9 +114,9 @@ async def test_telegram_client_formats_commonmark_markdown_as_safe_html() -> Non
 
 
 @pytest.mark.asyncio
-async def test_telegram_client_publishes_messages_over_1000_chars_to_telegraph() -> None:
+async def test_telegram_client_publishes_messages_over_1000_chars_to_morsel() -> None:
     payloads: list[dict[str, Any]] = []
-    publisher = FakeTelegraphPublisher(url="https://telegra.ph/福岡-05-27")
+    publisher = FakeMorselPublisher(url="https://morsel.narumi.dev/#/s/share-token")
     text = "x" * 1001
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -125,12 +125,12 @@ async def test_telegram_client_publishes_messages_over_1000_chars_to_telegraph()
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
-        telegram = TelegramClient("token", http_client=client, telegraph_publisher=publisher)
+        telegram = TelegramClient("token", http_client=client, long_message_publisher=publisher)
         message_id = await telegram.send_message(123, text, reply_to_message_id=55)
 
     assert message_id == 99
     assert publisher.published == [text]
-    expected_url = '<a href="https://telegra.ph/%E7%A6%8F%E5%B2%A1-05-27">https://telegra.ph/福岡-05-27</a>'
+    expected_url = '<a href="https://morsel.narumi.dev/#/s/share-token">https://morsel.narumi.dev/#/s/share-token</a>'
     assert payloads == [
         {
             "chat_id": 123,
@@ -145,7 +145,7 @@ async def test_telegram_client_publishes_messages_over_1000_chars_to_telegraph()
 @pytest.mark.asyncio
 async def test_telegram_client_does_not_publish_messages_at_1000_chars() -> None:
     payloads: list[dict[str, Any]] = []
-    publisher = FakeTelegraphPublisher()
+    publisher = FakeMorselPublisher()
     text = "x" * 1000
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -154,7 +154,7 @@ async def test_telegram_client_does_not_publish_messages_at_1000_chars() -> None
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
-        telegram = TelegramClient("token", http_client=client, telegraph_publisher=publisher)
+        telegram = TelegramClient("token", http_client=client, long_message_publisher=publisher)
         message_id = await telegram.send_message(123, text)
 
     assert message_id == 99
@@ -163,9 +163,9 @@ async def test_telegram_client_does_not_publish_messages_at_1000_chars() -> None
 
 
 @pytest.mark.asyncio
-async def test_telegram_client_edits_long_messages_to_telegraph_url() -> None:
+async def test_telegram_client_edits_long_messages_to_morsel_url() -> None:
     payloads: list[dict[str, Any]] = []
-    publisher = FakeTelegraphPublisher(url="https://telegra.ph/status")
+    publisher = FakeMorselPublisher(url="https://morsel.narumi.dev/#/s/status")
 
     def handler(request: httpx.Request) -> httpx.Response:
         payloads.append(json.loads(request.read().decode()))
@@ -173,15 +173,16 @@ async def test_telegram_client_edits_long_messages_to_telegraph_url() -> None:
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
-        telegram = TelegramClient("token", http_client=client, telegraph_publisher=publisher)
+        telegram = TelegramClient("token", http_client=client, long_message_publisher=publisher)
         await telegram.edit_message_text(123, 99, "x" * 1001)
 
     assert publisher.published == ["x" * 1001]
+    expected_url = '<a href="https://morsel.narumi.dev/#/s/status">https://morsel.narumi.dev/#/s/status</a>'
     assert payloads == [
         {
             "chat_id": 123,
             "message_id": 99,
-            "text": '<a href="https://telegra.ph/status">https://telegra.ph/status</a>',
+            "text": expected_url,
             "parse_mode": "HTML",
             "disable_web_page_preview": False,
         }
@@ -189,9 +190,9 @@ async def test_telegram_client_edits_long_messages_to_telegraph_url() -> None:
 
 
 @pytest.mark.asyncio
-async def test_telegram_client_falls_back_to_chunks_when_telegraph_publish_fails() -> None:
+async def test_telegram_client_falls_back_to_chunks_when_morsel_publish_fails() -> None:
     payloads: list[dict[str, Any]] = []
-    publisher = FakeTelegraphPublisher(error=TelegraphPublishError("no page"))
+    publisher = FakeMorselPublisher(error=MorselPublishError("no share"))
     text = "x" * 4100
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -200,7 +201,7 @@ async def test_telegram_client_falls_back_to_chunks_when_telegraph_publish_fails
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
-        telegram = TelegramClient("token", http_client=client, telegraph_publisher=publisher)
+        telegram = TelegramClient("token", http_client=client, long_message_publisher=publisher)
         await telegram.send_message(123, text)
 
     assert publisher.published == [text]

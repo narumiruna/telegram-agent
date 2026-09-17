@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     bot_container_tools_max_read_chars: int = Field(default=20000, ge=100, alias="BOT_CONTAINER_TOOLS_MAX_READ_CHARS")
     bot_container_tools_max_results: int = Field(default=200, ge=1, alias="BOT_CONTAINER_TOOLS_MAX_RESULTS")
 
+    morsel_url: str = Field(default="https://morsel.narumi.dev/", alias="MORSEL_URL")
+    morsel_api_key: str | None = Field(default=None, alias="MORSEL_API_KEY")
+
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-5.6-luna", alias="OPENAI_MODEL")
