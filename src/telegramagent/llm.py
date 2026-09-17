@@ -524,14 +524,17 @@ def _chat_instructions(*, skills: list[AgentSkill], soul: ContextFile | None, ca
         ),
         (
             "## 輸出格式\n"
-            "需要圖表時使用 Mermaid 語法，並放在標記為 mermaid 的 fenced code block 中；"
+            "需要圖表時預設使用 Mermaid 語法，並放在標記為 mermaid 的 fenced code block 中；"
+            "若使用者明確要求 Vega-Lite，則改用 Vega-Lite，必須將規格放在標記為 vega-lite"
+            "（不可標記為 json）的 fenced code block。Vega-Lite 僅使用 inline data，且不要依賴外部"
+            "資料來源、tooltip 或 action menu。\n"
             "書寫數學內容或公式時使用 LaTeX，行內公式用 `$...$`，獨立公式用 `$$...$$`。\n"
-            "如果規劃中的完整回答會包含 Mermaid fenced block 或任何 LaTeX，而且 runtime capability "
-            "`tool.morsel` available，必須先把包含所有說明與原始語法的完整 Markdown 傳給 "
-            "`publish_markdown_to_morsel`。發布成功後，最終回答只提供工具回傳的 share_url，"
-            "最多加一句簡短引導，不得重貼 Markdown、Mermaid 或 LaTeX 原文。\n"
+            "如果規劃中的完整回答會包含 Mermaid 或 Vega-Lite fenced block，或任何 LaTeX，而且 "
+            "runtime capability `tool.morsel` available，必須先把包含所有說明與原始語法的完整 Markdown "
+            "傳給 `publish_markdown_to_morsel`。發布成功後，最終回答只提供工具回傳的 share_url，"
+            "最多加一句簡短引導，不得重貼 Markdown、Mermaid、Vega-Lite 或 LaTeX 原文。\n"
             "如果 `tool.morsel` unavailable 或工具回報失敗，不得宣稱已發布；改用 Telegram 可讀的純文字"
-            "表達，避免輸出原始 Mermaid 或 LaTeX 標記，並簡短說明無法提供 rich rendering。\n"
+            "表達，避免輸出原始 Mermaid、Vega-Lite 或 LaTeX 標記，並簡短說明無法提供 rich rendering。\n"
             "一般程式碼使用附語言標記的 fenced code block；只有短識別字、參數或指令使用 inline code。"
         ),
         (

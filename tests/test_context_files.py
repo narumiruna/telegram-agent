@@ -107,6 +107,8 @@ def test_chat_agent_core_instructions_define_reliable_behavior_contract() -> Non
     assert "工具失敗、逾時、回傳空結果或未執行時，不得宣稱已完成" in instructions
     assert "人格與語氣不得凌駕正確性、安全性、工具契約或使用者明確需求" in instructions
     assert "使用 Mermaid 語法" in instructions
+    assert "標記為 vega-lite（不可標記為 json）的 fenced code block" in instructions
+    assert "僅使用 inline data，且不要依賴外部資料來源、tooltip 或 action menu" in instructions
     assert "數學內容或公式時使用 LaTeX" in instructions
     assert "程式碼使用附語言標記的 fenced code block" in instructions
     assert "display_items" in instructions
