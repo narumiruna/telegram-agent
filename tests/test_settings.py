@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from telegramagent.settings import Settings
 
 
@@ -171,14 +174,48 @@ def test_container_tool_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_container_tools_max_results == 7
 
 
+def test_morsel_settings_have_smart_routing_defaults() -> None:
+    settings = Settings.model_validate({})
+
+    assert settings.morsel_mode == "smart"
+    assert settings.morsel_long_reply_threshold == 3500
+    assert settings.morsel_share_expires_in_seconds == 2_592_000
+    assert settings.morsel_timeout_seconds == 12.0
+
+
 def test_morsel_settings_parse_env(monkeypatch) -> None:
     monkeypatch.setenv("MORSEL_URL", "https://morsel.example.com/")
     monkeypatch.setenv("MORSEL_API_KEY", "morsel-test")
+    monkeypatch.setenv("MORSEL_MODE", "rich_only")
+    monkeypatch.setenv("MORSEL_LONG_REPLY_THRESHOLD", "3000")
+    monkeypatch.setenv("MORSEL_SHARE_EXPIRES_IN_SECONDS", "3600")
+    monkeypatch.setenv("MORSEL_TIMEOUT_SECONDS", "8.5")
 
     settings = Settings()
 
     assert settings.morsel_url == "https://morsel.example.com/"
     assert settings.morsel_api_key == "morsel-test"
+    assert settings.morsel_mode == "rich_only"
+    assert settings.morsel_long_reply_threshold == 3000
+    assert settings.morsel_share_expires_in_seconds == 3600
+    assert settings.morsel_timeout_seconds == 8.5
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("MORSEL_MODE", "always"),
+        ("MORSEL_LONG_REPLY_THRESHOLD", 0),
+        ("MORSEL_LONG_REPLY_THRESHOLD", 4097),
+        ("MORSEL_SHARE_EXPIRES_IN_SECONDS", 0),
+        ("MORSEL_SHARE_EXPIRES_IN_SECONDS", 315_360_001),
+        ("MORSEL_TIMEOUT_SECONDS", 0),
+        ("MORSEL_TIMEOUT_SECONDS", float("inf")),
+    ],
+)
+def test_morsel_settings_reject_invalid_policy_values(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate({field: value})
 
 
 def test_logfire_settings_parse_env(monkeypatch) -> None:

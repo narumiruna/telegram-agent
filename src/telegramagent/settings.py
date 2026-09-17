@@ -3,6 +3,7 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 from typing import Annotated
+from typing import Literal
 
 from pydantic import Field
 from pydantic import field_validator
@@ -115,6 +116,20 @@ class Settings(BaseSettings):
 
     morsel_url: str = Field(default="https://morsel.narumi.dev/", alias="MORSEL_URL")
     morsel_api_key: str | None = Field(default=None, alias="MORSEL_API_KEY")
+    morsel_mode: Literal["disabled", "rich_only", "smart"] = Field(default="smart", alias="MORSEL_MODE")
+    morsel_long_reply_threshold: int = Field(default=3500, ge=1, le=4096, alias="MORSEL_LONG_REPLY_THRESHOLD")
+    morsel_share_expires_in_seconds: int = Field(
+        default=2_592_000,
+        ge=1,
+        le=315_360_000,
+        alias="MORSEL_SHARE_EXPIRES_IN_SECONDS",
+    )
+    morsel_timeout_seconds: float = Field(
+        default=12.0,
+        gt=0,
+        allow_inf_nan=False,
+        alias="MORSEL_TIMEOUT_SECONDS",
+    )
 
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")

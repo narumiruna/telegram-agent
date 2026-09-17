@@ -32,8 +32,10 @@ class TelegramClient:
         *,
         http_client: httpx.AsyncClient | None = None,
         long_message_publisher: LongMessagePublisher | None = None,
-        long_message_threshold: int = 1000,
+        long_message_threshold: int | None = 3500,
     ) -> None:
+        if long_message_threshold is not None and not 1 <= long_message_threshold <= 4096:
+            raise ValueError("long_message_threshold must be between 1 and 4096")
         self.token = token
         self.base_url = f"https://api.telegram.org/bot{token}"
         self.http_client = http_client
@@ -76,20 +78,13 @@ class TelegramClient:
         last_message_id: int | None = None
         outbound_text = await self._outbound_message_text(text)
         for chunk in telegram_html_chunks(outbound_text):
-            payload: dict[str, object] = {
-                "chat_id": chat_id,
-                "text": chunk,
-                "parse_mode": TELEGRAM_PARSE_MODE,
-                "disable_web_page_preview": False,
-            }
-            if reply_to_message_id is not None:
-                payload["reply_to_message_id"] = reply_to_message_id
-            result = await self._request("sendMessage", payload)
-            if isinstance(result, Mapping):
-                result_mapping = cast(Mapping[str, object], result)
-                message_id = result_mapping.get("message_id")
-                if isinstance(message_id, int):
-                    last_message_id = message_id
+            message_id = await self._send_rendered_message(
+                chat_id,
+                chunk,
+                reply_to_message_id=reply_to_message_id,
+            )
+            if message_id is not None:
+                last_message_id = message_id
         return last_message_id
 
     async def send_photo(
@@ -139,19 +134,50 @@ class TelegramClient:
             },
         )
         for chunk in chunks[1:]:
-            await self.send_message(chat_id, chunk, reply_to_message_id=message_id)
+            await self._send_rendered_message(chat_id, chunk, reply_to_message_id=message_id)
+
+    async def _send_rendered_message(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        reply_to_message_id: int | None = None,
+    ) -> int | None:
+        payload: dict[str, object] = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": TELEGRAM_PARSE_MODE,
+            "disable_web_page_preview": False,
+        }
+        if reply_to_message_id is not None:
+            payload["reply_to_message_id"] = reply_to_message_id
+        result = await self._request("sendMessage", payload)
+        if not isinstance(result, Mapping):
+            return None
+        message_id = cast(Mapping[str, object], result).get("message_id")
+        return message_id if isinstance(message_id, int) else None
 
     async def _outbound_message_text(self, text: str) -> str:
         sanitized = sanitize_telegram_text(text)
-        if len(sanitized) <= self.long_message_threshold:
+        if self.long_message_threshold is None or len(sanitized) <= self.long_message_threshold:
             return text
+
+        logger.info(
+            "Morsel routing reason=long content_chars={} content_bytes={}",
+            len(sanitized),
+            len(sanitized.encode()),
+        )
         try:
-            return await self.long_message_publisher.publish(sanitized)
-        except MorselNotConfiguredError:
+            share_url = await self.long_message_publisher.publish(sanitized)
+        except MorselNotConfiguredError as exc:
+            logger.info("Morsel routing reason=long outcome=fallback error_category={}", exc.category)
             return text
-        except MorselPublishError:
-            logger.exception("Failed to publish long Telegram message to Morsel; falling back to Telegram chunks")
+        except MorselPublishError as exc:
+            logger.warning("Morsel routing reason=long outcome=fallback error_category={}", exc.category)
             return text
+
+        logger.info("Morsel routing reason=long outcome=success")
+        return f"完整回覆已發布至 Morsel ({len(sanitized):,} 字):\n{share_url}"
 
     async def _request(self, method: str, payload: dict[str, object] | None = None) -> object:
         if self.http_client is None:

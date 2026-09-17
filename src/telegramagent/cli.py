@@ -216,12 +216,22 @@ def _gurume_tools_from_settings(settings: Settings) -> tuple[tuple[Any, ...], Ca
     return build_gurume_tools(), Capability("tool.gurume", True, description)
 
 
-def _morsel_tools_from_settings(settings: Settings) -> tuple[MorselPublisher, tuple[Any, ...], Capability]:
-    publisher = MorselPublisher(base_url=settings.morsel_url, api_key=settings.morsel_api_key)
-    description = "Publish complete Markdown answers to Morsel for Mermaid and LaTeX rendering"
+def _morsel_tools_from_settings(
+    settings: Settings,
+) -> tuple[MorselPublisher, tuple[Any, ...], Capability, int | None]:
+    publisher = MorselPublisher(
+        base_url=settings.morsel_url,
+        api_key=settings.morsel_api_key,
+        timeout_seconds=settings.morsel_timeout_seconds,
+        expires_in_seconds=settings.morsel_share_expires_in_seconds,
+    )
+    description = "Publish complete Markdown answers to Morsel for Mermaid, Vega-Lite, and LaTeX rendering"
+    if settings.morsel_mode == "disabled":
+        return publisher, (), Capability("tool.morsel", False, description, "disabled"), None
     if not publisher.is_configured:
-        return publisher, (), Capability("tool.morsel", False, description, "MORSEL_API_KEY not configured")
-    return publisher, build_morsel_tools(publisher), Capability("tool.morsel", True, description)
+        return publisher, (), Capability("tool.morsel", False, description, "MORSEL_API_KEY not configured"), None
+    long_reply_threshold = settings.morsel_long_reply_threshold if settings.morsel_mode == "smart" else None
+    return publisher, build_morsel_tools(publisher), Capability("tool.morsel", True, description), long_reply_threshold
 
 
 @app.command()
@@ -284,7 +294,9 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
     capabilities.set(gurume_tools_capability)
     if gurume_tools:
         logger.info("Enabled {} Gurume Python tool(s)", len(gurume_tools))
-    morsel_publisher, morsel_tools, morsel_capability = _morsel_tools_from_settings(settings)
+    morsel_publisher, morsel_tools, morsel_capability, morsel_long_reply_threshold = _morsel_tools_from_settings(
+        settings
+    )
     capabilities.set(morsel_capability)
     if morsel_tools:
         logger.info("Enabled Morsel rich Markdown publishing tool")
@@ -387,6 +399,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
     telegram = TelegramClient(
         settings.bot_token,
         long_message_publisher=morsel_publisher,
+        long_message_threshold=morsel_long_reply_threshold,
     )
     event_watcher = EventWatcher(
         settings=EventSettings(
