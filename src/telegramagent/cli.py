@@ -224,6 +224,7 @@ def _morsel_tools_from_settings(
         api_key=settings.morsel_api_key,
         timeout_seconds=settings.morsel_timeout_seconds,
         expires_in_seconds=settings.morsel_share_expires_in_seconds,
+        telegram_instant_view=settings.morsel_telegram_instant_view,
     )
     description = "Publish complete Markdown answers to Morsel for Mermaid, Vega-Lite, and LaTeX rendering"
     if settings.morsel_mode == "disabled":

@@ -56,6 +56,27 @@ async def test_morsel_publisher_creates_markdown_share_with_first_configured_key
 
 
 @pytest.mark.asyncio
+async def test_morsel_publisher_creates_telegram_instant_view_share_without_expiry() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(201, json={"id": "share-id", "share_url": SHARE_URL})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        publisher = MorselPublisher(api_key="test-key", http_client=client, telegram_instant_view=True)
+        await publisher.publish("# Instant View\n\nFull article.")
+
+    payload = json.loads(requests[0].content)
+    assert payload["telegram_instant_view"] is True
+    assert "expires_in" not in payload
+    assert payload["preview"] == {
+        "title": "Instant View",
+        "description": "# Instant View Full article.",
+    }
+
+
+@pytest.mark.asyncio
 async def test_morsel_agent_tool_publishes_complete_markdown_and_returns_response_contract() -> None:
     markdown = '說明\n\n$$x^2$$\n\n```vega-lite\n{"data": {"values": []}}\n```'
 

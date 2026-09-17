@@ -48,6 +48,7 @@ class MorselPublisher:
         http_client: httpx.AsyncClient | None = None,
         timeout_seconds: float = 12.0,
         expires_in_seconds: int = 2_592_000,
+        telegram_instant_view: bool = False,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
     ) -> None:
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
@@ -62,6 +63,7 @@ class MorselPublisher:
         self.timeout_seconds = timeout_seconds
         self.timeout = httpx.Timeout(timeout_seconds, connect=min(timeout_seconds, 10.0))
         self.expires_in_seconds = expires_in_seconds
+        self.telegram_instant_view = telegram_instant_view
         self.max_response_bytes = max_response_bytes
 
     @property
@@ -72,14 +74,15 @@ class MorselPublisher:
         if not self.api_key:
             raise MorselNotConfiguredError("MORSEL_API_KEY is not configured")
 
-        payload = json.dumps(
-            {
-                "content": text,
-                "expires_in": self.expires_in_seconds,
-                "preview": _preview_metadata(text),
-            },
-            ensure_ascii=False,
-        ).encode()
+        payload_data = {
+            "content": text,
+            "preview": _preview_metadata(text),
+        }
+        if self.telegram_instant_view:
+            payload_data["telegram_instant_view"] = True
+        else:
+            payload_data["expires_in"] = self.expires_in_seconds
+        payload = json.dumps(payload_data, ensure_ascii=False).encode()
         started_at = monotonic()
         try:
             async with asyncio.timeout(self.timeout_seconds):
