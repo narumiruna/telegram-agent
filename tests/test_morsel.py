@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 from typing import cast
@@ -240,6 +241,7 @@ async def test_morsel_publisher_accepts_documented_share_url_routes(share_url: s
         f"https://morsel.narumi.dev/share/{CAPABILITY}",
         "https://morsel.narumi.dev/s/short",
         f"https://morsel.narumi.dev/s/{CAPABILITY}?track=1",
+        f"https://morsel.narumi.dev:0/s/{CAPABILITY}",
         f"https://morsel.narumi.dev/s/{CAPABILITY}#/s/{CAPABILITY}",
         f"\nhttps://morsel.narumi.dev/s/{CAPABILITY}",
     ],
@@ -278,6 +280,25 @@ async def test_morsel_publisher_applies_configured_expiry_and_timeout() -> None:
     assert json.loads(requests[0].content)["expires_in"] == 3600
     assert publisher.timeout.read == 8.5
     assert publisher.timeout.connect == 8.5
+
+
+@pytest.mark.asyncio
+async def test_morsel_publisher_enforces_timeout_across_complete_response_stream() -> None:
+    class HangingByteStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"id":"share-id",'
+            await asyncio.Event().wait()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201, stream=HangingByteStream())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        publisher = MorselPublisher(api_key="test-key", http_client=client, timeout_seconds=0.01)
+
+        with pytest.raises(MorselPublishError, match="Failed to create Morsel share") as exc_info:
+            await publisher.publish("content")
+
+    assert exc_info.value.category == "transport_timeout"
 
 
 @pytest.mark.parametrize(

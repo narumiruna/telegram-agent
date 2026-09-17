@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
@@ -58,6 +59,7 @@ class MorselPublisher:
         self.base_url = _validate_origin(base_url)
         self.api_key = _first_api_key(api_key)
         self.http_client = http_client
+        self.timeout_seconds = timeout_seconds
         self.timeout = httpx.Timeout(timeout_seconds, connect=min(timeout_seconds, 10.0))
         self.expires_in_seconds = expires_in_seconds
         self.max_response_bytes = max_response_bytes
@@ -80,19 +82,18 @@ class MorselPublisher:
         ).encode()
         started_at = monotonic()
         try:
-            if self.http_client is not None:
-                share_url = await self._publish_with_client(self.http_client, payload)
-            else:
-                async with httpx.AsyncClient() as client:
-                    share_url = await self._publish_with_client(client, payload)
+            async with asyncio.timeout(self.timeout_seconds):
+                if self.http_client is not None:
+                    share_url = await self._publish_with_client(self.http_client, payload)
+                else:
+                    async with httpx.AsyncClient() as client:
+                        share_url = await self._publish_with_client(client, payload)
+        except TimeoutError as exc:
+            publish_error = MorselPublishError("Failed to create Morsel share", category="transport_timeout")
+            self._log_failure(text, started_at=started_at, category=publish_error.category)
+            raise publish_error from exc
         except MorselPublishError as exc:
-            logger.warning(
-                "Morsel publication outcome=failure content_chars={} content_bytes={} elapsed_ms={} error_category={}",
-                len(text),
-                len(text.encode()),
-                round((monotonic() - started_at) * 1000),
-                exc.category,
-            )
+            self._log_failure(text, started_at=started_at, category=exc.category)
             raise
 
         logger.info(
@@ -102,6 +103,16 @@ class MorselPublisher:
             round((monotonic() - started_at) * 1000),
         )
         return share_url
+
+    @staticmethod
+    def _log_failure(text: str, *, started_at: float, category: str) -> None:
+        logger.warning(
+            "Morsel publication outcome=failure content_chars={} content_bytes={} elapsed_ms={} error_category={}",
+            len(text),
+            len(text.encode()),
+            round((monotonic() - started_at) * 1000),
+            category,
+        )
 
     async def _publish_with_client(self, client: httpx.AsyncClient, payload: bytes) -> str:
         try:
@@ -277,4 +288,5 @@ def _validate_share_url(value: str, *, base_url: str) -> str:
 
 def _normalized_origin(parsed: SplitResult) -> tuple[str, str | None, int | None]:
     default_port = 443 if parsed.scheme == "https" else 80 if parsed.scheme == "http" else None
-    return parsed.scheme, parsed.hostname, parsed.port or default_port
+    port = parsed.port
+    return parsed.scheme, parsed.hostname, default_port if port is None else port

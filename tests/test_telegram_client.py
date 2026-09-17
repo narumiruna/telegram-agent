@@ -11,6 +11,7 @@ from telegramagent.morsel import MorselNotConfiguredError
 from telegramagent.morsel import MorselPublishError
 from telegramagent.telegram import TelegramClient
 from telegramagent.telegram_client import TelegramDownloadTooLargeError
+from telegramagent.telegram_rendering import telegram_html_chunks
 from tests.telegram_test_support import FakeMorselPublisher
 
 
@@ -210,6 +211,24 @@ async def test_telegram_client_edits_long_messages_to_morsel_url() -> None:
             "disable_web_page_preview": False,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_telegram_client_edit_fallback_does_not_render_later_chunks_twice() -> None:
+    payloads: list[dict[str, Any]] = []
+    text = "x" * 4096 + "**bold** & https://example.com/?a=1&b=2"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.read().decode()))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 100}})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        telegram = TelegramClient("token", http_client=client, long_message_threshold=None)
+        await telegram.edit_message_text(123, 99, text)
+
+    assert [payload["text"] for payload in payloads] == telegram_html_chunks(text)
+    assert payloads[1]["reply_to_message_id"] == 99
 
 
 @pytest.mark.asyncio

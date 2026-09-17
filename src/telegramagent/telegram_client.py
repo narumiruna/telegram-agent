@@ -78,20 +78,13 @@ class TelegramClient:
         last_message_id: int | None = None
         outbound_text = await self._outbound_message_text(text)
         for chunk in telegram_html_chunks(outbound_text):
-            payload: dict[str, object] = {
-                "chat_id": chat_id,
-                "text": chunk,
-                "parse_mode": TELEGRAM_PARSE_MODE,
-                "disable_web_page_preview": False,
-            }
-            if reply_to_message_id is not None:
-                payload["reply_to_message_id"] = reply_to_message_id
-            result = await self._request("sendMessage", payload)
-            if isinstance(result, Mapping):
-                result_mapping = cast(Mapping[str, object], result)
-                message_id = result_mapping.get("message_id")
-                if isinstance(message_id, int):
-                    last_message_id = message_id
+            message_id = await self._send_rendered_message(
+                chat_id,
+                chunk,
+                reply_to_message_id=reply_to_message_id,
+            )
+            if message_id is not None:
+                last_message_id = message_id
         return last_message_id
 
     async def send_photo(
@@ -141,7 +134,28 @@ class TelegramClient:
             },
         )
         for chunk in chunks[1:]:
-            await self.send_message(chat_id, chunk, reply_to_message_id=message_id)
+            await self._send_rendered_message(chat_id, chunk, reply_to_message_id=message_id)
+
+    async def _send_rendered_message(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        reply_to_message_id: int | None = None,
+    ) -> int | None:
+        payload: dict[str, object] = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": TELEGRAM_PARSE_MODE,
+            "disable_web_page_preview": False,
+        }
+        if reply_to_message_id is not None:
+            payload["reply_to_message_id"] = reply_to_message_id
+        result = await self._request("sendMessage", payload)
+        if not isinstance(result, Mapping):
+            return None
+        message_id = cast(Mapping[str, object], result).get("message_id")
+        return message_id if isinstance(message_id, int) else None
 
     async def _outbound_message_text(self, text: str) -> str:
         sanitized = sanitize_telegram_text(text)
