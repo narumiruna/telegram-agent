@@ -48,7 +48,7 @@ async def test_morsel_publisher_creates_markdown_share_with_first_configured_key
 
 @pytest.mark.asyncio
 async def test_morsel_agent_tool_publishes_complete_markdown_and_returns_response_contract() -> None:
-    markdown = "說明\n\n$$x^2$$\n\n```mermaid\ngraph LR\nA --> B\n```"
+    markdown = '說明\n\n$$x^2$$\n\n```vega-lite\n{"data": {"values": []}}\n```'
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert json.loads(request.content) == {"content": markdown, "preview": True}
@@ -68,13 +68,15 @@ async def test_morsel_agent_tool_publishes_complete_markdown_and_returns_respons
     assert tool.name == "publish_markdown_to_morsel"
     assert tool.sequential is True
     assert "Mermaid" in (tool.description or "")
+    assert "Vega-Lite" in (tool.description or "")
+    assert "fenced mermaid or vega-lite block" in (tool.description or "")
     assert "LaTeX" in (tool.description or "")
     assert result == {
         "status": "published",
         "share_url": "https://morsel.narumi.dev/s/rich-answer",
         "response_contract": (
             "Return the share_url to the user, with at most a brief introduction. Do not repeat the Markdown, "
-            "Mermaid source, or LaTeX source in the final response."
+            "Mermaid source, Vega-Lite source, or LaTeX source in the final response."
         ),
     }
 
