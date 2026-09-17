@@ -42,7 +42,10 @@ async def test_morsel_publisher_creates_markdown_share_with_first_configured_key
     assert requests[0].headers["authorization"] == "Bearer first-key"
     assert json.loads(requests[0].content) == {
         "content": "# 標題\n\n```mermaid\ngraph LR\n```",
-        "preview": True,
+        "preview": {
+            "title": "標題",
+            "description": "# 標題 ```mermaid graph LR ```",
+        },
     }
 
 
@@ -51,7 +54,13 @@ async def test_morsel_agent_tool_publishes_complete_markdown_and_returns_respons
     markdown = '說明\n\n$$x^2$$\n\n```vega-lite\n{"data": {"values": []}}\n```'
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert json.loads(request.content) == {"content": markdown, "preview": True}
+        assert json.loads(request.content) == {
+            "content": markdown,
+            "preview": {
+                "title": "說明",
+                "description": '說明 $$x^2$$ ```vega-lite {"data": {"values": []}} ```',
+            },
+        }
         return httpx.Response(
             201,
             json={
@@ -79,6 +88,29 @@ async def test_morsel_agent_tool_publishes_complete_markdown_and_returns_respons
             "Mermaid source, Vega-Lite source, or LaTeX source in the final response."
         ),
     }
+
+
+@pytest.mark.asyncio
+async def test_morsel_publisher_normalizes_preview_metadata_to_api_limits() -> None:
+    heading = "標" * 100
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            201,
+            json={"id": "share-id", "share_url": "https://morsel.narumi.dev/s/normalized"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        publisher = MorselPublisher(api_key="test-key", http_client=client)
+        await publisher.publish(f"# {heading}\n\n內容\x00包含控制字元")
+
+    preview = json.loads(requests[0].content)["preview"]
+    assert preview["title"] == "標" * 80
+    assert len(preview["description"]) <= 200
+    assert "\x00" not in preview["description"]
+    assert "內容 包含控制字元" in preview["description"]
 
 
 @pytest.mark.asyncio

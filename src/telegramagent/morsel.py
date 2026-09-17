@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from collections.abc import AsyncIterator
 from urllib.parse import urlsplit
 
@@ -9,6 +10,9 @@ from pydantic_ai import Tool
 
 DEFAULT_MORSEL_URL = "https://morsel.narumi.dev/"
 DEFAULT_MAX_RESPONSE_BYTES = 65_536
+MAX_PREVIEW_SOURCE_BYTES = 4_096
+MAX_PREVIEW_TITLE_CHARS = 80
+MAX_PREVIEW_DESCRIPTION_CHARS = 200
 
 
 class MorselPublishError(RuntimeError):
@@ -43,7 +47,7 @@ class MorselPublisher:
         if not self.api_key:
             raise MorselNotConfiguredError("MORSEL_API_KEY is not configured")
 
-        payload = json.dumps({"content": text, "preview": True}, ensure_ascii=False).encode()
+        payload = json.dumps({"content": text, "preview": _preview_metadata(text)}, ensure_ascii=False).encode()
         if self.http_client is not None:
             return await self._publish_with_client(self.http_client, payload)
 
@@ -121,6 +125,28 @@ def build_morsel_tools(publisher: MorselPublisher) -> tuple[Tool[None], ...]:
             sequential=True,
         ),
     )
+
+
+def _preview_metadata(text: str) -> dict[str, str]:
+    source = text.encode()[:MAX_PREVIEW_SOURCE_BYTES].decode(errors="ignore")
+    description = _plain_single_line(source) or "Shared with Morsel."
+    title = "Morsel"
+    for line in source.split("\n"):
+        candidate = _plain_single_line(line.strip().lstrip("#>*+-`_~ "))
+        if candidate:
+            title = candidate
+            break
+    return {
+        "title": title[:MAX_PREVIEW_TITLE_CHARS],
+        "description": description[:MAX_PREVIEW_DESCRIPTION_CHARS],
+    }
+
+
+def _plain_single_line(value: str) -> str:
+    safe_value = "".join(
+        " " if unicodedata.category(character) in {"Cc", "Zl", "Zp"} else character for character in value
+    )
+    return " ".join(safe_value.split())
 
 
 async def _read_bounded(chunks: AsyncIterator[bytes], *, limit: int) -> bytes:

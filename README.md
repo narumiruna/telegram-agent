@@ -367,9 +367,10 @@ Image output:
 Configure `MORSEL_API_KEY` to enable the `publish_markdown_to_morsel` agent tool; `MORSEL_URL` defaults to
 `https://morsel.narumi.dev/`. When the agent plans an answer containing Mermaid or LaTeX, it sends the complete Markdown
 answer to the tool and returns the Morsel share URL instead of duplicating the raw diagram or formula markup in Telegram.
-This project enables Morsel's Telegram-compatible Open Graph link preview for every published share. The preview is a
-short, non-consuming excerpt that anyone holding the capability URL can request repeatedly. If the tool cannot publish,
-the agent must not claim success and falls back to a Telegram-readable plain-text answer.
+This project sends an explicit Open Graph title and description with every published share, derived from a bounded
+prefix of the Markdown and normalized to Morsel's limits. The non-consuming preview is visible to anyone holding the
+capability URL and can be requested repeatedly. If the tool cannot publish, the agent must not claim success and falls
+back to a Telegram-readable plain-text answer.
 
 The same publisher also handles long replies automatically. Telegram messages over the **1000-character** threshold are
 published as Markdown to Morsel, so messages with 1001+ characters become a share URL. Publishing performs one
