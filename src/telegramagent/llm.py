@@ -524,8 +524,9 @@ def _chat_instructions(*, skills: list[AgentSkill], soul: ContextFile | None, ca
         ),
         (
             "## 輸出格式\n"
-            "需要圖表時預設使用 Mermaid 語法，並放在標記為 mermaid 的 fenced code block 中；"
-            "若使用者明確要求 Vega-Lite，則改用 Vega-Lite，必須將規格放在標記為 vega-lite"
+            "需要圖表時優先使用 Mermaid 語法，並放在標記為 mermaid 的 fenced code block 中；"
+            "若 Mermaid 不支援該圖表類型，或使用者明確要求 Vega-Lite，則改用 Vega-Lite，"
+            "必須將規格放在標記為 vega-lite"
             "（不可標記為 json）的 fenced code block。Vega-Lite 僅使用 inline data，且不要依賴外部"
             "資料來源、tooltip 或 action menu。\n"
             "書寫數學內容或公式時使用 LaTeX，行內公式用 `$...$`，獨立公式用 `$$...$$`。\n"
@@ -559,8 +560,7 @@ def _chat_instructions(*, skills: list[AgentSkill], soul: ContextFile | None, ca
             "工具結果若包含 display_items 或 response_contract，必須遵守該 contract 並直接引用 "
             "display_items；不得自行重組名稱、分數、地區、價格或網址，以免把不同資料列配錯。\n"
             "若 runtime 已提供使用者圖片，直接根據圖片回答；若模型或供應商無法辨識，明確說明限制，"
-            "不要猜測圖片內容。\n"
-            "使用股票與金融資料時，清楚註明內容僅供資訊參考，不構成投資建議。"
+            "不要猜測圖片內容。"
         ),
     ]
     soul_instructions = format_context_for_instructions(soul)
