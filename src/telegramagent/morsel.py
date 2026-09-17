@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from urllib.parse import urlsplit
 
 import httpx
+from pydantic_ai import Tool
 
 DEFAULT_MORSEL_URL = "https://morsel.narumi.dev/"
 DEFAULT_MAX_RESPONSE_BYTES = 65_536
@@ -33,6 +34,10 @@ class MorselPublisher:
         self.http_client = http_client
         self.timeout = httpx.Timeout(timeout_seconds, connect=min(timeout_seconds, 10.0))
         self.max_response_bytes = max_response_bytes
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.api_key)
 
     async def publish(self, text: str) -> str:
         if not self.api_key:
@@ -77,6 +82,44 @@ class MorselPublisher:
         if not isinstance(share_id, str) or not share_id or not isinstance(share_url, str) or not share_url:
             raise MorselPublishError("Morsel returned invalid share metadata")
         return share_url
+
+
+def build_morsel_tools(publisher: MorselPublisher) -> tuple[Tool[None], ...]:
+    async def publish_markdown_to_morsel(content: str) -> dict[str, str]:
+        """Publish a complete Markdown answer to Morsel for rich rendering."""
+        try:
+            share_url = await publisher.publish(content)
+        except MorselPublishError:
+            return {
+                "status": "error",
+                "error": "Morsel publishing is unavailable.",
+                "response_contract": (
+                    "Do not claim the content was published. Answer in Telegram-readable plain text without raw "
+                    "Mermaid or LaTeX markup, and briefly disclose that rich rendering is unavailable."
+                ),
+            }
+        return {
+            "status": "published",
+            "share_url": share_url,
+            "response_contract": (
+                "Return the share_url to the user, with at most a brief introduction. Do not repeat the Markdown, "
+                "Mermaid source, or LaTeX source in the final response."
+            ),
+        }
+
+    return (
+        Tool(
+            publish_markdown_to_morsel,
+            takes_ctx=False,
+            name="publish_markdown_to_morsel",
+            description=(
+                "Publish the complete Markdown answer to Morsel so Mermaid diagrams and LaTeX math render correctly. "
+                "Use this whenever the planned answer contains a fenced mermaid block or LaTeX delimited by $...$ "
+                "or $$...$$. Pass the complete answer, including all prose and rich markup, exactly once."
+            ),
+            sequential=True,
+        ),
+    )
 
 
 async def _read_bounded(chunks: AsyncIterator[bytes], *, limit: int) -> bytes:

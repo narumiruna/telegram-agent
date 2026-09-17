@@ -41,6 +41,7 @@ from telegramagent.mcp import build_yfinance_mcp_toolsets
 from telegramagent.mcp import command_available
 from telegramagent.mcp import redact_firecrawl_mcp_url
 from telegramagent.morsel import MorselPublisher
+from telegramagent.morsel import build_morsel_tools
 from telegramagent.observability import LogfireConfig
 from telegramagent.observability import configure_logfire
 from telegramagent.session import SessionLog
@@ -215,6 +216,14 @@ def _gurume_tools_from_settings(settings: Settings) -> tuple[tuple[Any, ...], Ca
     return build_gurume_tools(), Capability("tool.gurume", True, description)
 
 
+def _morsel_tools_from_settings(settings: Settings) -> tuple[MorselPublisher, tuple[Any, ...], Capability]:
+    publisher = MorselPublisher(base_url=settings.morsel_url, api_key=settings.morsel_api_key)
+    description = "Publish complete Markdown answers to Morsel for Mermaid and LaTeX rendering"
+    if not publisher.is_configured:
+        return publisher, (), Capability("tool.morsel", False, description, "MORSEL_API_KEY not configured")
+    return publisher, build_morsel_tools(publisher), Capability("tool.morsel", True, description)
+
+
 @app.command()
 def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging.")) -> None:  # noqa: C901
     """Start the Telegram bot with long polling."""
@@ -275,6 +284,10 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
     capabilities.set(gurume_tools_capability)
     if gurume_tools:
         logger.info("Enabled {} Gurume Python tool(s)", len(gurume_tools))
+    morsel_publisher, morsel_tools, morsel_capability = _morsel_tools_from_settings(settings)
+    capabilities.set(morsel_capability)
+    if morsel_tools:
+        logger.info("Enabled Morsel rich Markdown publishing tool")
     agent = ChatAgent(
         api_key=settings.openai_api_key,
         model=settings.openai_model,
@@ -284,7 +297,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         capability_summary=capabilities.summary(),
         kabigon_tool_timeout_seconds=settings.bot_kabigon_timeout_seconds,
         mcp_toolsets=mcp_toolsets,
-        tools=(*gurume_tools, *container_tools),
+        tools=(*morsel_tools, *gurume_tools, *container_tools),
         max_attempts=settings.bot_agent_max_attempts,
         retry_base_delay_seconds=settings.bot_agent_retry_base_delay_seconds,
     )
@@ -373,10 +386,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
     task_queue = TaskQueue(max_concurrent_per_chat=settings.bot_tasks_max_concurrent_per_chat)
     telegram = TelegramClient(
         settings.bot_token,
-        long_message_publisher=MorselPublisher(
-            base_url=settings.morsel_url,
-            api_key=settings.morsel_api_key,
-        ),
+        long_message_publisher=morsel_publisher,
     )
     event_watcher = EventWatcher(
         settings=EventSettings(
