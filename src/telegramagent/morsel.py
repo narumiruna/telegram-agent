@@ -95,7 +95,7 @@ def build_morsel_tools(publisher: MorselPublisher) -> tuple[Tool[None], ...]:
                 "error": "Morsel publishing is unavailable.",
                 "response_contract": (
                     "Do not claim the content was published. Answer in Telegram-readable plain text without raw "
-                    "Mermaid or LaTeX markup, and briefly disclose that rich rendering is unavailable."
+                    "Mermaid, Vega-Lite, or LaTeX markup, and briefly disclose that rich rendering is unavailable."
                 ),
             }
         return {
@@ -103,7 +103,7 @@ def build_morsel_tools(publisher: MorselPublisher) -> tuple[Tool[None], ...]:
             "share_url": share_url,
             "response_contract": (
                 "Return the share_url to the user, with at most a brief introduction. Do not repeat the Markdown, "
-                "Mermaid source, or LaTeX source in the final response."
+                "Mermaid source, Vega-Lite source, or LaTeX source in the final response."
             ),
         }
 
@@ -113,9 +113,10 @@ def build_morsel_tools(publisher: MorselPublisher) -> tuple[Tool[None], ...]:
             takes_ctx=False,
             name="publish_markdown_to_morsel",
             description=(
-                "Publish the complete Markdown answer to Morsel so Mermaid diagrams and LaTeX math render correctly. "
-                "Use this whenever the planned answer contains a fenced mermaid block or LaTeX delimited by $...$ "
-                "or $$...$$. Pass the complete answer, including all prose and rich markup, exactly once."
+                "Publish the complete Markdown answer to Morsel so Mermaid diagrams, Vega-Lite charts, and LaTeX "
+                "math render correctly. Use this whenever the planned answer contains a fenced mermaid or vega-lite "
+                "block, or LaTeX delimited by $...$ or $$...$$. Pass the complete answer, including all prose and rich "
+                "markup, exactly once."
             ),
             sequential=True,
         ),
