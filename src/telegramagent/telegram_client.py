@@ -6,14 +6,14 @@ from typing import cast
 import httpx
 from loguru import logger
 
+from telegramagent.morsel import MorselPublisher
+from telegramagent.morsel import MorselPublishError
 from telegramagent.telegram_rendering import TELEGRAM_PARSE_MODE
 from telegramagent.telegram_rendering import sanitize_telegram_text
 from telegramagent.telegram_rendering import telegram_html_chunks
 from telegramagent.telegram_types import LongMessagePublisher
 from telegramagent.telegram_types import TelegramFile
 from telegramagent.telegram_types import TelegramUpdate
-from telegramagent.telegraph_pages import TelegraphPagePublisher
-from telegramagent.telegraph_pages import TelegraphPublishError
 
 
 class TelegramApiError(RuntimeError):
@@ -30,13 +30,13 @@ class TelegramClient:
         token: str,
         *,
         http_client: httpx.AsyncClient | None = None,
-        telegraph_publisher: LongMessagePublisher | None = None,
+        long_message_publisher: LongMessagePublisher | None = None,
         long_message_threshold: int = 1000,
     ) -> None:
         self.token = token
         self.base_url = f"https://api.telegram.org/bot{token}"
         self.http_client = http_client
-        self.telegraph_publisher = telegraph_publisher or TelegraphPagePublisher()
+        self.long_message_publisher = long_message_publisher or MorselPublisher()
         self.long_message_threshold = long_message_threshold
 
     async def get_me(self) -> dict[str, object]:
@@ -145,9 +145,9 @@ class TelegramClient:
         if len(sanitized) <= self.long_message_threshold:
             return text
         try:
-            return await self.telegraph_publisher.publish(sanitized)
-        except TelegraphPublishError:
-            logger.exception("Failed to publish long Telegram message to Telegraph; falling back to Telegram chunks")
+            return await self.long_message_publisher.publish(sanitized)
+        except MorselPublishError:
+            logger.exception("Failed to publish long Telegram message to Morsel; falling back to Telegram chunks")
             return text
 
     async def _request(self, method: str, payload: dict[str, object] | None = None) -> object:

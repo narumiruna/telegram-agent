@@ -171,6 +171,16 @@ def test_container_tool_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_container_tools_max_results == 7
 
 
+def test_morsel_settings_parse_env(monkeypatch) -> None:
+    monkeypatch.setenv("MORSEL_URL", "https://morsel.example.com/")
+    monkeypatch.setenv("MORSEL_API_KEY", "morsel-test")
+
+    settings = Settings()
+
+    assert settings.morsel_url == "https://morsel.example.com/"
+    assert settings.morsel_api_key == "morsel-test"
+
+
 def test_logfire_settings_parse_env(monkeypatch) -> None:
     monkeypatch.setenv("LOGFIRE_ENABLED", "false")
     monkeypatch.setenv("LOGFIRE_TOKEN", "token")

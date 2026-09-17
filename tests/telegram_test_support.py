@@ -9,13 +9,13 @@ from telegramagent.documents import ConvertedDocument
 from telegramagent.images import AgentReply
 from telegramagent.images import GeneratedImage
 from telegramagent.images import ImageAttachment
+from telegramagent.morsel import MorselPublishError
 from telegramagent.skills import SkillInstaller
 from telegramagent.skills import SkillInstallResult
 from telegramagent.telegram import TelegramBot
 from telegramagent.telegram import TelegramFile
 from telegramagent.telegram import TelegramUpdate
 from telegramagent.telegram_client import TelegramDownloadTooLargeError
-from telegramagent.telegraph_pages import TelegraphPublishError
 
 
 class FakeTelegram:
@@ -162,8 +162,12 @@ class FakeImageGenerator:
         return self.image
 
 
-class FakeTelegraphPublisher:
-    def __init__(self, url: str = "https://telegra.ph/long-reply", error: TelegraphPublishError | None = None) -> None:
+class FakeMorselPublisher:
+    def __init__(
+        self,
+        url: str = "https://morsel.narumi.dev/#/s/long-reply",
+        error: MorselPublishError | None = None,
+    ) -> None:
         self.url = url
         self.error = error
         self.published: list[str] = []

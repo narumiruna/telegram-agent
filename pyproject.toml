@@ -17,7 +17,6 @@ dependencies    = [
   "pydantic>=2.13.4",
   "pydantic-ai>=2.27.0",
   "pydantic-settings>=2.15.0",
-  "telegraph>=2.2.0",
   "typer>=0.27.1",
   "yfmcp>=0.14.0",
   "youtube-transcript-api>=1.2.4",

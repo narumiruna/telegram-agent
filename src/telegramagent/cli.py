@@ -40,6 +40,7 @@ from telegramagent.mcp import build_firecrawl_mcp_toolsets
 from telegramagent.mcp import build_yfinance_mcp_toolsets
 from telegramagent.mcp import command_available
 from telegramagent.mcp import redact_firecrawl_mcp_url
+from telegramagent.morsel import MorselPublisher
 from telegramagent.observability import LogfireConfig
 from telegramagent.observability import configure_logfire
 from telegramagent.session import SessionLog
@@ -370,7 +371,13 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         ),
     )
     task_queue = TaskQueue(max_concurrent_per_chat=settings.bot_tasks_max_concurrent_per_chat)
-    telegram = TelegramClient(settings.bot_token)
+    telegram = TelegramClient(
+        settings.bot_token,
+        long_message_publisher=MorselPublisher(
+            base_url=settings.morsel_url,
+            api_key=settings.morsel_api_key,
+        ),
+    )
     event_watcher = EventWatcher(
         settings=EventSettings(
             enabled=settings.bot_events_enabled,

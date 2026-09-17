@@ -4,7 +4,7 @@ Telegram AI bot powered by the Telegram Bot API, Pydantic AI, and an OpenAI-comp
 
 It can chat in private messages, behave politely in groups, read replied messages, enrich URLs with extracted content,
 summarize links, convert Telegram documents to Markdown, understand Telegram images, generate images, publish long
-replies to Telegraph, and expose optional runtime tools such as kabigon, Yahoo Finance MCP, Firecrawl MCP, and container-local file tools.
+replies to Morsel, and expose optional runtime tools such as kabigon, Yahoo Finance MCP, Firecrawl MCP, and container-local file tools.
 
 ## ✨ Highlights
 
@@ -16,7 +16,7 @@ replies to Telegraph, and expose optional runtime tools such as kabigon, Yahoo F
   converted locally to bounded Markdown with AnyDoc and kept in conversation context.
 - **Image input/output**: Telegram photos can be sent to a vision-capable model; `/image` can call an image-generation
   endpoint when enabled.
-- **Long replies**: replies over Telegram's practical limit are published to Telegraph and replaced with a link.
+- **Long replies**: replies over 1000 characters are published to Morsel and replaced with a share link.
 - **Durable context**: `SOUL.md` and structured per-chat model transcripts survive restarts.
 - **Agent runtime**: per-chat execution, a single final Telegram status edit, mid-run steering, idle follow-ups for synthetic events, `/cancel`, request-level transient retries, and per-request context compaction.
 - **Agent Skills**: local `.agents/skills/*/SKILL.md` files are loaded as model instructions.
@@ -46,7 +46,7 @@ Important modules:
 | Structured session store | `src/telegramagent/session.py` |
 | Proactive URL and YouTube handling | `src/telegramagent/actions.py` |
 | Configuration | `src/telegramagent/settings.py` |
-| Telegraph publishing | `src/telegramagent/telegraph_pages.py` |
+| Morsel publishing | `src/telegramagent/morsel.py` |
 | Tests | `tests/` |
 
 ## 🚀 Quick Start
@@ -110,6 +110,13 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible API base URL. |
 | `OPENAI_API_KEY` | empty | API key for the configured provider. |
 | `OPENAI_MODEL` | `gpt-5.6-luna` | Chat model used for replies. |
+
+### Long replies
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MORSEL_URL` | `https://morsel.narumi.dev/` | Morsel origin used to create Markdown shares. |
+| `MORSEL_API_KEY` | empty | Bearer API key used to create Morsel shares. |
 
 ### Context
 
@@ -354,13 +361,15 @@ Image output:
 - Use `/image <prompt>`.
 - Requires an OpenAI-compatible `/images/generations` endpoint.
 
-## 📣 Telegraph Long Replies
+## 📣 Morsel Long Replies
 
-Telegram messages over the long-message threshold are published to Telegraph, and the Telegram reply becomes the
-Telegraph URL. The default threshold is **1000 characters**, so messages with 1001+ characters are published to
-Telegraph. This keeps long model replies readable while avoiding Telegram chunk spam.
+Telegram messages over the long-message threshold are published as Markdown to Morsel, and the Telegram reply becomes
+the Morsel share URL. The default threshold is **1000 characters**, so messages with 1001+ characters are published to
+Morsel. Configure `MORSEL_API_KEY` to enable publishing; `MORSEL_URL` defaults to
+`https://morsel.narumi.dev/`.
 
-The publisher sanitizes content to Telegraph's supported HTML subset before creating the page.
+Publishing performs one non-retried API request. If Morsel is unavailable or rejects the request, the bot falls back to
+Telegram messages split into chunks of at most 4096 characters.
 
 ## 📁 File-Backed Immediate Events
 
