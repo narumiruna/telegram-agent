@@ -120,7 +120,8 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | `MORSEL_API_KEY` | empty | Bearer API key required for any Morsel publishing. |
 | `MORSEL_MODE` | `smart` | `disabled` publishes nothing, `rich_only` enables only the agent tool, and `smart` also routes long replies. |
 | `MORSEL_LONG_REPLY_THRESHOLD` | `3500` | Sanitized character count after which `smart` mode publishes an ordinary reply; valid range is 1–4096. |
-| `MORSEL_SHARE_EXPIRES_IN_SECONDS` | `2592000` | Lifetime assigned to each new share (30 days by default; valid range is 1–315360000). |
+| `MORSEL_SHARE_EXPIRES_IN_SECONDS` | `2592000` | Lifetime assigned to non-Instant-View shares (30 days by default; valid range is 1–315360000). |
+| `MORSEL_TELEGRAM_INSTANT_VIEW` | `true` | Create Telegram Instant View source pages; these shares cannot expire and disclose the complete rendered article to Telegram. |
 | `MORSEL_TIMEOUT_SECONDS` | `12` | Positive timeout for the single Morsel share-creation request. |
 
 ### Context
@@ -387,11 +388,14 @@ count plus the share URL. `rich_only` stops automatic long-reply publishing, and
 If publication is unavailable or rejected, the bot falls back to Telegram messages split into chunks of at most 4096
 characters. Set `MORSEL_LONG_REPLY_THRESHOLD=1000` to restore the previous boundary.
 
-Every new share expires after `MORSEL_SHARE_EXPIRES_IN_SECONDS` (30 days by default); changing the setting affects only
-future shares, and expired links must be republished. Each share includes an explicit Open Graph title and description
-derived from a bounded Markdown prefix and normalized to Morsel's limits. This non-consuming preview can be requested
-repeatedly by anyone holding the capability URL until expiration or revocation, while the full capability URL grants
-access to the share. Use `rich_only` or `disabled` when ordinary content must remain in Telegram.
+By default, new shares are non-expiring Telegram Instant View source pages. Instant View exposes the complete rendered
+article to Telegram, which may cache it independently; the Morsel deployment must also have its domain-specific
+Telegram template installed and approved. Set `MORSEL_TELEGRAM_INSTANT_VIEW=false` to create shares that expire after
+`MORSEL_SHARE_EXPIRES_IN_SECONDS` (30 days by default); changing the lifetime affects only future shares, and expired
+links must be republished. Each share includes an explicit Open Graph title and description derived from a bounded
+Markdown prefix and normalized to Morsel's limits. This non-consuming preview can be requested repeatedly by anyone
+holding the capability URL until expiration or revocation, while the full capability URL grants access to the share.
+Use `rich_only` or `disabled` when ordinary content must remain in Telegram.
 
 Share creation performs one request bounded by `MORSEL_TIMEOUT_SECONDS`. It is intentionally not retried because the
 Morsel create endpoint has no idempotency contract and a retry could create duplicate shares. Returned URLs must match
