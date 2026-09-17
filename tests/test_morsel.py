@@ -5,6 +5,7 @@ import json
 import httpx
 import pytest
 
+from telegramagent.morsel import MorselNotConfiguredError
 from telegramagent.morsel import MorselPublisher
 from telegramagent.morsel import MorselPublishError
 
@@ -50,7 +51,7 @@ async def test_morsel_publisher_requires_api_key_before_request() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         publisher = MorselPublisher(api_key=None, http_client=client)
-        with pytest.raises(MorselPublishError, match="MORSEL_API_KEY"):
+        with pytest.raises(MorselNotConfiguredError, match="MORSEL_API_KEY"):
             await publisher.publish("long reply")
 
     assert request_count == 0

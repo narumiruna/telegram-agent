@@ -14,6 +14,10 @@ class MorselPublishError(RuntimeError):
     """Raised when a Morsel share cannot be created."""
 
 
+class MorselNotConfiguredError(MorselPublishError):
+    """Raised when Morsel publishing is disabled because no API key is configured."""
+
+
 class MorselPublisher:
     def __init__(
         self,
@@ -32,7 +36,7 @@ class MorselPublisher:
 
     async def publish(self, text: str) -> str:
         if not self.api_key:
-            raise MorselPublishError("MORSEL_API_KEY is not configured")
+            raise MorselNotConfiguredError("MORSEL_API_KEY is not configured")
 
         payload = json.dumps({"content": text}, ensure_ascii=False).encode()
         if self.http_client is not None:
