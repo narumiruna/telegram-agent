@@ -23,7 +23,7 @@ async def test_morsel_publisher_creates_markdown_share_with_first_configured_key
             201,
             json={
                 "id": "c60a64eb-a7fd-4f29-bff4-5fe153d58420",
-                "share_url": "https://morsel.narumi.dev/#/s/share-token",
+                "share_url": "https://morsel.narumi.dev/s/share-token",
                 "created_at": "2026-03-21T00:00:00Z",
             },
         )
@@ -36,11 +36,14 @@ async def test_morsel_publisher_creates_markdown_share_with_first_configured_key
         )
         share_url = await publisher.publish("# 標題\n\n```mermaid\ngraph LR\n```")
 
-    assert share_url == "https://morsel.narumi.dev/#/s/share-token"
+    assert share_url == "https://morsel.narumi.dev/s/share-token"
     assert len(requests) == 1
     assert requests[0].url == "https://morsel.narumi.dev/v1/shares"
     assert requests[0].headers["authorization"] == "Bearer first-key"
-    assert json.loads(requests[0].content) == {"content": "# 標題\n\n```mermaid\ngraph LR\n```"}
+    assert json.loads(requests[0].content) == {
+        "content": "# 標題\n\n```mermaid\ngraph LR\n```",
+        "preview": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -48,12 +51,12 @@ async def test_morsel_agent_tool_publishes_complete_markdown_and_returns_respons
     markdown = "說明\n\n$$x^2$$\n\n```mermaid\ngraph LR\nA --> B\n```"
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert json.loads(request.content) == {"content": markdown}
+        assert json.loads(request.content) == {"content": markdown, "preview": True}
         return httpx.Response(
             201,
             json={
                 "id": "share-id",
-                "share_url": "https://morsel.narumi.dev/#/s/rich-answer",
+                "share_url": "https://morsel.narumi.dev/s/rich-answer",
             },
         )
 
@@ -68,7 +71,7 @@ async def test_morsel_agent_tool_publishes_complete_markdown_and_returns_respons
     assert "LaTeX" in (tool.description or "")
     assert result == {
         "status": "published",
-        "share_url": "https://morsel.narumi.dev/#/s/rich-answer",
+        "share_url": "https://morsel.narumi.dev/s/rich-answer",
         "response_contract": (
             "Return the share_url to the user, with at most a brief introduction. Do not repeat the Markdown, "
             "Mermaid source, or LaTeX source in the final response."

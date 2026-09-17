@@ -16,7 +16,8 @@ replies to Morsel, and expose optional runtime tools such as kabigon, Yahoo Fina
   converted locally to bounded Markdown with AnyDoc and kept in conversation context.
 - **Image input/output**: Telegram photos can be sent to a vision-capable model; `/image` can call an image-generation
   endpoint when enabled.
-- **Rich and long replies**: Mermaid/LaTeX answers and replies over 1000 characters can be published to Morsel and replaced with a share link.
+- **Rich and long replies**: Mermaid/LaTeX answers and replies over 1000 characters can be published to Morsel and
+  replaced with a share link with a Telegram preview.
 - **Durable context**: `SOUL.md` and structured per-chat model transcripts survive restarts.
 - **Agent runtime**: per-chat execution, a single final Telegram status edit, mid-run steering, idle follow-ups for synthetic events, `/cancel`, request-level transient retries, and per-request context compaction.
 - **Agent Skills**: local `.agents/skills/*/SKILL.md` files are loaded as model instructions.
@@ -366,7 +367,9 @@ Image output:
 Configure `MORSEL_API_KEY` to enable the `publish_markdown_to_morsel` agent tool; `MORSEL_URL` defaults to
 `https://morsel.narumi.dev/`. When the agent plans an answer containing Mermaid or LaTeX, it sends the complete Markdown
 answer to the tool and returns the Morsel share URL instead of duplicating the raw diagram or formula markup in Telegram.
-If the tool cannot publish, the agent must not claim success and falls back to a Telegram-readable plain-text answer.
+This project enables Morsel's Telegram-compatible Open Graph link preview for every published share. The preview is a
+short, non-consuming excerpt that anyone holding the capability URL can request repeatedly. If the tool cannot publish,
+the agent must not claim success and falls back to a Telegram-readable plain-text answer.
 
 The same publisher also handles long replies automatically. Telegram messages over the **1000-character** threshold are
 published as Markdown to Morsel, so messages with 1001+ characters become a share URL. Publishing performs one
