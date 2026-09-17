@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 import pytest
 
+from telegramagent.morsel import MorselNotConfiguredError
 from telegramagent.morsel import MorselPublishError
 from telegramagent.telegram import TelegramClient
 from telegramagent.telegram_client import TelegramDownloadTooLargeError
@@ -199,6 +200,30 @@ async def test_telegram_client_falls_back_to_chunks_when_morsel_publish_fails() 
         payloads.append(json.loads(request.read().decode()))
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 99}})
 
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        telegram = TelegramClient("token", http_client=client, long_message_publisher=publisher)
+        await telegram.send_message(123, text)
+
+    assert publisher.published == [text]
+    assert [payload["text"] for payload in payloads] == ["x" * 4096, "x" * 4]
+
+
+@pytest.mark.asyncio
+async def test_telegram_client_silently_chunks_long_messages_when_morsel_is_not_configured(monkeypatch) -> None:
+    payloads: list[dict[str, Any]] = []
+    publisher = FakeMorselPublisher(error=MorselNotConfiguredError("MORSEL_API_KEY is not configured"))
+    text = "x" * 4100
+
+    class NoExceptionLogger:
+        def exception(self, *args, **kwargs) -> None:
+            pytest.fail(f"unexpected exception log: {args}, {kwargs}")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.read().decode()))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 99}})
+
+    monkeypatch.setattr("telegramagent.telegram_client.logger", NoExceptionLogger())
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
         telegram = TelegramClient("token", http_client=client, long_message_publisher=publisher)

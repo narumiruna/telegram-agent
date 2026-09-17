@@ -6,6 +6,7 @@ from typing import cast
 import httpx
 from loguru import logger
 
+from telegramagent.morsel import MorselNotConfiguredError
 from telegramagent.morsel import MorselPublisher
 from telegramagent.morsel import MorselPublishError
 from telegramagent.telegram_rendering import TELEGRAM_PARSE_MODE
@@ -146,6 +147,8 @@ class TelegramClient:
             return text
         try:
             return await self.long_message_publisher.publish(sanitized)
+        except MorselNotConfiguredError:
+            return text
         except MorselPublishError:
             logger.exception("Failed to publish long Telegram message to Morsel; falling back to Telegram chunks")
             return text
