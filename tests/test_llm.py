@@ -48,6 +48,10 @@ async def test_chat_agent_uses_pydantic_agent_with_history() -> None:
     assert "自然、克制地加入少量 emoji" in captured["instructions"]
     assert "必須把它當成選擇上一則訊息中相同編號的選項" in captured["instructions"]
     assert "直接引用 display_items" in captured["instructions"]
+    assert "必須先把包含所有說明與原始語法的完整 Markdown" in captured["instructions"]
+    assert "`publish_markdown_to_morsel`" in captured["instructions"]
+    assert "不得重貼 Markdown、Mermaid 或 LaTeX 原文" in captured["instructions"]
+    assert "改用 Telegram 可讀的純文字表達" in captured["instructions"]
     assert runnable.prompts == ["問題"]
     assert runnable.message_history_lengths == [2]
 
@@ -505,12 +509,16 @@ async def test_chat_agent_injects_runtime_capabilities_into_pydantic_instruction
         return FakeRunnableAgent()
 
     agent = ChatAgent(
-        api_key="key", model="model", capability_summary="- external_loader.kabigon: unavailable", agent_factory=factory
+        api_key="key",
+        model="model",
+        capability_summary="- external_loader.kabigon: unavailable\n- tool.morsel: available",
+        agent_factory=factory,
     )
     await agent.reply("問題")
 
     assert "Runtime capabilities" in captured["instructions"]
     assert "external_loader.kabigon: unavailable" in captured["instructions"]
+    assert "tool.morsel: available" in captured["instructions"]
     assert (
         "只有 runtime capabilities、Pydantic AI tools 或已啟用 MCP toolsets 中列出的工具才是真的可執行"
         in captured["instructions"]
