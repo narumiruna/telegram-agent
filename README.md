@@ -16,8 +16,8 @@ replies to Morsel, and expose optional runtime tools such as kabigon, Yahoo Fina
   converted locally to bounded Markdown with AnyDoc and kept in conversation context.
 - **Image input/output**: Telegram photos can be sent to a vision-capable model; `/image` can call an image-generation
   endpoint when enabled.
-- **Rich and long replies**: Mermaid/LaTeX answers and replies over 1000 characters can be published to Morsel and
-  replaced with a share link with a Telegram preview.
+- **Rich and long replies**: Mermaid, Vega-Lite, and LaTeX answers plus replies over the configured smart-routing
+  threshold can be published to Morsel and replaced with a contextual share link and Telegram preview.
 - **Durable context**: `SOUL.md` and structured per-chat model transcripts survive restarts.
 - **Agent runtime**: per-chat execution, a single final Telegram status edit, mid-run steering, idle follow-ups for synthetic events, `/cancel`, request-level transient retries, and per-request context compaction.
 - **Agent Skills**: local `.agents/skills/*/SKILL.md` files are loaded as model instructions.
@@ -116,8 +116,12 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `MORSEL_URL` | `https://morsel.narumi.dev/` | Morsel origin used to create rich Markdown and long-reply shares. |
-| `MORSEL_API_KEY` | empty | Bearer API key that enables the Morsel agent tool and long-reply publishing. |
+| `MORSEL_URL` | `https://morsel.narumi.dev/` | Public Morsel origin used to create and validate rich Markdown share URLs. |
+| `MORSEL_API_KEY` | empty | Bearer API key required for any Morsel publishing. |
+| `MORSEL_MODE` | `smart` | `disabled` publishes nothing, `rich_only` enables only the agent tool, and `smart` also routes long replies. |
+| `MORSEL_LONG_REPLY_THRESHOLD` | `3500` | Sanitized character count after which `smart` mode publishes an ordinary reply; valid range is 1–4096. |
+| `MORSEL_SHARE_EXPIRES_IN_SECONDS` | `2592000` | Lifetime assigned to each new share (30 days by default; valid range is 1–315360000). |
+| `MORSEL_TIMEOUT_SECONDS` | `12` | Positive timeout for the single Morsel share-creation request. |
 
 ### Context
 
@@ -364,18 +368,35 @@ Image output:
 
 ## 📣 Morsel Rich and Long Replies
 
-Configure `MORSEL_API_KEY` to enable the `publish_markdown_to_morsel` agent tool; `MORSEL_URL` defaults to
-`https://morsel.narumi.dev/`. When the agent plans an answer containing Mermaid or LaTeX, it sends the complete Markdown
-answer to the tool and returns the Morsel share URL instead of duplicating the raw diagram or formula markup in Telegram.
-This project sends an explicit Open Graph title and description with every published share, derived from a bounded
-prefix of the Markdown and normalized to Morsel's limits. The non-consuming preview is visible to anyone holding the
-capability URL and can be requested repeatedly. If the tool cannot publish, the agent must not claim success and falls
-back to a Telegram-readable plain-text answer.
+Configure `MORSEL_API_KEY` and select a `MORSEL_MODE`; `MORSEL_URL` defaults to
+`https://morsel.narumi.dev/`. The routing modes are:
 
-The same publisher also handles long replies automatically. Telegram messages over the **1000-character** threshold are
-published as Markdown to Morsel, so messages with 1001+ characters become a share URL. Publishing performs one
-non-retried API request. If Morsel is unavailable or rejects a long-message request, the bot falls back to Telegram
-messages split into chunks of at most 4096 characters.
+| Mode | Rich Mermaid, Vega-Lite, and LaTeX answers | Ordinary long replies |
+| --- | --- | --- |
+| `disabled` | Kept in Telegram-readable form | Kept in Telegram chunks |
+| `rich_only` | Published through `publish_markdown_to_morsel` | Kept in Telegram chunks |
+| `smart` (default) | Published through `publish_markdown_to_morsel` | Published above `MORSEL_LONG_REPLY_THRESHOLD` |
+
+When the rich-rendering tool is available, the agent sends the complete Markdown answer to it and returns the share URL
+instead of duplicating raw diagram, chart, or formula markup in Telegram. If the tool cannot publish, the agent must not
+claim success and falls back to a Telegram-readable plain-text answer.
+
+In default `smart` mode, a sanitized ordinary reply of exactly **3500 characters** remains in Telegram, while one of
+**3501 characters** is published and represented by a short Traditional Chinese context line containing its character
+count plus the share URL. `rich_only` stops automatic long-reply publishing, and `disabled` stops all new Morsel shares.
+If publication is unavailable or rejected, the bot falls back to Telegram messages split into chunks of at most 4096
+characters. Set `MORSEL_LONG_REPLY_THRESHOLD=1000` to restore the previous boundary.
+
+Every new share expires after `MORSEL_SHARE_EXPIRES_IN_SECONDS` (30 days by default); changing the setting affects only
+future shares, and expired links must be republished. Each share includes an explicit Open Graph title and description
+derived from a bounded Markdown prefix and normalized to Morsel's limits. This non-consuming preview can be requested
+repeatedly by anyone holding the capability URL until expiration or revocation, while the full capability URL grants
+access to the share. Use `rich_only` or `disabled` when ordinary content must remain in Telegram.
+
+Share creation performs one request bounded by `MORSEL_TIMEOUT_SECONDS`. It is intentionally not retried because the
+Morsel create endpoint has no idempotency contract and a retry could create duplicate shares. Returned URLs must match
+`MORSEL_URL` and a documented Morsel capability route before they are sent to Telegram. To roll back Morsel delivery
+without changing code, select `rich_only` or `disabled`, or lower the threshold as needed.
 
 ## 📁 File-Backed Immediate Events
 

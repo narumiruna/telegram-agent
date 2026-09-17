@@ -32,8 +32,10 @@ class TelegramClient:
         *,
         http_client: httpx.AsyncClient | None = None,
         long_message_publisher: LongMessagePublisher | None = None,
-        long_message_threshold: int = 1000,
+        long_message_threshold: int | None = 3500,
     ) -> None:
+        if long_message_threshold is not None and not 1 <= long_message_threshold <= 4096:
+            raise ValueError("long_message_threshold must be between 1 and 4096")
         self.token = token
         self.base_url = f"https://api.telegram.org/bot{token}"
         self.http_client = http_client
@@ -143,15 +145,25 @@ class TelegramClient:
 
     async def _outbound_message_text(self, text: str) -> str:
         sanitized = sanitize_telegram_text(text)
-        if len(sanitized) <= self.long_message_threshold:
+        if self.long_message_threshold is None or len(sanitized) <= self.long_message_threshold:
             return text
+
+        logger.info(
+            "Morsel routing reason=long content_chars={} content_bytes={}",
+            len(sanitized),
+            len(sanitized.encode()),
+        )
         try:
-            return await self.long_message_publisher.publish(sanitized)
-        except MorselNotConfiguredError:
+            share_url = await self.long_message_publisher.publish(sanitized)
+        except MorselNotConfiguredError as exc:
+            logger.info("Morsel routing reason=long outcome=fallback error_category={}", exc.category)
             return text
-        except MorselPublishError:
-            logger.exception("Failed to publish long Telegram message to Morsel; falling back to Telegram chunks")
+        except MorselPublishError as exc:
+            logger.warning("Morsel routing reason=long outcome=fallback error_category={}", exc.category)
             return text
+
+        logger.info("Morsel routing reason=long outcome=success")
+        return f"完整回覆已發布至 Morsel ({len(sanitized):,} 字):\n{share_url}"
 
     async def _request(self, method: str, payload: dict[str, object] | None = None) -> object:
         if self.http_client is None:
