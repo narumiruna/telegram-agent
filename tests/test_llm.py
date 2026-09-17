@@ -524,7 +524,7 @@ async def test_chat_agent_injects_runtime_capabilities_into_pydantic_instruction
         "只有 runtime capabilities、Pydantic AI tools 或已啟用 MCP toolsets 中列出的工具才是真的可執行"
         in captured["instructions"]
     )
-    assert "不構成投資建議" in captured["instructions"]
+    assert "不構成投資建議" not in captured["instructions"]
 
 
 @pytest.mark.asyncio
