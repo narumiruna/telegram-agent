@@ -247,7 +247,7 @@ def _first_api_key(configured_keys: str | None) -> str:
 def _validate_telegram_rhash(value: str | None) -> str:
     rhash = value.strip() if value is not None else ""
     if rhash and not _TELEGRAM_RHASH_RE.fullmatch(rhash):
-        raise ValueError("MORSEL_TELEGRAM_INSTANT_VIEW_RHASH must contain 1-128 URL-safe characters")
+        raise ValueError("TELEGRAM_INSTANT_VIEW_RHASH must contain 1-128 URL-safe characters")
     return rhash
 
 

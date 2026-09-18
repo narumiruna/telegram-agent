@@ -122,7 +122,7 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | `MORSEL_LONG_REPLY_THRESHOLD` | `3500` | Sanitized character count after which `smart` mode publishes an ordinary reply; valid range is 1–4096. |
 | `MORSEL_SHARE_EXPIRES_IN_SECONDS` | `2592000` | Lifetime assigned to non-Instant-View shares (30 days by default; valid range is 1–315360000). |
 | `MORSEL_TELEGRAM_INSTANT_VIEW` | `true` | Create Telegram Instant View source pages; these shares cannot expire and disclose the complete rendered article to Telegram. |
-| `MORSEL_TELEGRAM_INSTANT_VIEW_RHASH` | empty | Optional domain-specific template hash used to return direct `t.me/iv` links before Telegram approves the template. |
+| `TELEGRAM_INSTANT_VIEW_RHASH` | empty | Optional domain-specific template hash used to return direct `t.me/iv` links before Telegram approves the template. |
 | `MORSEL_TIMEOUT_SECONDS` | `12` | Positive timeout for the single Morsel share-creation request. |
 
 ### Context
@@ -391,7 +391,7 @@ characters. Set `MORSEL_LONG_REPLY_THRESHOLD=1000` to restore the previous bound
 
 By default, new shares are non-expiring Telegram Instant View source pages. Instant View exposes the complete rendered
 article to Telegram, which may cache it independently; the Morsel deployment must also have its domain-specific
-Telegram template installed. Before Telegram approves the template, set `MORSEL_TELEGRAM_INSTANT_VIEW_RHASH` to the
+Telegram template installed. Before Telegram approves the template, set `TELEGRAM_INSTANT_VIEW_RHASH` to the
 hash from the editor's **View in Telegram** link so the bot returns a direct `t.me/iv` URL. Once approved, this setting
 may be removed and regular Morsel URLs will work for all Telegram users. Set `MORSEL_TELEGRAM_INSTANT_VIEW=false` to
 create shares that expire after `MORSEL_SHARE_EXPIRES_IN_SECONDS` (30 days by default); changing the lifetime affects
