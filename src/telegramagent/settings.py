@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Annotated
 from typing import Literal
 
+from pydantic import AliasChoices
 from pydantic import Field
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
@@ -128,6 +129,10 @@ class Settings(BaseSettings):
     morsel_telegram_instant_view_rhash: str | None = Field(
         default=None,
         alias="TELEGRAM_INSTANT_VIEW_RHASH",
+        validation_alias=AliasChoices(
+            "TELEGRAM_INSTANT_VIEW_RHASH",
+            "MORSEL_TELEGRAM_INSTANT_VIEW_RHASH",
+        ),
     )
     morsel_timeout_seconds: float = Field(
         default=12.0,
