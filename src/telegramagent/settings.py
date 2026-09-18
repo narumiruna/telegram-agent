@@ -125,6 +125,10 @@ class Settings(BaseSettings):
         alias="MORSEL_SHARE_EXPIRES_IN_SECONDS",
     )
     morsel_telegram_instant_view: bool = Field(default=True, alias="MORSEL_TELEGRAM_INSTANT_VIEW")
+    morsel_telegram_instant_view_rhash: str | None = Field(
+        default=None,
+        alias="MORSEL_TELEGRAM_INSTANT_VIEW_RHASH",
+    )
     morsel_timeout_seconds: float = Field(
         default=12.0,
         gt=0,

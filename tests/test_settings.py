@@ -181,6 +181,7 @@ def test_morsel_settings_have_smart_routing_defaults() -> None:
     assert settings.morsel_long_reply_threshold == 3500
     assert settings.morsel_share_expires_in_seconds == 2_592_000
     assert settings.morsel_telegram_instant_view is True
+    assert settings.morsel_telegram_instant_view_rhash is None
     assert settings.morsel_timeout_seconds == 12.0
 
 
@@ -191,6 +192,7 @@ def test_morsel_settings_parse_env(monkeypatch) -> None:
     monkeypatch.setenv("MORSEL_LONG_REPLY_THRESHOLD", "3000")
     monkeypatch.setenv("MORSEL_SHARE_EXPIRES_IN_SECONDS", "3600")
     monkeypatch.setenv("MORSEL_TELEGRAM_INSTANT_VIEW", "false")
+    monkeypatch.setenv("MORSEL_TELEGRAM_INSTANT_VIEW_RHASH", "abc123def45678")
     monkeypatch.setenv("MORSEL_TIMEOUT_SECONDS", "8.5")
 
     settings = Settings()
@@ -201,6 +203,7 @@ def test_morsel_settings_parse_env(monkeypatch) -> None:
     assert settings.morsel_long_reply_threshold == 3000
     assert settings.morsel_share_expires_in_seconds == 3600
     assert settings.morsel_telegram_instant_view is False
+    assert settings.morsel_telegram_instant_view_rhash == "abc123def45678"
     assert settings.morsel_timeout_seconds == 8.5
 
 
