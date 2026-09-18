@@ -192,7 +192,7 @@ def test_morsel_settings_parse_env(monkeypatch) -> None:
     monkeypatch.setenv("MORSEL_LONG_REPLY_THRESHOLD", "3000")
     monkeypatch.setenv("MORSEL_SHARE_EXPIRES_IN_SECONDS", "3600")
     monkeypatch.setenv("MORSEL_TELEGRAM_INSTANT_VIEW", "false")
-    monkeypatch.setenv("MORSEL_TELEGRAM_INSTANT_VIEW_RHASH", "abc123def45678")
+    monkeypatch.setenv("TELEGRAM_INSTANT_VIEW_RHASH", "abc123def45678")
     monkeypatch.setenv("MORSEL_TIMEOUT_SECONDS", "8.5")
 
     settings = Settings()

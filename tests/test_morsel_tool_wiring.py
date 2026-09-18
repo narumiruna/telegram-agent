@@ -12,7 +12,7 @@ def test_morsel_tool_is_registered_when_smart_mode_is_configured() -> None:
             "MORSEL_LONG_REPLY_THRESHOLD": 3200,
             "MORSEL_SHARE_EXPIRES_IN_SECONDS": 3600,
             "MORSEL_TELEGRAM_INSTANT_VIEW": True,
-            "MORSEL_TELEGRAM_INSTANT_VIEW_RHASH": "abc123def45678",
+            "TELEGRAM_INSTANT_VIEW_RHASH": "abc123def45678",
             "MORSEL_TIMEOUT_SECONDS": 8,
         }
     )

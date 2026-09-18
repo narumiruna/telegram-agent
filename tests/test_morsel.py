@@ -349,7 +349,7 @@ def test_morsel_publisher_rejects_invalid_lifecycle_values(expires_in_seconds: i
 
 
 def test_morsel_publisher_rejects_invalid_telegram_rhash() -> None:
-    with pytest.raises(ValueError, match="MORSEL_TELEGRAM_INSTANT_VIEW_RHASH"):
+    with pytest.raises(ValueError, match="TELEGRAM_INSTANT_VIEW_RHASH"):
         MorselPublisher(api_key="test-key", telegram_instant_view_rhash="invalid&hash")
 
 
