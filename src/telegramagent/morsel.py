@@ -110,7 +110,7 @@ class MorselPublisher:
             round((monotonic() - started_at) * 1000),
         )
         if self.telegram_instant_view and self.telegram_instant_view_rhash:
-            return _telegram_instant_view_url(share_url, rhash=self.telegram_instant_view_rhash)
+            return _telegram_instant_view_source_url(share_url, rhash=self.telegram_instant_view_rhash)
         return share_url
 
     @staticmethod
@@ -251,8 +251,8 @@ def _validate_telegram_rhash(value: str | None) -> str:
     return rhash
 
 
-def _telegram_instant_view_url(share_url: str, *, rhash: str) -> str:
-    return "https://t.me/iv?" + urlencode({"url": share_url, "rhash": rhash})
+def _telegram_instant_view_source_url(share_url: str, *, rhash: str) -> str:
+    return share_url + "?" + urlencode({"tg_rhash": rhash})
 
 
 def _validate_origin(value: str) -> str:

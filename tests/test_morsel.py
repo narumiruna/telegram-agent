@@ -72,9 +72,7 @@ async def test_morsel_publisher_creates_telegram_instant_view_share_without_expi
         )
         share_url = await publisher.publish("# Instant View\n\nFull article.")
 
-    assert share_url == (
-        "https://t.me/iv?url=https%3A%2F%2Fmorsel.narumi.dev%2Fs%2F" + CAPABILITY + "&rhash=abc123def45678"
-    )
+    assert share_url == SHARE_URL + "?tg_rhash=abc123def45678"
     payload = json.loads(requests[0].content)
     assert payload["telegram_instant_view"] is True
     assert "expires_in" not in payload
