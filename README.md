@@ -125,8 +125,8 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | `TELEGRAM_INSTANT_VIEW_RHASH` | empty | Optional domain-specific template hash appended to Morsel URLs as `tg_rhash` before Telegram approves the template. |
 | `MORSEL_TIMEOUT_SECONDS` | `12` | Positive timeout for the single Morsel share-creation request. |
 
-`MORSEL_TELEGRAM_INSTANT_VIEW_RHASH` remains supported as a deprecated fallback. When both names are set,
-`TELEGRAM_INSTANT_VIEW_RHASH` takes precedence.
+`MORSEL_TELEGRAM_INSTANT_VIEW_RHASH` remains supported as a deprecated fallback, with no removal release or date
+currently scheduled. When both names are set, `TELEGRAM_INSTANT_VIEW_RHASH` takes precedence.
 
 ### Context
 
