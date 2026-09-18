@@ -32,7 +32,7 @@ class TelegramClient:
         *,
         http_client: httpx.AsyncClient | None = None,
         long_message_publisher: LongMessagePublisher | None = None,
-        long_message_threshold: int | None = 3500,
+        long_message_threshold: int | None = 2000,
     ) -> None:
         if long_message_threshold is not None and not 1 <= long_message_threshold <= 4096:
             raise ValueError("long_message_threshold must be between 1 and 4096")

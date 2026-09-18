@@ -117,7 +117,7 @@ class Settings(BaseSettings):
     morsel_url: str = Field(default="https://morsel.narumi.dev/", alias="MORSEL_URL")
     morsel_api_key: str | None = Field(default=None, alias="MORSEL_API_KEY")
     morsel_mode: Literal["disabled", "rich_only", "smart"] = Field(default="smart", alias="MORSEL_MODE")
-    morsel_long_reply_threshold: int = Field(default=3500, ge=1, le=4096, alias="MORSEL_LONG_REPLY_THRESHOLD")
+    morsel_long_reply_threshold: int = Field(default=2000, ge=1, le=4096, alias="MORSEL_LONG_REPLY_THRESHOLD")
     morsel_share_expires_in_seconds: int = Field(
         default=2_592_000,
         ge=1,
