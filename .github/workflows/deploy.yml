@@ -24,7 +24,7 @@ jobs:
       - name: Prepare environment file
         env:
           MORSEL_API_KEY: ${{ secrets.MORSEL_API_KEY }}
-          TELEGRAM_INSTANT_VIEW_RHASH: ${{ vars.TELEGRAM_INSTANT_VIEW_RHASH }}
+          TELEGRAM_INSTANT_VIEW_RHASH: ${{ vars.TELEGRAM_INSTANT_VIEW_RHASH || vars.MORSEL_TELEGRAM_INSTANT_VIEW_RHASH }}
         run: |
           install -m 600 /dev/null .env
           {
