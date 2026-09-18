@@ -122,7 +122,7 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | `MORSEL_LONG_REPLY_THRESHOLD` | `2000` | Sanitized character count after which `smart` mode publishes an ordinary reply; valid range is 1–4096. |
 | `MORSEL_SHARE_EXPIRES_IN_SECONDS` | `2592000` | Lifetime assigned to non-Instant-View shares (30 days by default; valid range is 1–315360000). |
 | `MORSEL_TELEGRAM_INSTANT_VIEW` | `true` | Create Telegram Instant View source pages; these shares cannot expire and disclose the complete rendered article to Telegram. |
-| `TELEGRAM_INSTANT_VIEW_RHASH` | empty | Optional domain-specific template hash used to return direct `t.me/iv` links before Telegram approves the template. |
+| `TELEGRAM_INSTANT_VIEW_RHASH` | empty | Optional domain-specific template hash appended to Morsel URLs as `tg_rhash` before Telegram approves the template. |
 | `MORSEL_TIMEOUT_SECONDS` | `12` | Positive timeout for the single Morsel share-creation request. |
 
 ### Context
@@ -392,8 +392,9 @@ characters. Set `MORSEL_LONG_REPLY_THRESHOLD` to customize this boundary.
 By default, new shares are non-expiring Telegram Instant View source pages. Instant View exposes the complete rendered
 article to Telegram, which may cache it independently; the Morsel deployment must also have its domain-specific
 Telegram template installed. Before Telegram approves the template, set `TELEGRAM_INSTANT_VIEW_RHASH` to the
-hash from the editor's **View in Telegram** link so the bot returns a direct `t.me/iv` URL. Once approved, this setting
-may be removed and regular Morsel URLs will work for all Telegram users. Set `MORSEL_TELEGRAM_INSTANT_VIEW=false` to
+hash from the editor's **View in Telegram** link so the bot appends `?tg_rhash=<hash>` to each Morsel URL. Once
+approved, this setting may be removed and regular Morsel URLs will work for all Telegram users. Set
+`MORSEL_TELEGRAM_INSTANT_VIEW=false` to
 create shares that expire after `MORSEL_SHARE_EXPIRES_IN_SECONDS` (30 days by default); changing the lifetime affects
 only future shares, and expired links must be republished. Each share includes an explicit Open Graph title and description derived from a bounded
 Markdown prefix and normalized to Morsel's limits. This non-consuming preview can be requested repeatedly by anyone
