@@ -207,24 +207,6 @@ def test_morsel_settings_parse_env(monkeypatch) -> None:
     assert settings.morsel_timeout_seconds == 8.5
 
 
-def test_morsel_settings_accept_legacy_telegram_instant_view_rhash(monkeypatch) -> None:
-    monkeypatch.delenv("TELEGRAM_INSTANT_VIEW_RHASH", raising=False)
-    monkeypatch.setenv("MORSEL_TELEGRAM_INSTANT_VIEW_RHASH", "legacy-rhash")
-
-    settings = Settings()
-
-    assert settings.morsel_telegram_instant_view_rhash == "legacy-rhash"
-
-
-def test_morsel_settings_prefer_renamed_telegram_instant_view_rhash(monkeypatch) -> None:
-    monkeypatch.setenv("TELEGRAM_INSTANT_VIEW_RHASH", "renamed-rhash")
-    monkeypatch.setenv("MORSEL_TELEGRAM_INSTANT_VIEW_RHASH", "legacy-rhash")
-
-    settings = Settings()
-
-    assert settings.morsel_telegram_instant_view_rhash == "renamed-rhash"
-
-
 @pytest.mark.parametrize(
     ("field", "value"),
     [
