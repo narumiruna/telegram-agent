@@ -24,6 +24,7 @@ jobs:
       - name: Prepare environment file
         env:
           MORSEL_API_KEY: ${{ secrets.MORSEL_API_KEY }}
+          MORSEL_TELEGRAM_INSTANT_VIEW_RHASH: ${{ vars.MORSEL_TELEGRAM_INSTANT_VIEW_RHASH }}
         run: |
           install -m 600 /dev/null .env
           {
@@ -36,6 +37,7 @@ jobs:
             echo "LOGFIRE_ENVIRONMENT=${{vars.LOGFIRE_ENVIRONMENT}}"
             echo "FIRECRAWL_API_KEY=${{secrets.FIRECRAWL_API_KEY}}"
             printf 'MORSEL_API_KEY=%s\n' "$MORSEL_API_KEY"
+            printf 'MORSEL_TELEGRAM_INSTANT_VIEW_RHASH=%s\n' "$MORSEL_TELEGRAM_INSTANT_VIEW_RHASH"
           } >> .env
 
       - name: Deploy with Docker Compose

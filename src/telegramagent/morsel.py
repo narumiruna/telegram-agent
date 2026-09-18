@@ -8,6 +8,7 @@ import unicodedata
 from collections.abc import AsyncIterator
 from time import monotonic
 from urllib.parse import SplitResult
+from urllib.parse import urlencode
 from urllib.parse import urlsplit
 
 import httpx
@@ -22,6 +23,7 @@ MAX_PREVIEW_DESCRIPTION_CHARS = 200
 MIN_EXPIRES_IN_SECONDS = 1
 MAX_EXPIRES_IN_SECONDS = 315_360_000
 _SHARE_CAPABILITY_RE = re.compile(r"[A-Za-z0-9_-]{43}")
+_TELEGRAM_RHASH_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 
 class MorselPublishError(RuntimeError):
@@ -49,6 +51,7 @@ class MorselPublisher:
         timeout_seconds: float = 12.0,
         expires_in_seconds: int = 2_592_000,
         telegram_instant_view: bool = False,
+        telegram_instant_view_rhash: str | None = None,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
     ) -> None:
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
@@ -64,6 +67,7 @@ class MorselPublisher:
         self.timeout = httpx.Timeout(timeout_seconds, connect=min(timeout_seconds, 10.0))
         self.expires_in_seconds = expires_in_seconds
         self.telegram_instant_view = telegram_instant_view
+        self.telegram_instant_view_rhash = _validate_telegram_rhash(telegram_instant_view_rhash)
         self.max_response_bytes = max_response_bytes
 
     @property
@@ -105,6 +109,8 @@ class MorselPublisher:
             len(text.encode()),
             round((monotonic() - started_at) * 1000),
         )
+        if self.telegram_instant_view and self.telegram_instant_view_rhash:
+            return _telegram_instant_view_url(share_url, rhash=self.telegram_instant_view_rhash)
         return share_url
 
     @staticmethod
@@ -236,6 +242,17 @@ def _first_api_key(configured_keys: str | None) -> str:
     if any(ord(character) < 32 or ord(character) == 127 for character in api_key):
         raise ValueError("MORSEL_API_KEY contains control characters")
     return api_key
+
+
+def _validate_telegram_rhash(value: str | None) -> str:
+    rhash = value.strip() if value is not None else ""
+    if rhash and not _TELEGRAM_RHASH_RE.fullmatch(rhash):
+        raise ValueError("MORSEL_TELEGRAM_INSTANT_VIEW_RHASH must contain 1-128 URL-safe characters")
+    return rhash
+
+
+def _telegram_instant_view_url(share_url: str, *, rhash: str) -> str:
+    return "https://t.me/iv?" + urlencode({"url": share_url, "rhash": rhash})
 
 
 def _validate_origin(value: str) -> str:

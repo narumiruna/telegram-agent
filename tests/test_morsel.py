@@ -64,9 +64,17 @@ async def test_morsel_publisher_creates_telegram_instant_view_share_without_expi
         return httpx.Response(201, json={"id": "share-id", "share_url": SHARE_URL})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        publisher = MorselPublisher(api_key="test-key", http_client=client, telegram_instant_view=True)
-        await publisher.publish("# Instant View\n\nFull article.")
+        publisher = MorselPublisher(
+            api_key="test-key",
+            http_client=client,
+            telegram_instant_view=True,
+            telegram_instant_view_rhash="abc123def45678",
+        )
+        share_url = await publisher.publish("# Instant View\n\nFull article.")
 
+    assert share_url == (
+        "https://t.me/iv?url=https%3A%2F%2Fmorsel.narumi.dev%2Fs%2F" + CAPABILITY + "&rhash=abc123def45678"
+    )
     payload = json.loads(requests[0].content)
     assert payload["telegram_instant_view"] is True
     assert "expires_in" not in payload
@@ -338,6 +346,11 @@ def test_morsel_publisher_rejects_invalid_lifecycle_values(expires_in_seconds: i
             expires_in_seconds=expires_in_seconds,
             timeout_seconds=timeout_seconds,
         )
+
+
+def test_morsel_publisher_rejects_invalid_telegram_rhash() -> None:
+    with pytest.raises(ValueError, match="MORSEL_TELEGRAM_INSTANT_VIEW_RHASH"):
+        MorselPublisher(api_key="test-key", telegram_instant_view_rhash="invalid&hash")
 
 
 @pytest.mark.asyncio
