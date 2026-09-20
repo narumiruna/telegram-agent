@@ -6,6 +6,7 @@ from typing import Annotated
 from typing import Literal
 
 from pydantic import Field
+from pydantic import SecretStr
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import NoDecode
@@ -105,6 +106,13 @@ class Settings(BaseSettings):
         default=120.0, gt=0, alias="BOT_FIRECRAWL_MCP_READ_TIMEOUT_SECONDS"
     )
     bot_gurume_tools_enabled: bool = Field(default=True, alias="BOT_GURUME_TOOLS_ENABLED")
+    bot_otter_tools_enabled: bool = Field(default=False, alias="BOT_OTTER_TOOLS_ENABLED")
+    bot_otter_command: str = Field(default="otter", alias="BOT_OTTER_COMMAND")
+    bot_otter_timeout_seconds: float = Field(default=30.0, gt=0, alias="BOT_OTTER_TIMEOUT_SECONDS")
+    bot_otter_max_output_chars: int = Field(default=20_000, ge=100, alias="BOT_OTTER_MAX_OUTPUT_CHARS")
+    otter_url: str = Field(default="https://otter.narumi.dev/", alias="OTTER_URL")
+    otter_token: SecretStr | None = Field(default=None, alias="OTTER_TOKEN")
+    otter_config_path: Path | None = Field(default=None, alias="OTTER_CONFIG_PATH")
     bot_container_tools_enabled: bool = Field(default=False, alias="BOT_CONTAINER_TOOLS_ENABLED")
     bot_container_tools_root: Path = Field(default=Path(), alias="BOT_CONTAINER_TOOLS_ROOT")
     bot_container_tools_timeout_seconds: float = Field(default=10.0, gt=0, alias="BOT_CONTAINER_TOOLS_TIMEOUT_SECONDS")
@@ -145,6 +153,13 @@ class Settings(BaseSettings):
     logfire_environment: str | None = Field(default=None, alias="LOGFIRE_ENVIRONMENT")
     logfire_service_name: str = Field(default="telegramagent", alias="LOGFIRE_SERVICE_NAME")
     logfire_include_content: bool = Field(default=False, alias="LOGFIRE_INCLUDE_CONTENT")
+
+    @field_validator("otter_token", "otter_config_path", mode="before")
+    @classmethod
+    def parse_optional_otter_values(cls, value: object) -> object:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return value
 
     @field_validator("bot_whitelist", "bot_skill_admins", mode="before")
     @classmethod

@@ -23,13 +23,16 @@ jobs:
 
       - name: Prepare environment file
         env:
+          BOT_OTTER_TOOLS_ENABLED: ${{ vars.BOT_OTTER_TOOLS_ENABLED }}
           MORSEL_API_KEY: ${{ secrets.MORSEL_API_KEY }}
+          OTTER_TOKEN: ${{ secrets.OTTER_TOKEN }}
           TELEGRAM_INSTANT_VIEW_RHASH: ${{ vars.TELEGRAM_INSTANT_VIEW_RHASH }}
         run: |
           install -m 600 /dev/null .env
           {
             echo "BOT_TOKEN=${{secrets.BOT_TOKEN}}"
             echo "BOT_WHITELIST=${{vars.BOT_WHITELIST}}"
+            printf 'BOT_OTTER_TOOLS_ENABLED=%s\n' "$BOT_OTTER_TOOLS_ENABLED"
             echo "OPENAI_BASE_URL=${{vars.OPENAI_BASE_URL}}"
             echo "OPENAI_API_KEY=${{secrets.OPENAI_API_KEY}}"
             echo "OPENAI_MODEL=${{vars.OPENAI_MODEL}}"
@@ -37,6 +40,7 @@ jobs:
             echo "LOGFIRE_ENVIRONMENT=${{vars.LOGFIRE_ENVIRONMENT}}"
             echo "FIRECRAWL_API_KEY=${{secrets.FIRECRAWL_API_KEY}}"
             printf 'MORSEL_API_KEY=%s\n' "$MORSEL_API_KEY"
+            printf 'OTTER_TOKEN=%s\n' "$OTTER_TOKEN"
             printf 'TELEGRAM_INSTANT_VIEW_RHASH=%s\n' "$TELEGRAM_INSTANT_VIEW_RHASH"
           } >> .env
 

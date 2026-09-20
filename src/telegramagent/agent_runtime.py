@@ -286,9 +286,12 @@ class AgentRuntime:
                 reply=output.reply,
                 message_history=completed_history,
             )
-        except asyncio.CancelledError:
-            await self._dispatch(AgentEvent("cancelled", text="任務已取消。"), event_handler)
-            return AgentSubmission(kind="cancelled", reply=AgentReply(text="已取消目前任務。"))
+        except asyncio.CancelledError as exc:
+            cancellation_notice = getattr(exc, "user_message", None)
+            if not isinstance(cancellation_notice, str) or not cancellation_notice.strip():
+                cancellation_notice = "任務已取消。"
+            await self._dispatch(AgentEvent("cancelled", text=cancellation_notice), event_handler)
+            return AgentSubmission(kind="cancelled", reply=AgentReply(text=cancellation_notice))
         except Exception as exc:
             await self._dispatch(
                 AgentEvent(
