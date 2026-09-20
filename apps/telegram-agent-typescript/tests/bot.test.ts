@@ -211,6 +211,108 @@ describe("Telegram bot update routing", () => {
     await firstHandling;
   });
 
+  it("invalidates queued pre-reset work without blocking post-reset submissions", async () => {
+    let finishImageDownload: ((response: Response) => void) | undefined;
+    const pendingImageDownload = new Promise<Response>((resolve) => {
+      finishImageDownload = resolve;
+    });
+    const submittedPrompts: string[] = [];
+    const sessions = createSessions({
+      submit: vi.fn(async (_chatId, prompt, options) => {
+        submittedPrompts.push(prompt);
+        options.onAccepted?.();
+        return { kind: "completed" as const, text: "AI 回覆" };
+      }),
+    });
+    const imageFetchImplementation = vi.fn<typeof fetch>(async () => pendingImageDownload);
+    const telegram = createTelegramAgentBot(loadSettings({ BOT_TOKEN: "test-token" }), sessions, logger, {
+      botInfo,
+      imageFetchImplementation,
+    });
+    installApiMock(telegram.bot);
+    const photoUpdate = privateMessage(8, "");
+    if (photoUpdate.message) {
+      photoUpdate.message.photo = [
+        { file_id: "image", file_unique_id: "image-unique-id", width: 100, height: 100, file_size: 5 },
+      ];
+      photoUpdate.message.caption = "重設前圖片";
+      delete photoUpdate.message.text;
+    }
+
+    const imageHandling = telegram.bot.handleUpdate(photoUpdate);
+    await vi.waitFor(() => expect(imageFetchImplementation).toHaveBeenCalledOnce());
+    const queuedHandling = telegram.bot.handleUpdate(privateMessage(9, "重設前排隊訊息"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const resetUpdate = privateMessage(10, "/reset");
+    if (resetUpdate.message) {
+      resetUpdate.message.entities = [{ offset: 0, length: 6, type: "bot_command" }];
+    }
+    await telegram.bot.handleUpdate(resetUpdate);
+    await telegram.bot.handleUpdate(privateMessage(11, "重設後"));
+
+    expect(sessions.reset).toHaveBeenCalledWith(7);
+    expect(submittedPrompts).toEqual(["重設後"]);
+
+    finishImageDownload?.(new Response("image"));
+    await Promise.all([imageHandling, queuedHandling]);
+    expect(submittedPrompts).toEqual(["重設後"]);
+  });
+
+  it("orders passive group context after an earlier addressed image submission", async () => {
+    let finishImageDownload: ((response: Response) => void) | undefined;
+    const pendingImageDownload = new Promise<Response>((resolve) => {
+      finishImageDownload = resolve;
+    });
+    const events: string[] = [];
+    const sessions = createSessions({
+      submit: vi.fn(async (_chatId, _prompt, options) => {
+        events.push("submit");
+        options.onAccepted?.();
+        return { kind: "completed" as const, text: "AI 回覆" };
+      }),
+      appendPassiveContext: vi.fn(async () => {
+        events.push("passive");
+      }),
+    });
+    const imageFetchImplementation = vi.fn<typeof fetch>(async () => pendingImageDownload);
+    const telegram = createTelegramAgentBot(loadSettings({ BOT_TOKEN: "test-token" }), sessions, logger, {
+      botInfo,
+      imageFetchImplementation,
+    });
+    installApiMock(telegram.bot);
+    const addressedUpdate: Update = {
+      update_id: 12,
+      message: {
+        message_id: 12,
+        date: 1_700_000_000,
+        chat: { id: -100, type: "supergroup", title: "測試群組" },
+        from: { id: 7, is_bot: false, first_name: "Alice" },
+        photo: [{ file_id: "image", file_unique_id: "image-unique-id", width: 100, height: 100, file_size: 5 }],
+        caption: "@test_bot 請看圖",
+      },
+    };
+    const passiveUpdate: Update = {
+      update_id: 13,
+      message: {
+        message_id: 13,
+        date: 1_700_000_001,
+        chat: { id: -100, type: "supergroup", title: "測試群組" },
+        from: { id: 8, is_bot: false, first_name: "Bob" },
+        text: "後續群組訊息",
+      },
+    };
+
+    const addressedHandling = telegram.bot.handleUpdate(addressedUpdate);
+    await vi.waitFor(() => expect(imageFetchImplementation).toHaveBeenCalledOnce());
+    const passiveHandling = telegram.bot.handleUpdate(passiveUpdate);
+    await Promise.resolve();
+    expect(events).toEqual([]);
+
+    finishImageDownload?.(new Response("image"));
+    await Promise.all([addressedHandling, passiveHandling]);
+    expect(events).toEqual(["submit", "passive"]);
+  });
+
   it("reports oversized image errors without invoking the agent", async () => {
     const sessions = createSessions();
     const settings = loadSettings({ BOT_TOKEN: "test-token", BOT_IMAGE_MAX_BYTES: "10" });

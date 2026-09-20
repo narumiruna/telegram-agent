@@ -21,6 +21,7 @@ export async function downloadTelegramImage(
   }
 
   const response = await fetchImplementation(`https://api.telegram.org/file/bot${token}/${file.file_path}`, {
+    redirect: "manual",
     signal: AbortSignal.timeout(60_000),
   });
   if (!response.ok) throw new Error(`Telegram file download failed with HTTP ${response.status}`);

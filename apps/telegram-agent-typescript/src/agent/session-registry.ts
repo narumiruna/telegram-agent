@@ -47,7 +47,9 @@ export class ChatSessionRegistry {
     prompt: string,
     options: { images?: ImageContent[]; intent?: SubmissionIntent; onAccepted?: () => void } = {},
   ): Promise<SubmissionResult> {
+    const generation = this.#generations.get(chatId) ?? 0;
     const session = await this.#getOrCreate(chatId);
+    this.#assertCurrentGeneration(chatId, generation);
     const images = options.images ?? [];
     if (session.isStreaming) {
       if (options.intent === "followUp") {
@@ -74,7 +76,9 @@ export class ChatSessionRegistry {
 
   async appendPassiveContext(chatId: number, text: string): Promise<void> {
     if (!text) return;
+    const generation = this.#generations.get(chatId) ?? 0;
     const session = await this.#getOrCreate(chatId);
+    this.#assertCurrentGeneration(chatId, generation);
     await session.sendCustomMessage(
       { customType: "telegram-passive-context", content: text, display: false },
       { triggerTurn: false, deliverAs: "nextTurn" },
@@ -119,6 +123,12 @@ export class ChatSessionRegistry {
     );
     this.#sessions.clear();
     this.#creating.clear();
+  }
+
+  #assertCurrentGeneration(chatId: number, generation: number): void {
+    if ((this.#generations.get(chatId) ?? 0) !== generation) {
+      throw new Error("Pi session access was invalidated by reset");
+    }
   }
 
   async #getOrCreate(chatId: number): Promise<SessionHandle> {

@@ -113,6 +113,20 @@ describe("ChatSessionRegistry", () => {
     expect(replacementSession.prompts).toEqual(["fresh"]);
   });
 
+  it("rejects access to an existing session when reset wins the acceptance race", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "telegramagent-ts-"));
+    const session = new FakeSession();
+    const registry = new ChatSessionRegistry(async () => session, root, logger);
+    await registry.submit(1, "initial");
+
+    const staleSubmission = registry.submit(1, "stale");
+    const staleOutcome = expect(staleSubmission).rejects.toThrow("invalidated by reset");
+    await registry.reset(1);
+
+    await staleOutcome;
+    expect(session.prompts).toEqual(["initial"]);
+  });
+
   it("delegates steering, follow-up, passive context, cancellation, and reset to Pi sessions", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "telegramagent-ts-"));
     const session = new FakeSession();

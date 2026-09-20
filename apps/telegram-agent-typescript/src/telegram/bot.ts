@@ -42,6 +42,7 @@ export function createTelegramAgentBot(
   const bot = new Bot(settings.botToken, dependencies.botInfo ? { botInfo: dependencies.botInfo } : {});
   const botReplyStreaks = new Map<number, number>();
   const submissionTails = new Map<number, Promise<void>>();
+  const submissionGenerations = new Map<number, number>();
   let runner: RunnerHandle | undefined;
   const morselPublisher = dependencies.morselPublisher ?? createMorselPublisher(settings);
 
@@ -67,7 +68,12 @@ export function createTelegramAgentBot(
     await context.reply(`chat_id=${context.chat.id}\nuser_id=${context.from?.id ?? "unknown"}`);
   });
   bot.command("reset", async (context) => {
-    await sessions.reset(context.chat.id);
+    const finishReset = invalidateSubmissionOrder(context.chat.id);
+    try {
+      await sessions.reset(context.chat.id);
+    } finally {
+      finishReset();
+    }
     await context.reply("已清除這個對話的 Pi session。", replyOptions(context));
   });
   bot.command("cancel", async (context) => {
@@ -80,7 +86,7 @@ export function createTelegramAgentBot(
       await context.reply("請使用 /ask <問題>。", replyOptions(context));
       return;
     }
-    await inSubmissionOrder(context.chat.id, (release) => answer(context, prompt, [], release));
+    await inSubmissionOrder(context.chat.id, (release, isCurrent) => answer(context, prompt, [], release, isCurrent));
   });
 
   bot.on("message", async (context) => {
@@ -99,13 +105,15 @@ export function createTelegramAgentBot(
     const addressed = privateChat || isBotAddressed(message, context.me.id, context.me.username);
     if (!addressed) {
       if (settings.botGroupPassiveContextEnabled) {
-        await sessions.appendPassiveContext(context.chat.id, passiveGroupContext(message));
+        await inSubmissionOrder(context.chat.id, async () => {
+          await sessions.appendPassiveContext(context.chat.id, passiveGroupContext(message));
+        });
       }
       return;
     }
 
     if (fromBot) botReplyStreaks.set(context.chat.id, (botReplyStreaks.get(context.chat.id) ?? 0) + 1);
-    await inSubmissionOrder(context.chat.id, async (release) => {
+    await inSubmissionOrder(context.chat.id, async (release, isCurrent) => {
       const strippedText = privateChat
         ? messageText(message).trim()
         : stripBotMention(messageText(message), context.me.username);
@@ -138,8 +146,9 @@ export function createTelegramAgentBot(
         return;
       }
 
+      if (!isCurrent()) return;
       const basePrompt = strippedText || (images.length > 0 ? defaultImagePrompt : "請回應這則訊息。");
-      await answer(context, promptWithReplyContext(message, basePrompt), images, release);
+      await answer(context, promptWithReplyContext(message, basePrompt), images, release, isCurrent);
     });
   });
 
@@ -160,12 +169,18 @@ export function createTelegramAgentBot(
     prompt: string,
     images: Array<{ type: "image"; data: string; mimeType: string }>,
     releaseSubmissionTurn: () => void,
+    isCurrent: () => boolean,
   ): Promise<void> {
+    if (!isCurrent()) return;
     const sourceMessageId = context.message?.message_id;
     const status = await context.reply(
       "處理中…",
       sourceMessageId ? { reply_parameters: { message_id: sourceMessageId } } : {},
     );
+    if (!isCurrent()) {
+      await editStatusWithChunks(context, status.chat.id, status.message_id, "此請求已因重設對話而取消。");
+      return;
+    }
     try {
       const result = await sessions.submit(context.chat?.id ?? status.chat.id, prompt, {
         images,
@@ -192,28 +207,50 @@ export function createTelegramAgentBot(
     }
   }
 
-  async function inSubmissionOrder(chatId: number, task: (release: () => void) => Promise<void>): Promise<void> {
+  async function inSubmissionOrder(
+    chatId: number,
+    task: (release: () => void, isCurrent: () => boolean) => Promise<void>,
+  ): Promise<void> {
+    const generation = submissionGenerations.get(chatId) ?? 0;
     const previous = submissionTails.get(chatId) ?? Promise.resolve();
-    let openGate = () => {};
-    const gate = new Promise<void>((resolve) => {
-      openGate = resolve;
-    });
-    const tail = previous.then(() => gate);
-    submissionTails.set(chatId, tail);
+    const { gate, release } = submissionGate(chatId, previous);
+    submissionTails.set(chatId, gate);
     await previous;
 
-    let released = false;
-    const release = () => {
-      if (released) return;
-      released = true;
-      openGate();
-      if (submissionTails.get(chatId) === tail) submissionTails.delete(chatId);
-    };
     try {
-      await task(release);
+      if (isCurrent()) await task(release, isCurrent);
     } finally {
       release();
     }
+
+    function isCurrent(): boolean {
+      return (submissionGenerations.get(chatId) ?? 0) === generation;
+    }
+  }
+
+  function invalidateSubmissionOrder(chatId: number): () => void {
+    submissionGenerations.set(chatId, (submissionGenerations.get(chatId) ?? 0) + 1);
+    const { gate, release } = submissionGate(chatId, Promise.resolve());
+    submissionTails.set(chatId, gate);
+    return release;
+  }
+
+  function submissionGate(chatId: number, previous: Promise<void>): { gate: Promise<void>; release: () => void } {
+    let openGate = () => {};
+    const next = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const gate = previous.then(() => next);
+    let released = false;
+    return {
+      gate,
+      release() {
+        if (released) return;
+        released = true;
+        openGate();
+        if (submissionTails.get(chatId) === gate) submissionTails.delete(chatId);
+      },
+    };
   }
 
   return {

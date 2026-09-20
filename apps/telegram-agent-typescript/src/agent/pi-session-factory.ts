@@ -43,7 +43,10 @@ export async function createPiSessionFactory(settings: Settings, logger: Logger)
         input: ["text", "image"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: settings.botAgentContextTokenBudget,
-        maxTokens: Math.max(4_096, Math.min(32_768, Math.floor(settings.botAgentContextTokenBudget * 0.2))),
+        maxTokens: Math.min(
+          settings.botAgentContextTokenBudget,
+          Math.max(1, Math.min(32_768, Math.floor(settings.botAgentContextTokenBudget * 0.2))),
+        ),
         compat: {
           supportsDeveloperRole: false,
           supportsReasoningEffort: false,
