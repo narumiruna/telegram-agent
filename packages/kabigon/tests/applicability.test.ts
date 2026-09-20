@@ -67,8 +67,10 @@ describe("source applicability", () => {
     });
   });
 
-  it("rejects playlists and unsupported PDF schemes", () => {
+  it("rejects playlists, PTT listings, and unsupported PDF schemes", () => {
     expect(isYouTubeVideoUrl("https://www.youtube.com/playlist?list=PL123")).toBe(false);
+    expect(isPttUrl("https://www.ptt.cc/")).toBe(false);
+    expect(isPttUrl("https://www.ptt.cc/bbs/Gossiping/index.html")).toBe(false);
     expect(isPdfTarget("ftp://example.com/document.pdf")).toBe(false);
     expect(isPdfTarget("not-a-valid-url")).toBe(false);
   });

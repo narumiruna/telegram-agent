@@ -1,12 +1,12 @@
 import type { Browser, Page, Route, WebSocketRoute } from "playwright";
 import { describe, expect, it, vi } from "vitest";
 
-import { LoaderContentError } from "../src/core/errors.js";
+import { LoaderContentError, LoaderTimeoutError } from "../src/core/errors.js";
 import type { ResourceProvider } from "../src/core/resources.js";
 import { fetchBrowserHtmlResponse } from "../src/loaders/browser.js";
 import { DEFAULT_PLAYWRIGHT_TIMEOUT_MS, PlaywrightLoader } from "../src/loaders/generic.js";
 
-function browserHarness(content: string) {
+function browserHarness(content: string, evaluate = async () => Buffer.byteLength(content)) {
   let routeHandler: ((route: Route) => Promise<void>) | undefined;
   let webSocketHandler: ((route: WebSocketRoute) => Promise<void>) | undefined;
   const continueRequest = vi.fn(async () => undefined);
@@ -37,7 +37,7 @@ function browserHarness(content: string) {
   });
   const page = {
     goto: gotoPage,
-    evaluate: async () => Buffer.byteLength(content),
+    evaluate,
     content: async () => content,
   } as unknown as Page;
   const closeContext = vi.fn(async () => undefined);
@@ -106,6 +106,22 @@ describe("browser transport safety", () => {
       "https://example.com/page",
       expect.objectContaining({ timeout: DEFAULT_PLAYWRIGHT_TIMEOUT_MS }),
     );
+  });
+
+  it("times out stalled post-navigation browser work", async () => {
+    const harness = browserHarness("ok", () => new Promise<number>(() => undefined));
+
+    await expect(
+      fetchBrowserHtmlResponse("https://example.com/page", {
+        loaderName: "TestLoader",
+        timeoutMs: 5,
+        timeoutSuggestion: "timed out",
+        browser: harness.browser,
+        fetchUrl: async () => new Response("ok"),
+        validateUrl: async (value) => new URL(value),
+      }),
+    ).rejects.toBeInstanceOf(LoaderTimeoutError);
+    expect(harness.closeContext).toHaveBeenCalledOnce();
   });
 
   it("rejects oversized browser response bodies", async () => {

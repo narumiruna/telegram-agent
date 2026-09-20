@@ -309,9 +309,19 @@ export function parsePttTarget(url: string): string {
   if (!hostIn(url, PTT_HOSTS)) {
     throw new LoaderNotApplicableError("PttLoader", url, `Not a PTT URL. Expected domains: ${PTT_HOSTS.join(", ")}`);
   }
+  if (!/^\/bbs\/[^/]+\/[A-Z]\.[^/]+\.html$/u.test(new URL(url).pathname)) {
+    throw new LoaderNotApplicableError("PttLoader", url, "Not a PTT article URL");
+  }
   return url;
 }
-export const isPttUrl = (url: string): boolean => hostIn(url, PTT_HOSTS);
+export function isPttUrl(url: string): boolean {
+  try {
+    parsePttTarget(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function parseRedditTarget(url: string): string {
   if (!hostIn(url, REDDIT_DOMAINS)) {

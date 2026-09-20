@@ -4,10 +4,17 @@ import { describe, expect, it } from "vitest";
 import { LoaderContentError, LoaderTimeoutError } from "../src/core/errors.js";
 import type { ImpersSession, ResourceProvider } from "../src/core/resources.js";
 import { FirecrawlLoader } from "../src/loaders/firecrawl.js";
-import { fetchImpersHtml, fetchImpersResponse, HttpLoader } from "../src/loaders/generic.js";
+import { CurlCffiLoader, fetchImpersHtml, fetchImpersResponse, HttpLoader } from "../src/loaders/generic.js";
 import { GitHubLoader, MAX_GITHUB_BYTES, toRawGitHubUrl } from "../src/loaders/github.js";
 import { MAX_PDF_BYTES, PdfLoader } from "../src/loaders/pdf.js";
-import { convertToOldReddit, rssToMarkdown, toRedditJsonUrl, toRedditRssUrl } from "../src/loaders/reddit.js";
+import {
+  convertToOldReddit,
+  MAX_REDDIT_BYTES,
+  RedditLoader,
+  rssToMarkdown,
+  toRedditJsonUrl,
+  toRedditRssUrl,
+} from "../src/loaders/reddit.js";
 import { ReelLoader } from "../src/loaders/reel.js";
 import { extractTruthSocialPost } from "../src/loaders/truthsocial.js";
 import { renderFxTwitterPayload, TwitterLoader, toFxTwitterApiUrl } from "../src/loaders/twitter.js";
@@ -100,6 +107,28 @@ describe("source loaders", () => {
       acceptEncoding: "identity",
       proxy: expect.stringMatching(/^http:\/\/127\.0\.0\.1:[0-9]+$/u),
     });
+  });
+
+  it("rejects non-text responses before generic Markdown conversion", async () => {
+    const session = {
+      get: async () => ({
+        status: 200,
+        text: "binary data",
+        headers: { get: (name: string) => (name === "content-type" ? "image/png" : null) },
+        setContent: () => undefined,
+        close: async () => undefined,
+      }),
+      close: async () => undefined,
+    } as unknown as ImpersSession;
+    const resources = {
+      validateUrl: async (input: string | URL) => new URL(input),
+      impersProxy: async () => "http://127.0.0.1:8080",
+      impersSession: async () => session,
+    } as unknown as ResourceProvider;
+
+    await expect(new CurlCffiLoader({ resources }).load("https://example.com/image")).rejects.toThrow(
+      "Expected textual content",
+    );
   });
 
   it("strips sensitive impers headers on cross-origin redirects", async () => {
@@ -210,6 +239,33 @@ describe("source loaders", () => {
     await expect(new PdfLoader({ resources }).load("https://example.com/oversized.pdf")).rejects.toThrow(
       `Response exceeds the ${MAX_PDF_BYTES} byte limit`,
     );
+  });
+
+  it("bounds Reddit RSS and JSON responses before parsing", async () => {
+    const requests: string[] = [];
+    let browserStarted = false;
+    const resources = {
+      fetch: async (input: string | URL) => {
+        const url = String(input);
+        requests.push(url);
+        if (url.endsWith(".rss")) return new Response("not a feed");
+        return new Response(null, { headers: { "content-length": String(MAX_REDDIT_BYTES + 1) } });
+      },
+      browser: async () => {
+        browserStarted = true;
+        throw new Error("browser fallback started");
+      },
+      runBrowser: async (operation: () => Promise<unknown>) => operation(),
+    } as unknown as ResourceProvider;
+
+    await expect(new RedditLoader({ resources }).load("https://reddit.com/comments/abc/post")).rejects.toThrow(
+      "browser fallback started",
+    );
+    expect(requests).toEqual([
+      "https://www.reddit.com/comments/abc/post/.rss",
+      "https://www.reddit.com/comments/abc/post.json",
+    ]);
+    expect(browserStarted).toBe(true);
   });
 
   it("rejects blocker pages and empty Reddit feeds", () => {

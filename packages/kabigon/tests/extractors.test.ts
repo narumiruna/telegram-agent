@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { LoaderContentError } from "../src/core/errors.js";
 import { ensureUsableContent } from "../src/loaders/content-guard.js";
 import { extractLtnArticleText, extractNewsArticleText } from "../src/loaders/news.js";
+import { extractPttPost } from "../src/loaders/ptt.js";
 import { extractArticleBodyFromJsonLd, extractFirstTagSubtree, htmlToMarkdown } from "../src/loaders/utils.js";
 
 const url = "https://example.com/article";
@@ -36,6 +37,11 @@ describe("HTML extraction", () => {
     expect(() => extractNewsArticleText("<html><body>Blocker</body></html>", url, "NewsLoader")).toThrow(
       "Could not find article body",
     );
+  });
+
+  it("extracts only a PTT post body", () => {
+    expect(extractPttPost('<div id="main-content"><p>Post body</p></div>', url)).toBe("Post body");
+    expect(() => extractPttPost("<main>Board listing</main>", url)).toThrow("Could not find PTT post body");
   });
 
   it("extracts LTN's article div and removes advertising subtrees", () => {

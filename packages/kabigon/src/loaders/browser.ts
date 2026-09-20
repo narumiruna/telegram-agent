@@ -14,6 +14,24 @@ export type BrowserWaitUntil = "commit" | "domcontentloaded" | "load" | "network
 export type BrowserPageHook = (page: Page) => Promise<void>;
 export type BrowserContentExtractor = (page: Page) => Promise<string>;
 
+function raceWithSignal<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 interface BrowserFetchOptions {
   loaderName: string;
   timeoutMs?: number;
@@ -104,16 +122,29 @@ async function withBrowser(browser: Browser, url: string, options: BrowserFetchO
     if (response && response.status() >= 400) {
       throw new LoaderContentError(options.loaderName, url, `HTTP request failed with status ${response.status()}`);
     }
-    if (options.afterGoto) await options.afterGoto(page);
-    const domBytes = await page.evaluate(() => new Blob([document.documentElement.outerHTML]).size);
-    if (domBytes > maxBytes) {
-      throw new LoaderContentError(options.loaderName, url, `Browser DOM exceeds the ${maxBytes} byte limit`);
+    try {
+      return await raceWithSignal(
+        (async () => {
+          if (options.afterGoto) await options.afterGoto(page);
+          const domBytes = await page.evaluate(() => new Blob([document.documentElement.outerHTML]).size);
+          if (domBytes > maxBytes) {
+            throw new LoaderContentError(options.loaderName, url, `Browser DOM exceeds the ${maxBytes} byte limit`);
+          }
+          const content = options.extractContent ? await options.extractContent(page) : await page.content();
+          if (Buffer.byteLength(content) > maxBytes) {
+            throw new LoaderContentError(options.loaderName, url, `Browser content exceeds the ${maxBytes} byte limit`);
+          }
+          return { content, contentType: (await response?.headerValue("content-type")) ?? "text/html" };
+        })(),
+        activeSignal,
+      );
+    } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason;
+      if (timeoutSignal.aborted) {
+        throw new LoaderTimeoutError(options.loaderName, url, timeoutMs / 1_000, options.timeoutSuggestion);
+      }
+      throw error;
     }
-    const content = options.extractContent ? await options.extractContent(page) : await page.content();
-    if (Buffer.byteLength(content) > maxBytes) {
-      throw new LoaderContentError(options.loaderName, url, `Browser content exceeds the ${maxBytes} byte limit`);
-    }
-    return { content, contentType: (await response?.headerValue("content-type")) ?? "text/html" };
   } finally {
     await context.close();
   }

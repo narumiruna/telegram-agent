@@ -23,6 +23,20 @@ export const DEFAULT_HTTP_HEADERS = {
   "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
 } as const;
 
+function requireTextContentType(contentType: string, loaderName: string, url: string): void {
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (
+    !mediaType ||
+    mediaType.startsWith("text/") ||
+    mediaType === "application/json" ||
+    mediaType === "application/xml" ||
+    mediaType.endsWith("+json") ||
+    mediaType.endsWith("+xml")
+  )
+    return;
+  throw new LoaderContentError(loaderName, url, `Expected textual content, got: ${JSON.stringify(contentType)}`);
+}
+
 async function checkedFetch(
   url: string,
   options: {
@@ -99,6 +113,7 @@ export class HttpLoader implements Loader {
       loaderName: "HttpLoader",
       timeoutMs: this.timeoutMs,
     });
+    requireTextContentType(response.contentType, "HttpLoader", url);
     const result = htmlToMarkdown(response.content);
     ensureUsableContent(result, { loaderName: "HttpLoader", url });
     return result;
@@ -134,6 +149,7 @@ export class CurlCffiLoader implements Loader {
       signal,
       loaderName: "CurlCffiLoader",
     });
+    requireTextContentType(response.contentType, "CurlCffiLoader", url);
     const result = htmlToMarkdown(response.content);
     ensureUsableContent(result, { loaderName: "CurlCffiLoader", url });
     return result;

@@ -3,6 +3,7 @@ import { XMLParser } from "fast-xml-parser";
 import { LoaderContentError, LoaderTimeoutError } from "../core/errors.js";
 import { remainingMilliseconds } from "../core/execution.js";
 import type { Loader } from "../core/loader.js";
+import { readResponseText } from "../core/network.js";
 import type { ResourceProvider } from "../core/resources.js";
 import { parseRedditTarget } from "../sources/applicability.js";
 import { DEFAULT_BROWSER_USER_AGENT, fetchBrowserHtml } from "./browser.js";
@@ -10,6 +11,7 @@ import { htmlToMarkdown } from "./utils.js";
 
 const REDDIT_SHORT_HOSTS = new Set(["redd.it", "www.redd.it"]);
 const USER_AGENT = DEFAULT_BROWSER_USER_AGENT;
+export const MAX_REDDIT_BYTES = 10 * 1024 * 1024;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -151,16 +153,33 @@ export class RedditLoader implements Loader {
     }
   }
 
+  private async boundedText(response: Response, url: string): Promise<string> {
+    try {
+      return await readResponseText(response, MAX_REDDIT_BYTES);
+    } catch (error) {
+      throw new LoaderContentError("RedditLoader", url, `Reddit response could not be read: ${String(error)}`);
+    }
+  }
+
   private async loadViaRss(url: string, signal?: AbortSignal): Promise<string> {
     const rssUrl = toRedditRssUrl(url);
-    return rssToMarkdown(await (await this.request(rssUrl, undefined, signal)).text(), rssUrl);
+    return rssToMarkdown(await this.boundedText(await this.request(rssUrl, undefined, signal), rssUrl), rssUrl);
   }
 
   private async loadViaJson(url: string, signal?: AbortSignal): Promise<string> {
     const apiUrl = toRedditJsonUrl(url);
-    const payload = (await (
-      await this.request(apiUrl, { "User-Agent": USER_AGENT, Accept: "application/json" }, signal)
-    ).json()) as unknown;
+    let payload: unknown;
+    try {
+      payload = JSON.parse(
+        await this.boundedText(
+          await this.request(apiUrl, { "User-Agent": USER_AGENT, Accept: "application/json" }, signal),
+          apiUrl,
+        ),
+      ) as unknown;
+    } catch (error) {
+      if (error instanceof LoaderContentError) throw error;
+      throw new LoaderContentError("RedditLoader", apiUrl, `Invalid Reddit JSON payload: ${String(error)}`);
+    }
     if (!Array.isArray(payload) || payload.length < 1) {
       throw new LoaderContentError("RedditLoader", apiUrl, "Unexpected Reddit JSON payload shape.");
     }
