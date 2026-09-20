@@ -1,3 +1,3 @@
-import { startApplication } from "./startup.js";
+import { startApplication } from "./startup.js"
 
-await startApplication();
+await startApplication()

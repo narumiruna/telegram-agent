@@ -6,24 +6,24 @@ export const AttemptStatus = {
   Timeout: "timeout",
   Empty: "empty",
   Rejected: "rejected",
-} as const;
+} as const
 
-export type AttemptStatus = (typeof AttemptStatus)[keyof typeof AttemptStatus];
+export type AttemptStatus = (typeof AttemptStatus)[keyof typeof AttemptStatus]
 
 export interface AttemptRecord {
-  loaderId: string;
-  status: AttemptStatus;
-  elapsedSeconds: number;
-  errorType?: string;
-  message?: string;
+  loaderId: string
+  status: AttemptStatus
+  elapsedSeconds: number
+  errorType?: string
+  message?: string
 }
 
 export interface LoadResult {
-  content: string;
-  loaderId: string;
-  contentType: string;
-  downgraded: boolean;
-  attempts: readonly AttemptRecord[];
+  content: string
+  loaderId: string
+  contentType: string
+  downgraded: boolean
+  attempts: readonly AttemptRecord[]
 }
 
 export function attemptRecordToObject(record: AttemptRecord): Record<string, unknown> {
@@ -33,7 +33,7 @@ export function attemptRecordToObject(record: AttemptRecord): Record<string, unk
     elapsed_seconds: record.elapsedSeconds,
     error_type: record.errorType ?? null,
     message: record.message ?? null,
-  };
+  }
 }
 
 export function loadResultToObject(result: LoadResult): Record<string, unknown> {
@@ -43,5 +43,5 @@ export function loadResultToObject(result: LoadResult): Record<string, unknown> 
     content_type: result.contentType,
     downgraded: result.downgraded,
     attempts: result.attempts.map(attemptRecordToObject),
-  };
+  }
 }

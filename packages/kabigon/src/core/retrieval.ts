@@ -1,4 +1,4 @@
 export interface RetrievedHtml {
-  content: string;
-  contentType: string;
+  content: string
+  contentType: string
 }

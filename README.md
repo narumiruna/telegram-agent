@@ -41,14 +41,19 @@ See the [Python app README](apps/telegram-agent-python/README.md) for configurat
 
 The root `package.json` manages `apps/*` and `packages/*` npm workspaces. GitHub CI, container publishing, and deployment target `apps/telegram-agent-typescript`; Python-only changes do not trigger CI or deployment, and the retained Python app is checked locally with its own toolchain.
 
+The root `biome.json` defines formatting and lint rules for all TypeScript workspaces. `npm ci` installs the root tools and configures Husky. The pre-commit hook runs the repository-local Biome on staged files, applies safe fixes, and updates those staged files.
+
 ```bash
 npm ci
 npm run build
+npm run format
 npm run format:check
 npm run lint
 npm run typecheck
 npm test
 ```
+
+Run `npm run precommit` to check staged files manually.
 
 Run one workspace with `--workspace`, for example:
 

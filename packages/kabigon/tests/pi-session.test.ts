@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest"
 
-import type { ResourceProvider } from "../src/core/resources.js";
-import { MAX_PI_SESSION_BYTES, PiSessionLoader } from "../src/loaders/pi-session.js";
+import type { ResourceProvider } from "../src/core/resources.js"
+import { MAX_PI_SESSION_BYTES, PiSessionLoader } from "../src/loaders/pi-session.js"
 
-const sharedUrl = "https://pi.dev/session/#0230effc86f4a142c885cb59fe9725d5";
-const rawUrl = "https://gist.githubusercontent.com/alice/id/raw/revision/session.html";
+const sharedUrl = "https://pi.dev/session/#0230effc86f4a142c885cb59fe9725d5"
+const rawUrl = "https://gist.githubusercontent.com/alice/id/raw/revision/session.html"
 
 function sessionHtml(): string {
   const session = {
@@ -13,7 +13,13 @@ function sessionHtml(): string {
     systemPrompt: "You are a coding assistant.",
     tools: [{ name: "read", description: "Read a file." }],
     entries: [
-      { type: "model_change", id: "model", parentId: null, provider: "openai-codex", modelId: "gpt-test" },
+      {
+        type: "model_change",
+        id: "model",
+        parentId: null,
+        provider: "openai-codex",
+        modelId: "gpt-test",
+      },
       {
         type: "message",
         id: "user",
@@ -44,7 +50,11 @@ function sessionHtml(): string {
         type: "message",
         id: "tool-result",
         parentId: "assistant",
-        message: { role: "toolResult", toolName: "read", content: [{ type: "text", text: "hello" }] },
+        message: {
+          role: "toolResult",
+          toolName: "read",
+          content: [{ type: "text", text: "hello" }],
+        },
       },
       {
         type: "message",
@@ -53,8 +63,8 @@ function sessionHtml(): string {
         message: { role: "assistant", content: [{ type: "text", text: "ORPHAN" }] },
       },
     ],
-  };
-  return `<script id="session-data">${Buffer.from(JSON.stringify(session)).toString("base64")}</script>`;
+  }
+  return `<script id="session-data">${Buffer.from(JSON.stringify(session)).toString("base64")}</script>`
 }
 
 describe("Pi session loader", () => {
@@ -62,38 +72,45 @@ describe("Pi session loader", () => {
     const resources = {
       fetch: async (input: string | URL) => {
         if (String(input).includes("api.github.com")) {
-          return Response.json({ files: { "session.html": { truncated: true, raw_url: rawUrl } } });
+          return Response.json({ files: { "session.html": { truncated: true, raw_url: rawUrl } } })
         }
-        return new Response(null, { headers: { "content-length": String(MAX_PI_SESSION_BYTES + 1) } });
+        return new Response(null, {
+          headers: { "content-length": String(MAX_PI_SESSION_BYTES + 1) },
+        })
       },
-    } as unknown as ResourceProvider;
+    } as unknown as ResourceProvider
 
     await expect(new PiSessionLoader({ resources }).load(sharedUrl)).rejects.toThrow(
       `${MAX_PI_SESSION_BYTES} byte limit`,
-    );
-  });
+    )
+  })
 
   it("fetches truncated Gists and renders only the selected ancestry", async () => {
-    const requested: string[] = [];
+    const requested: string[] = []
     const resources = {
       fetch: async (input: string | URL) => {
-        const url = String(input);
-        requested.push(url);
+        const url = String(input)
+        requested.push(url)
         if (url.includes("api.github.com")) {
-          return Response.json({ files: { "session.html": { truncated: true, raw_url: rawUrl, content: "bad" } } });
+          return Response.json({
+            files: { "session.html": { truncated: true, raw_url: rawUrl, content: "bad" } },
+          })
         }
-        return new Response(sessionHtml());
+        return new Response(sessionHtml())
       },
-    } as unknown as ResourceProvider;
-    const result = await new PiSessionLoader({ resources }).load(sharedUrl);
-    expect(requested).toEqual(["https://api.github.com/gists/0230effc86f4a142c885cb59fe9725d5", rawUrl]);
-    expect(result).toContain("# Pi Session session-123");
-    expect(result).toContain("Create the loader.");
-    expect(result).toContain("[Image: image/png]");
-    expect(result).toContain("#### Thinking");
-    expect(result).toContain('"path": "demo.ts"');
-    expect(result).toContain("### Tool Result: read");
-    expect(result).not.toContain("ORPHAN");
-    expect(result).not.toContain("SECRET_IMAGE_DATA");
-  });
-});
+    } as unknown as ResourceProvider
+    const result = await new PiSessionLoader({ resources }).load(sharedUrl)
+    expect(requested).toEqual([
+      "https://api.github.com/gists/0230effc86f4a142c885cb59fe9725d5",
+      rawUrl,
+    ])
+    expect(result).toContain("# Pi Session session-123")
+    expect(result).toContain("Create the loader.")
+    expect(result).toContain("[Image: image/png]")
+    expect(result).toContain("#### Thinking")
+    expect(result).toContain('"path": "demo.ts"')
+    expect(result).toContain("### Tool Result: read")
+    expect(result).not.toContain("ORPHAN")
+    expect(result).not.toContain("SECRET_IMAGE_DATA")
+  })
+})

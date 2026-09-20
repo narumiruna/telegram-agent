@@ -1,39 +1,39 @@
-import path from "node:path";
+import path from "node:path"
 
-import { z } from "zod";
+import { z } from "zod"
 
 const booleanFromEnvironment = (defaultValue: boolean) =>
   z
     .preprocess((value) => {
-      if (value === undefined || value === "") return defaultValue;
-      if (typeof value === "boolean") return value;
-      if (typeof value !== "string") return value;
-      const normalized = value.trim().toLowerCase();
-      if (["1", "true", "yes", "on"].includes(normalized)) return true;
-      if (["0", "false", "no", "off"].includes(normalized)) return false;
-      return value;
+      if (value === undefined || value === "") return defaultValue
+      if (typeof value === "boolean") return value
+      if (typeof value !== "string") return value
+      const normalized = value.trim().toLowerCase()
+      if (["1", "true", "yes", "on"].includes(normalized)) return true
+      if (["0", "false", "no", "off"].includes(normalized)) return false
+      return value
     }, z.boolean())
-    .default(defaultValue);
+    .default(defaultValue)
 
 const numberFromEnvironment = (
   defaultValue: number,
   constraints?: { integer?: boolean; min?: number; max?: number },
 ) => {
-  let schema = constraints?.integer ? z.number().int() : z.number();
-  if (constraints?.min !== undefined) schema = schema.min(constraints.min);
-  if (constraints?.max !== undefined) schema = schema.max(constraints.max);
+  let schema = constraints?.integer ? z.number().int() : z.number()
+  if (constraints?.min !== undefined) schema = schema.min(constraints.min)
+  if (constraints?.max !== undefined) schema = schema.max(constraints.max)
   return z.preprocess((value) => {
-    if (value === undefined || value === "") return defaultValue;
-    if (typeof value === "string") return Number(value);
-    return value;
-  }, schema);
-};
+    if (value === undefined || value === "") return defaultValue
+    if (typeof value === "string") return Number(value)
+    return value
+  }, schema)
+}
 
 const optionalString = z.preprocess((value) => {
-  if (typeof value !== "string") return value;
-  const normalized = value.trim();
-  return normalized || undefined;
-}, z.string().optional());
+  if (typeof value !== "string") return value
+  const normalized = value.trim()
+  return normalized || undefined
+}, z.string().optional())
 
 const csvStrings = z
   .string()
@@ -46,25 +46,28 @@ const csvStrings = z
           .map((item) => item.trim())
           .filter(Boolean),
       ),
-  );
+  )
 
 const csvIntegers = z
   .string()
   .optional()
   .transform((value, context) => {
-    const values = new Set<number>();
+    const values = new Set<number>()
     for (const item of (value ?? "").split(",")) {
-      const normalized = item.trim();
-      if (!normalized) continue;
-      const parsed = Number(normalized);
+      const normalized = item.trim()
+      if (!normalized) continue
+      const parsed = Number(normalized)
       if (!Number.isSafeInteger(parsed)) {
-        context.addIssue({ code: "custom", message: `Expected an integer, received ${JSON.stringify(normalized)}` });
-        return z.NEVER;
+        context.addIssue({
+          code: "custom",
+          message: `Expected an integer, received ${JSON.stringify(normalized)}`,
+        })
+        return z.NEVER
       }
-      values.add(parsed);
+      values.add(parsed)
     }
-    return values;
-  });
+    return values
+  })
 
 const environmentSchema = z.object({
   BOT_TOKEN: z.string().default(""),
@@ -91,7 +94,7 @@ const environmentSchema = z.object({
           .split(",")
           .map((item) => item.trim().toLowerCase())
           .filter(Boolean),
-      );
+      )
     }),
   BOT_EVENTS_ENABLED: booleanFromEnvironment(false),
   BOT_EVENTS_DIR: z.string().default(".events"),
@@ -138,50 +141,53 @@ const environmentSchema = z.object({
   OPENAI_BASE_URL: z.url().default("https://api.openai.com/v1"),
   OPENAI_API_KEY: optionalString,
   OPENAI_MODEL: z.string().min(1).default("gpt-5.6-luna"),
-});
+})
 
 export interface Settings {
-  projectRoot: string;
-  botToken: string;
-  botWhitelist: ReadonlySet<number>;
-  botMaxConsecutiveRepliesToBots: number;
-  botGroupPassiveContextEnabled: boolean;
-  botSkillsDir: string;
-  botEnabledSkills: ReadonlySet<string>;
-  botSkillAdmins: ReadonlySet<number>;
-  botSoulPath: string;
-  botSoulRequired: boolean;
-  botSoulMaxChars: number;
-  botProactiveEnabled: boolean;
-  botProactiveUrlTimeoutSeconds: number;
-  botKabigonTimeoutSeconds: number;
-  botProactiveMaxExtractedChars: number;
-  botProactiveAllowedSchemes: ReadonlySet<string>;
-  botSessionLogDir: string;
-  botAgentMaxAttempts: number;
-  botAgentRetryBaseDelaySeconds: number;
-  botAgentContextTokenBudget: number;
-  botAgentCompactionTriggerRatio: number;
-  botImageInputEnabled: boolean;
-  botImageMaxBytes: number;
-  botContainerToolsEnabled: boolean;
-  botContainerToolsRoot: string;
-  morselUrl: string;
-  morselApiKey?: string;
-  morselMode: "disabled" | "rich_only" | "smart";
-  morselLongReplyThreshold: number;
-  morselShareExpiresInSeconds: number;
-  morselTelegramInstantView: boolean;
-  morselTelegramInstantViewRhash?: string;
-  morselTimeoutSeconds: number;
-  openaiBaseUrl: string;
-  openaiApiKey?: string;
-  openaiModel: string;
+  projectRoot: string
+  botToken: string
+  botWhitelist: ReadonlySet<number>
+  botMaxConsecutiveRepliesToBots: number
+  botGroupPassiveContextEnabled: boolean
+  botSkillsDir: string
+  botEnabledSkills: ReadonlySet<string>
+  botSkillAdmins: ReadonlySet<number>
+  botSoulPath: string
+  botSoulRequired: boolean
+  botSoulMaxChars: number
+  botProactiveEnabled: boolean
+  botProactiveUrlTimeoutSeconds: number
+  botKabigonTimeoutSeconds: number
+  botProactiveMaxExtractedChars: number
+  botProactiveAllowedSchemes: ReadonlySet<string>
+  botSessionLogDir: string
+  botAgentMaxAttempts: number
+  botAgentRetryBaseDelaySeconds: number
+  botAgentContextTokenBudget: number
+  botAgentCompactionTriggerRatio: number
+  botImageInputEnabled: boolean
+  botImageMaxBytes: number
+  botContainerToolsEnabled: boolean
+  botContainerToolsRoot: string
+  morselUrl: string
+  morselApiKey?: string
+  morselMode: "disabled" | "rich_only" | "smart"
+  morselLongReplyThreshold: number
+  morselShareExpiresInSeconds: number
+  morselTelegramInstantView: boolean
+  morselTelegramInstantViewRhash?: string
+  morselTimeoutSeconds: number
+  openaiBaseUrl: string
+  openaiApiKey?: string
+  openaiModel: string
 }
 
-export function loadSettings(environment: NodeJS.ProcessEnv = process.env, projectRoot = process.cwd()): Settings {
-  const parsed = environmentSchema.parse(environment);
-  const root = path.resolve(projectRoot);
+export function loadSettings(
+  environment: NodeJS.ProcessEnv = process.env,
+  projectRoot = process.cwd(),
+): Settings {
+  const parsed = environmentSchema.parse(environment)
+  const root = path.resolve(projectRoot)
   return {
     projectRoot: root,
     botToken: parsed.BOT_TOKEN,
@@ -221,5 +227,5 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env, proje
     openaiBaseUrl: parsed.OPENAI_BASE_URL.replace(/\/$/, ""),
     ...(parsed.OPENAI_API_KEY ? { openaiApiKey: parsed.OPENAI_API_KEY } : {}),
     openaiModel: parsed.OPENAI_MODEL,
-  };
+  }
 }

@@ -1,12 +1,12 @@
-import { type RunnerHandle, run } from "@grammyjs/runner";
-import { Bot, type Context, GrammyError, HttpError } from "grammy";
-import type { UserFromGetMe } from "grammy/types";
+import { type RunnerHandle, run } from "@grammyjs/runner"
+import { Bot, type Context, GrammyError, HttpError } from "grammy"
+import type { UserFromGetMe } from "grammy/types"
 
-import type { ChatSessionRegistry } from "../agent/session-registry.js";
-import type { Settings } from "../config/settings.js";
-import type { Logger } from "../logging.js";
-import { createMorselPublisher, type MorselPublisher } from "../morsel.js";
-import { downloadTelegramImage, TelegramDownloadTooLargeError } from "./files.js";
+import type { ChatSessionRegistry } from "../agent/session-registry.js"
+import type { Settings } from "../config/settings.js"
+import type { Logger } from "../logging.js"
+import { createMorselPublisher, type MorselPublisher } from "../morsel.js"
+import { downloadTelegramImage, TelegramDownloadTooLargeError } from "./files.js"
 import {
   defaultImagePrompt,
   imageReferences,
@@ -16,22 +16,22 @@ import {
   promptWithReplyContext,
   stripBotMention,
   type TelegramMessageLike,
-} from "./messages.js";
-import { sanitizeTelegramText, telegramHtmlChunks } from "./rendering.js";
+} from "./messages.js"
+import { sanitizeTelegramText, telegramHtmlChunks } from "./rendering.js"
 
 export interface TelegramAgentBot {
-  bot: Bot;
-  start(): Promise<void>;
-  stop(): Promise<void>;
+  bot: Bot
+  start(): Promise<void>
+  stop(): Promise<void>
 }
 
 interface TelegramBotDependencies {
-  botInfo?: UserFromGetMe;
-  imageFetchImplementation?: typeof fetch;
-  morselPublisher?: Pick<MorselPublisher, "isConfigured" | "publish">;
+  botInfo?: UserFromGetMe
+  imageFetchImplementation?: typeof fetch
+  morselPublisher?: Pick<MorselPublisher, "isConfigured" | "publish">
 }
 
-const updateConcurrency = 16;
+const updateConcurrency = 16
 
 export function createTelegramAgentBot(
   settings: Settings,
@@ -39,21 +39,24 @@ export function createTelegramAgentBot(
   logger: Logger,
   dependencies: TelegramBotDependencies = {},
 ): TelegramAgentBot {
-  const bot = new Bot(settings.botToken, dependencies.botInfo ? { botInfo: dependencies.botInfo } : {});
-  const botReplyStreaks = new Map<number, number>();
-  const submissionTails = new Map<number, Promise<void>>();
-  const submissionGenerations = new Map<number, number>();
-  let runner: RunnerHandle | undefined;
-  const morselPublisher = dependencies.morselPublisher ?? createMorselPublisher(settings);
+  const bot = new Bot(
+    settings.botToken,
+    dependencies.botInfo ? { botInfo: dependencies.botInfo } : {},
+  )
+  const botReplyStreaks = new Map<number, number>()
+  const submissionTails = new Map<number, Promise<void>>()
+  const submissionGenerations = new Map<number, number>()
+  let runner: RunnerHandle | undefined
+  const morselPublisher = dependencies.morselPublisher ?? createMorselPublisher(settings)
 
   bot.use(async (context, next) => {
-    if (!isAllowed(context, settings.botWhitelist)) return;
-    await next();
-  });
+    if (!isAllowed(context, settings.botWhitelist)) return
+    await next()
+  })
 
   bot.command("start", async (context) => {
-    await context.reply("你好！我是由 Pi agent 驅動的 Telegram AI 助理。使用 /help 查看可用指令。");
-  });
+    await context.reply("你好！我是由 Pi agent 驅動的 Telegram AI 助理。使用 /help 查看可用指令。")
+  })
   bot.command("help", async (context) => {
     await context.reply(
       [
@@ -62,68 +65,78 @@ export function createTelegramAgentBot(
         "/cancel — 取消目前執行並清除 steering/follow-up queue",
         "/id — 顯示 chat ID 與 user ID",
       ].join("\n"),
-    );
-  });
+    )
+  })
   bot.command("id", async (context) => {
-    await context.reply(`chat_id=${context.chat.id}\nuser_id=${context.from?.id ?? "unknown"}`);
-  });
+    await context.reply(`chat_id=${context.chat.id}\nuser_id=${context.from?.id ?? "unknown"}`)
+  })
   bot.command("reset", async (context) => {
-    const finishReset = invalidateSubmissionOrder(context.chat.id);
+    const finishReset = invalidateSubmissionOrder(context.chat.id)
     try {
-      await sessions.reset(context.chat.id);
+      await sessions.reset(context.chat.id)
     } finally {
-      finishReset();
+      finishReset()
     }
-    await context.reply("已清除這個對話的 Pi session。", replyOptions(context));
-  });
+    await context.reply("已清除這個對話的 Pi session。", replyOptions(context))
+  })
   bot.command("cancel", async (context) => {
-    const cancelled = await sessions.cancel(context.chat.id);
-    await context.reply(cancelled ? "已取消目前任務。" : "目前沒有執行中的任務。", replyOptions(context));
-  });
+    const cancelled = await sessions.cancel(context.chat.id)
+    await context.reply(
+      cancelled ? "已取消目前任務。" : "目前沒有執行中的任務。",
+      replyOptions(context),
+    )
+  })
   bot.command("ask", async (context) => {
-    const prompt = context.match.trim();
+    const prompt = context.match.trim()
     if (!prompt) {
-      await context.reply("請使用 /ask <問題>。", replyOptions(context));
-      return;
+      await context.reply("請使用 /ask <問題>。", replyOptions(context))
+      return
     }
-    await inSubmissionOrder(context.chat.id, (release, isCurrent) => answer(context, prompt, [], release, isCurrent));
-  });
+    await inSubmissionOrder(context.chat.id, (release, isCurrent) =>
+      answer(context, prompt, [], release, isCurrent),
+    )
+  })
 
   bot.on("message", async (context) => {
-    const message = context.message as unknown as TelegramMessageLike;
-    const chatType = context.chat.type;
-    const privateChat = chatType === "private";
-    const fromBot = context.from?.is_bot === true;
+    const message = context.message as unknown as TelegramMessageLike
+    const chatType = context.chat.type
+    const privateChat = chatType === "private"
+    const fromBot = context.from?.is_bot === true
 
     if (fromBot) {
-      const streak = botReplyStreaks.get(context.chat.id) ?? 0;
-      if (settings.botMaxConsecutiveRepliesToBots === 0 || streak >= settings.botMaxConsecutiveRepliesToBots) return;
+      const streak = botReplyStreaks.get(context.chat.id) ?? 0
+      if (
+        settings.botMaxConsecutiveRepliesToBots === 0 ||
+        streak >= settings.botMaxConsecutiveRepliesToBots
+      )
+        return
     } else {
-      botReplyStreaks.delete(context.chat.id);
+      botReplyStreaks.delete(context.chat.id)
     }
 
-    const addressed = privateChat || isBotAddressed(message, context.me.id, context.me.username);
+    const addressed = privateChat || isBotAddressed(message, context.me.id, context.me.username)
     if (!addressed) {
       if (settings.botGroupPassiveContextEnabled) {
         await inSubmissionOrder(context.chat.id, async () => {
-          await sessions.appendPassiveContext(context.chat.id, passiveGroupContext(message));
-        });
+          await sessions.appendPassiveContext(context.chat.id, passiveGroupContext(message))
+        })
       }
-      return;
+      return
     }
 
-    if (fromBot) botReplyStreaks.set(context.chat.id, (botReplyStreaks.get(context.chat.id) ?? 0) + 1);
+    if (fromBot)
+      botReplyStreaks.set(context.chat.id, (botReplyStreaks.get(context.chat.id) ?? 0) + 1)
     await inSubmissionOrder(context.chat.id, async (release, isCurrent) => {
       const strippedText = privateChat
         ? messageText(message).trim()
-        : stripBotMention(messageText(message), context.me.username);
-      const references = imageReferences(message);
+        : stripBotMention(messageText(message), context.me.username)
+      const references = imageReferences(message)
       if (references.length > 0 && !settings.botImageInputEnabled) {
-        await context.reply("目前未啟用圖片輸入。", replyOptions(context));
-        return;
+        await context.reply("目前未啟用圖片輸入。", replyOptions(context))
+        return
       }
 
-      let images: Array<{ type: "image"; data: string; mimeType: string }>;
+      let images: Array<{ type: "image"; data: string; mimeType: string }>
       try {
         images = await Promise.all(
           references.map((reference) =>
@@ -135,34 +148,43 @@ export function createTelegramAgentBot(
               dependencies.imageFetchImplementation,
             ),
           ),
-        );
+        )
       } catch (error) {
         const message =
           error instanceof TelegramDownloadTooLargeError
             ? "圖片超過允許的大小，無法處理。"
-            : "無法下載 Telegram 圖片，請稍後再試。";
-        logger.warn(`Telegram image input failed for chat_id=${context.chat.id}`, error);
-        await context.reply(message, replyOptions(context));
-        return;
+            : "無法下載 Telegram 圖片，請稍後再試。"
+        logger.warn(`Telegram image input failed for chat_id=${context.chat.id}`, error)
+        await context.reply(message, replyOptions(context))
+        return
       }
 
-      if (!isCurrent()) return;
-      const basePrompt = strippedText || (images.length > 0 ? defaultImagePrompt : "請回應這則訊息。");
-      await answer(context, promptWithReplyContext(message, basePrompt), images, release, isCurrent);
-    });
-  });
+      if (!isCurrent()) return
+      const basePrompt =
+        strippedText || (images.length > 0 ? defaultImagePrompt : "請回應這則訊息。")
+      await answer(context, promptWithReplyContext(message, basePrompt), images, release, isCurrent)
+    })
+  })
 
   bot.catch((error) => {
-    const context = error.ctx;
-    const cause = error.error;
+    const context = error.ctx
+    const cause = error.error
     if (cause instanceof GrammyError) {
-      logger.error(`Telegram API error while handling update_id=${context.update.update_id}: ${cause.description}`);
+      logger.error(
+        `Telegram API error while handling update_id=${context.update.update_id}: ${cause.description}`,
+      )
     } else if (cause instanceof HttpError) {
-      logger.error(`Telegram transport error while handling update_id=${context.update.update_id}`, cause);
+      logger.error(
+        `Telegram transport error while handling update_id=${context.update.update_id}`,
+        cause,
+      )
     } else {
-      logger.error(`Unhandled bot error while handling update_id=${context.update.update_id}`, cause);
+      logger.error(
+        `Unhandled bot error while handling update_id=${context.update.update_id}`,
+        cause,
+      )
     }
-  });
+  })
 
   async function answer(
     context: Context,
@@ -171,55 +193,71 @@ export function createTelegramAgentBot(
     releaseSubmissionTurn: () => void,
     isCurrent: () => boolean,
   ): Promise<void> {
-    if (!isCurrent()) return;
-    const sourceMessageId = context.message?.message_id;
+    if (!isCurrent()) return
+    const sourceMessageId = context.message?.message_id
     const status = await context.reply(
       "處理中…",
       sourceMessageId ? { reply_parameters: { message_id: sourceMessageId } } : {},
-    );
+    )
     const cancelStatus = async () => {
-      await editStatusWithChunks(context, status.chat.id, status.message_id, "此請求已因重設對話而取消。");
-    };
+      await editStatusWithChunks(
+        context,
+        status.chat.id,
+        status.message_id,
+        "此請求已因重設對話而取消。",
+      )
+    }
     if (!isCurrent()) {
-      await cancelStatus();
-      return;
+      await cancelStatus()
+      return
     }
     try {
       const result = await sessions.submit(context.chat?.id ?? status.chat.id, prompt, {
         images,
         onAccepted: releaseSubmissionTurn,
-      });
+      })
       if (!isCurrent()) {
-        await cancelStatus();
-        return;
+        await cancelStatus()
+        return
       }
-      let outboundText = result.text;
-      const sanitized = sanitizeTelegramText(outboundText);
+      let outboundText = result.text
+      const sanitized = sanitizeTelegramText(outboundText)
       if (
         settings.morselMode === "smart" &&
         morselPublisher.isConfigured &&
         sanitized.length > settings.morselLongReplyThreshold
       ) {
         try {
-          const shareUrl = await morselPublisher.publish(sanitized);
-          outboundText = `完整回覆已發布至 Morsel（${sanitized.length.toLocaleString("zh-TW")} 字）：\n${shareUrl}`;
+          const shareUrl = await morselPublisher.publish(sanitized)
+          outboundText = `完整回覆已發布至 Morsel（${sanitized.length.toLocaleString("zh-TW")} 字）：\n${shareUrl}`
         } catch (error) {
-          logger.warn(`Morsel long-reply publication failed for chat_id=${status.chat.id}; falling back`, error);
+          logger.warn(
+            `Morsel long-reply publication failed for chat_id=${status.chat.id}; falling back`,
+            error,
+          )
         }
       }
       if (!isCurrent()) {
-        await cancelStatus();
-        return;
+        await cancelStatus()
+        return
       }
-      if (!(await editStatusWithChunks(context, status.chat.id, status.message_id, outboundText, isCurrent))) {
-        await cancelStatus();
+      if (
+        !(await editStatusWithChunks(
+          context,
+          status.chat.id,
+          status.message_id,
+          outboundText,
+          isCurrent,
+        ))
+      ) {
+        await cancelStatus()
       }
     } catch (error) {
       if (!isCurrent()) {
-        await cancelStatus();
-        return;
+        await cancelStatus()
+        return
       }
-      logger.error(`Pi agent request failed for chat_id=${status.chat.id}`, error);
+      logger.error(`Pi agent request failed for chat_id=${status.chat.id}`, error)
       if (
         !(await editStatusWithChunks(
           context,
@@ -229,7 +267,7 @@ export function createTelegramAgentBot(
           isCurrent,
         ))
       ) {
-        await cancelStatus();
+        await cancelStatus()
       }
     }
   }
@@ -238,65 +276,68 @@ export function createTelegramAgentBot(
     chatId: number,
     task: (release: () => void, isCurrent: () => boolean) => Promise<void>,
   ): Promise<void> {
-    const generation = submissionGenerations.get(chatId) ?? 0;
-    const previous = submissionTails.get(chatId) ?? Promise.resolve();
-    const { gate, release } = submissionGate(chatId, previous);
-    submissionTails.set(chatId, gate);
-    await previous;
+    const generation = submissionGenerations.get(chatId) ?? 0
+    const previous = submissionTails.get(chatId) ?? Promise.resolve()
+    const { gate, release } = submissionGate(chatId, previous)
+    submissionTails.set(chatId, gate)
+    await previous
 
     try {
-      if (isCurrent()) await task(release, isCurrent);
+      if (isCurrent()) await task(release, isCurrent)
     } finally {
-      release();
+      release()
     }
 
     function isCurrent(): boolean {
-      return (submissionGenerations.get(chatId) ?? 0) === generation;
+      return (submissionGenerations.get(chatId) ?? 0) === generation
     }
   }
 
   function invalidateSubmissionOrder(chatId: number): () => void {
-    submissionGenerations.set(chatId, (submissionGenerations.get(chatId) ?? 0) + 1);
-    const { gate, release } = submissionGate(chatId, Promise.resolve());
-    submissionTails.set(chatId, gate);
-    return release;
+    submissionGenerations.set(chatId, (submissionGenerations.get(chatId) ?? 0) + 1)
+    const { gate, release } = submissionGate(chatId, Promise.resolve())
+    submissionTails.set(chatId, gate)
+    return release
   }
 
-  function submissionGate(chatId: number, previous: Promise<void>): { gate: Promise<void>; release: () => void } {
-    let openGate = () => {};
+  function submissionGate(
+    chatId: number,
+    previous: Promise<void>,
+  ): { gate: Promise<void>; release: () => void } {
+    let openGate = () => {}
     const next = new Promise<void>((resolve) => {
-      openGate = resolve;
-    });
-    const gate = previous.then(() => next);
-    let released = false;
+      openGate = resolve
+    })
+    const gate = previous.then(() => next)
+    let released = false
     return {
       gate,
       release() {
-        if (released) return;
-        released = true;
-        openGate();
-        if (submissionTails.get(chatId) === gate) submissionTails.delete(chatId);
+        if (released) return
+        released = true
+        openGate()
+        if (submissionTails.get(chatId) === gate) submissionTails.delete(chatId)
       },
-    };
+    }
   }
 
   return {
     bot,
     async start() {
-      await bot.init();
-      logger.info(`Telegram bot started as @${bot.botInfo.username}`);
+      await bot.init()
+      logger.info(`Telegram bot started as @${bot.botInfo.username}`)
       runner = run(bot, {
         runner: { fetch: { allowed_updates: ["message"] } },
         sink: { concurrency: updateConcurrency },
-      });
-      await runner.task();
+      })
+      await runner.task()
     },
     async stop() {
-      if (!runner) return;
-      await runner.stop();
-      runner = undefined;
+      if (!runner) return
+      await runner.stop()
+      runner = undefined
     },
-  };
+  }
 }
 
 async function editStatusWithChunks(
@@ -306,27 +347,27 @@ async function editStatusWithChunks(
   text: string,
   isCurrent: () => boolean = () => true,
 ): Promise<boolean> {
-  const [first = " ", ...rest] = telegramHtmlChunks(text);
-  const continuationMessageIds: number[] = [];
-  if (!isCurrent()) return false;
-  await context.api.editMessageText(chatId, messageId, first, { parse_mode: "HTML" });
-  let replyTo = messageId;
+  const [first = " ", ...rest] = telegramHtmlChunks(text)
+  const continuationMessageIds: number[] = []
+  if (!isCurrent()) return false
+  await context.api.editMessageText(chatId, messageId, first, { parse_mode: "HTML" })
+  let replyTo = messageId
   for (const chunk of rest) {
-    if (!isCurrent()) return false;
+    if (!isCurrent()) return false
     const sent = await context.api.sendMessage(chatId, chunk, {
       parse_mode: "HTML",
       reply_parameters: { message_id: replyTo },
-    });
-    continuationMessageIds.push(sent.message_id);
+    })
+    continuationMessageIds.push(sent.message_id)
     if (!isCurrent()) {
       for (const continuationMessageId of continuationMessageIds) {
-        await context.api.deleteMessage(chatId, continuationMessageId);
+        await context.api.deleteMessage(chatId, continuationMessageId)
       }
-      return false;
+      return false
     }
-    replyTo = sent.message_id;
+    replyTo = sent.message_id
   }
-  return isCurrent();
+  return isCurrent()
 }
 
 function isAllowed(context: Context, whitelist: ReadonlySet<number>): boolean {
@@ -334,9 +375,11 @@ function isAllowed(context: Context, whitelist: ReadonlySet<number>): boolean {
     whitelist.size === 0 ||
     whitelist.has(context.chat?.id ?? Number.NaN) ||
     whitelist.has(context.from?.id ?? Number.NaN)
-  );
+  )
 }
 
-function replyOptions(context: Context): { reply_parameters: { message_id: number } } | Record<string, never> {
-  return context.message ? { reply_parameters: { message_id: context.message.message_id } } : {};
+function replyOptions(
+  context: Context,
+): { reply_parameters: { message_id: number } } | Record<string, never> {
+  return context.message ? { reply_parameters: { message_id: context.message.message_id } } : {}
 }

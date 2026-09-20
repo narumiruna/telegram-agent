@@ -1,13 +1,22 @@
-export { availableLoaders, explainPlan, loadUrl, loadUrlDetailed } from "./api.js";
-export { KabigonClient, type KabigonClientOptions } from "./client.js";
-export * from "./core/errors.js";
+export { availableLoaders, explainPlan, loadUrl, loadUrlDetailed } from "./api.js"
+export { KabigonClient, type KabigonClientOptions } from "./client.js"
 export {
+  ConfigurationError,
+  FirecrawlApiKeyNotSetError,
   FirecrawlApiKeyNotSetError as FirecrawlAPIKeyNotSetError,
+  InvalidUrlError,
   InvalidUrlError as InvalidURLError,
-} from "./core/errors.js";
-export type { Loader, LoaderFactory } from "./core/loader.js";
-export type { AttemptRecord, AttemptStatus, LoadResult } from "./core/results.js";
-export { attemptRecordToObject, loadResultToObject } from "./core/results.js";
+  KabigonError,
+  LoaderContentError,
+  LoaderError,
+  LoaderNotApplicableError,
+  LoaderTimeoutError,
+  MissingDependencyError,
+  MissingRequirementError,
+} from "./core/errors.js"
+export type { Loader, LoaderFactory } from "./core/loader.js"
+export type { AttemptRecord, AttemptStatus, LoadResult } from "./core/results.js"
+export { attemptRecordToObject, loadResultToObject } from "./core/results.js"
 export {
   DEFAULT_FALLBACK_LOADERS,
   explainLoadChain,
@@ -15,7 +24,7 @@ export {
   LoadChainExplanation,
   resolveExplicitLoadChain,
   resolveLoadChain,
-} from "./load-chain.js";
+} from "./load-chain.js"
 export {
   createLoader,
   getLoaderContentType,
@@ -26,6 +35,65 @@ export {
   type LoaderDef,
   listLoaderDefs,
   listLoaderNames,
-} from "./loader-registry.js";
-export * from "./pipelines/catalog.js";
-export * from "./sources/applicability.js";
+} from "./loader-registry.js"
+export type { Pipeline, PipelinePlan } from "./pipelines/catalog.js"
+export {
+  ContentContract,
+  ContentType,
+  GENERIC_HTML_LOADERS,
+  listPipelines,
+  matchPipeline,
+  planForUrl,
+} from "./pipelines/catalog.js"
+export type {
+  GitHubTarget,
+  PiSessionTarget,
+  TwitterTarget,
+  YouTubeVideoTarget,
+} from "./sources/applicability.js"
+export {
+  BBC_DOMAIN_SUFFIX,
+  CNN_DOMAIN_SUFFIX,
+  isBbcUrl,
+  isCnnUrl,
+  isGitHubUrl,
+  isLtnUrl,
+  isOpenAiWebUrl,
+  isPdfTarget,
+  isPiSessionUrl,
+  isPttUrl,
+  isRedditUrl,
+  isReelUrl,
+  isTruthSocialUrl,
+  isTwitterStatusUrl,
+  isTwitterUrl,
+  isYouTubeVideoUrl,
+  LTN_DOMAIN_SUFFIX,
+  NoVideoIdFoundError,
+  OPENAI_WEB_HOSTS,
+  PI_SESSION_HOST,
+  PI_SESSION_PATH,
+  PTT_HOSTS,
+  parseBbcTarget,
+  parseCnnTarget,
+  parseGitHubRawContentTarget,
+  parseGitHubTarget,
+  parseLtnTarget,
+  parsePdfTarget,
+  parsePiSessionTarget,
+  parsePttTarget,
+  parseRedditTarget,
+  parseReelTarget,
+  parseTruthSocialTarget,
+  parseTwitterTarget,
+  parseYouTubeVideoTarget,
+  RAW_GITHUB_HOST,
+  REDDIT_DOMAINS,
+  REEL_PREFIX,
+  requireLoaderApplicability,
+  TRUTHSOCIAL_DOMAINS,
+  TWITTER_DOMAINS,
+  UnsupportedUrlHostError,
+  UnsupportedUrlSchemeError,
+  VideoIdError,
+} from "./sources/applicability.js"

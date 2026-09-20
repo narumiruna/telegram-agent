@@ -1,5 +1,5 @@
 export interface Loader {
-  load(url: string, signal?: AbortSignal): Promise<string>;
+  load(url: string, signal?: AbortSignal): Promise<string>
 }
 
-export type LoaderFactory = () => Loader | Promise<Loader>;
+export type LoaderFactory = () => Loader | Promise<Loader>

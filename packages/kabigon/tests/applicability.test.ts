@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest"
 
-import { LoaderNotApplicableError } from "../src/core/errors.js";
-import { planForUrl } from "../src/pipelines/catalog.js";
+import { LoaderNotApplicableError } from "../src/core/errors.js"
+import { planForUrl } from "../src/pipelines/catalog.js"
 import {
   isBbcUrl,
   isCnnUrl,
@@ -21,9 +21,9 @@ import {
   parseTwitterTarget,
   parseYouTubeVideoTarget,
   requireLoaderApplicability,
-} from "../src/sources/applicability.js";
+} from "../src/sources/applicability.js"
 
-const supported: Array<[string, (url: string) => boolean]> = [
+const supported: [string, (url: string) => boolean][] = [
   ["https://www.ptt.cc/bbs/Gossiping/M.1746078381.A.FFC.html", isPttUrl],
   ["https://x.com/howie_serious/status/1917768568135115147", isTwitterUrl],
   ["https://truthsocial.com/@realDonaldTrump/posts/115830428767897167", isTruthSocialUrl],
@@ -39,48 +39,54 @@ const supported: Array<[string, (url: string) => boolean]> = [
   ["/tmp/demo.pdf", isPdfTarget],
   ["C:\\docs\\demo.pdf", isPdfTarget],
   ["https://arxiv.org/pdf/2603.20617", isPdfTarget],
-];
+]
 
 describe("source applicability", () => {
-  it.each(supported)("accepts %s", (url, matcher) => expect(matcher(url)).toBe(true));
+  it.each(supported)("accepts %s", (url, matcher) => expect(matcher(url)).toBe(true))
 
   it.each(supported.map(([, matcher]) => matcher))("rejects unknown targets", (matcher) => {
-    expect(matcher("https://example.com/not-supported")).toBe(false);
-  });
+    expect(matcher("https://example.com/not-supported")).toBe(false)
+  })
 
   it("parses source-specific targets", () => {
-    expect(parseYouTubeVideoTarget("https://youtu.be/dQw4w9WgXcQ").videoId).toBe("dQw4w9WgXcQ");
+    expect(parseYouTubeVideoTarget("https://youtu.be/dQw4w9WgXcQ").videoId).toBe("dQw4w9WgXcQ")
     expect(parseGitHubRawContentTarget("https://github.com/a/b/blob/main/README.md").rawUrl).toBe(
       "https://github.com/a/b/blob/main/README.md?raw=1",
-    );
-    expect(parseGitHubRawContentTarget("https://github.com/a/b/blob/feature/foo/README.md").rawUrl).toBe(
-      "https://github.com/a/b/blob/feature/foo/README.md?raw=1",
-    );
+    )
+    expect(
+      parseGitHubRawContentTarget("https://github.com/a/b/blob/feature/foo/README.md").rawUrl,
+    ).toBe("https://github.com/a/b/blob/feature/foo/README.md?raw=1")
     expect(parseTwitterTarget("https://fxtwitter.com/user/status/1")).toMatchObject({
       normalizedUrl: "https://x.com/user/status/1",
       statusId: "1",
-    });
-    expect(parsePiSessionTarget("https://pi.dev/session/#abc123/custom%20session.html&leafId=leaf-1")).toMatchObject({
+    })
+    expect(
+      parsePiSessionTarget("https://pi.dev/session/#abc123/custom%20session.html&leafId=leaf-1"),
+    ).toMatchObject({
       gistId: "abc123",
       fileName: "custom session.html",
       leafId: "leaf-1",
-    });
-  });
+    })
+  })
 
   it("rejects playlists, PTT listings, and unsupported PDF schemes", () => {
-    expect(isYouTubeVideoUrl("https://www.youtube.com/playlist?list=PL123")).toBe(false);
-    expect(isPttUrl("https://www.ptt.cc/")).toBe(false);
-    expect(isPttUrl("https://www.ptt.cc/bbs/Gossiping/index.html")).toBe(false);
-    expect(isPdfTarget("ftp://example.com/document.pdf")).toBe(false);
-    expect(isPdfTarget("not-a-valid-url")).toBe(false);
-  });
+    expect(isYouTubeVideoUrl("https://www.youtube.com/playlist?list=PL123")).toBe(false)
+    expect(isPttUrl("https://www.ptt.cc/")).toBe(false)
+    expect(isPttUrl("https://www.ptt.cc/bbs/Gossiping/index.html")).toBe(false)
+    expect(isPdfTarget("ftp://example.com/document.pdf")).toBe(false)
+    expect(isPdfTarget("not-a-valid-url")).toBe(false)
+  })
 
   it("normalizes parser failures to loader applicability errors", () => {
     expect(() =>
-      requireLoaderApplicability("YouTubeLoader", "https://example.com/watch?v=dQw4w9WgXcQ", parseYouTubeVideoTarget),
-    ).toThrow(LoaderNotApplicableError);
-  });
-});
+      requireLoaderApplicability(
+        "YouTubeLoader",
+        "https://example.com/watch?v=dQw4w9WgXcQ",
+        parseYouTubeVideoTarget,
+      ),
+    ).toThrow(LoaderNotApplicableError)
+  })
+})
 
 describe("pipeline planning", () => {
   it("keeps strict YouTube plans source-specific", () => {
@@ -89,17 +95,17 @@ describe("pipeline planning", () => {
       contentType: "youtube_video",
       executionPlan: ["youtube", "youtube-ytdlp"],
       fallbackLoaders: [],
-    });
-  });
+    })
+  })
 
   it("uses the generic transport order for ordinary pages and source homepages", () => {
-    const genericOrder = ["curl-cffi", "playwright-networkidle", "playwright-fast", "httpx"];
-    expect(planForUrl("https://example.com").executionPlan).toEqual(genericOrder);
-    expect(isLtnUrl("https://www.ltn.com.tw/")).toBe(false);
-    expect(planForUrl("https://www.ltn.com.tw/").executionPlan).toEqual(genericOrder);
-  });
+    const genericOrder = ["curl-cffi", "playwright-networkidle", "playwright-fast", "httpx"]
+    expect(planForUrl("https://example.com").executionPlan).toEqual(genericOrder)
+    expect(isLtnUrl("https://www.ltn.com.tw/")).toBe(false)
+    expect(planForUrl("https://www.ltn.com.tw/").executionPlan).toEqual(genericOrder)
+  })
 
   it("gives GitHub blob precedence over its PDF suffix", () => {
-    expect(planForUrl("https://github.com/a/b/blob/main/file.pdf").pipelineName).toBe("github");
-  });
-});
+    expect(planForUrl("https://github.com/a/b/blob/main/file.pdf").pipelineName).toBe("github")
+  })
+})

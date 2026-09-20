@@ -1,9 +1,9 @@
-import type { AttemptRecord } from "./results.js";
+import type { AttemptRecord } from "./results.js"
 
 export class KabigonError extends Error {
   constructor(message: string) {
-    super(message);
-    this.name = new.target.name;
+    super(message)
+    this.name = new.target.name
   }
 }
 
@@ -13,8 +13,9 @@ export class LoaderError extends KabigonError {
     public readonly details: readonly string[] = [],
     public readonly attempts: readonly AttemptRecord[] = [],
   ) {
-    const attempted = details.length > 0 ? `\n\nAttempted loaders:\n  - ${details.join("\n  - ")}` : "";
-    super(`Failed to load URL: ${url}${attempted}`);
+    const attempted =
+      details.length > 0 ? `\n\nAttempted loaders:\n  - ${details.join("\n  - ")}` : ""
+    super(`Failed to load URL: ${url}${attempted}`)
   }
 }
 
@@ -23,7 +24,7 @@ export class InvalidUrlError extends KabigonError {
     public readonly url: string,
     public readonly expected: string,
   ) {
-    super(`URL is not a ${expected} URL: ${url}`);
+    super(`URL is not a ${expected} URL: ${url}`)
   }
 }
 
@@ -31,13 +32,13 @@ export class ConfigurationError extends KabigonError {}
 
 export class MissingRequirementError extends ConfigurationError {
   constructor(public readonly requirements: readonly string[]) {
-    super(`Missing required environment variable(s): ${requirements.join(", ")}`);
+    super(`Missing required environment variable(s): ${requirements.join(", ")}`)
   }
 }
 
 export class FirecrawlApiKeyNotSetError extends ConfigurationError {
   constructor() {
-    super("FIRECRAWL_API_KEY is not set.");
+    super("FIRECRAWL_API_KEY is not set.")
   }
 }
 
@@ -47,7 +48,7 @@ export class MissingDependencyError extends KabigonError {
     public readonly dependency: string,
     public readonly hint: string,
   ) {
-    super(`Loader ${JSON.stringify(loaderName)} requires ${JSON.stringify(dependency)}. ${hint}`);
+    super(`Loader ${JSON.stringify(loaderName)} requires ${JSON.stringify(dependency)}. ${hint}`)
   }
 }
 
@@ -57,7 +58,7 @@ export class LoaderNotApplicableError extends KabigonError {
     public readonly url: string,
     public readonly reason?: string,
   ) {
-    super(`${loaderName} cannot handle URL: ${url}${reason ? ` - ${reason}` : ""}`);
+    super(`${loaderName} cannot handle URL: ${url}${reason ? ` - ${reason}` : ""}`)
   }
 }
 
@@ -68,7 +69,9 @@ export class LoaderTimeoutError extends KabigonError {
     public readonly timeoutSeconds: number,
     public readonly suggestion = "Try increasing the timeout or check your network connection.",
   ) {
-    super(`${loaderName} timed out after ${timeoutSeconds}s while loading: ${url}\nSuggestion: ${suggestion}`);
+    super(
+      `${loaderName} timed out after ${timeoutSeconds}s while loading: ${url}\nSuggestion: ${suggestion}`,
+    )
   }
 }
 
@@ -81,6 +84,6 @@ export class LoaderContentError extends KabigonError {
   ) {
     super(
       `${loaderName} failed to extract content from: ${url} - ${reason}${suggestion ? `\nSuggestion: ${suggestion}` : ""}`,
-    );
+    )
   }
 }
