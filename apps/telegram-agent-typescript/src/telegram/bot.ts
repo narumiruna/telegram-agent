@@ -307,6 +307,7 @@ async function editStatusWithChunks(
   isCurrent: () => boolean = () => true,
 ): Promise<boolean> {
   const [first = " ", ...rest] = telegramHtmlChunks(text);
+  const continuationMessageIds: number[] = [];
   if (!isCurrent()) return false;
   await context.api.editMessageText(chatId, messageId, first, { parse_mode: "HTML" });
   let replyTo = messageId;
@@ -316,8 +317,11 @@ async function editStatusWithChunks(
       parse_mode: "HTML",
       reply_parameters: { message_id: replyTo },
     });
+    continuationMessageIds.push(sent.message_id);
     if (!isCurrent()) {
-      await context.api.deleteMessage(chatId, sent.message_id);
+      for (const continuationMessageId of continuationMessageIds) {
+        await context.api.deleteMessage(chatId, continuationMessageId);
+      }
       return false;
     }
     replyTo = sent.message_id;

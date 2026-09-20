@@ -352,25 +352,26 @@ describe("Telegram bot update routing", () => {
     expect(calls[2]?.payload.text).toBe("此請求已因重設對話而取消。");
   });
 
-  it("stops sending reply chunks when reset changes the generation", async () => {
+  it("cleans up reply continuations when reset interrupts chunk delivery", async () => {
     let finishChunkDelivery: (() => void) | undefined;
     const pendingChunkDelivery = new Promise<void>((resolve) => {
       finishChunkDelivery = resolve;
     });
-    const staleChunk = "b".repeat(4_096);
+    const completedChunk = "b".repeat(4_096);
+    const inFlightChunk = "c".repeat(4_096);
     const sessions = createSessions({
       submit: vi.fn(async (_chatId, _prompt, options) => {
         options.onAccepted?.();
-        return { kind: "completed" as const, text: `${"a".repeat(4_096)}${staleChunk}c` };
+        return { kind: "completed" as const, text: `${"a".repeat(4_096)}${completedChunk}${inFlightChunk}d` };
       }),
     });
     const telegram = createTelegramAgentBot(loadSettings({ BOT_TOKEN: "test-token" }), sessions, logger, { botInfo });
     const calls = installApiMock(telegram.bot, async (method, payload) => {
-      if (method === "sendMessage" && payload.text === staleChunk) await pendingChunkDelivery;
+      if (method === "sendMessage" && payload.text === inFlightChunk) await pendingChunkDelivery;
     });
 
     const runningUpdate = telegram.bot.handleUpdate(privateMessage(16, "長回覆"));
-    await vi.waitFor(() => expect(calls.some((call) => call.payload.text === staleChunk)).toBe(true));
+    await vi.waitFor(() => expect(calls.some((call) => call.payload.text === inFlightChunk)).toBe(true));
     const resetUpdate = privateMessage(17, "/reset");
     if (resetUpdate.message) {
       resetUpdate.message.entities = [{ offset: 0, length: 6, type: "bot_command" }];
@@ -384,11 +385,15 @@ describe("Telegram bot update routing", () => {
       "editMessageText",
       "sendMessage",
       "sendMessage",
+      "sendMessage",
+      "deleteMessage",
       "deleteMessage",
       "editMessageText",
     ]);
-    expect(calls.some((call) => call.payload.text === "c")).toBe(false);
-    expect(calls.at(-2)?.payload.message_id).toBe(102);
+    expect(calls.some((call) => call.payload.text === "d")).toBe(false);
+    expect(calls.filter((call) => call.method === "deleteMessage").map((call) => call.payload.message_id)).toEqual([
+      101, 103,
+    ]);
     expect(calls.at(-1)?.payload.text).toBe("此請求已因重設對話而取消。");
   });
 
