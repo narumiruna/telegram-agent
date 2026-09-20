@@ -87,13 +87,11 @@ describe("pipeline planning", () => {
     });
   });
 
-  it("uses the generic transport order for ordinary pages", () => {
-    expect(planForUrl("https://example.com").executionPlan).toEqual([
-      "curl-cffi",
-      "playwright-networkidle",
-      "playwright-fast",
-      "httpx",
-    ]);
+  it("uses the generic transport order for ordinary pages and source homepages", () => {
+    const genericOrder = ["curl-cffi", "playwright-networkidle", "playwright-fast", "httpx"];
+    expect(planForUrl("https://example.com").executionPlan).toEqual(genericOrder);
+    expect(isLtnUrl("https://www.ltn.com.tw/")).toBe(false);
+    expect(planForUrl("https://www.ltn.com.tw/").executionPlan).toEqual(genericOrder);
   });
 
   it("gives GitHub blob precedence over its PDF suffix", () => {

@@ -277,10 +277,32 @@ function parseDomainTarget(url: string, loaderName: string, label: string, suffi
 
 export const parseBbcTarget = (url: string): string => parseDomainTarget(url, "BBCLoader", "BBC", BBC_DOMAIN_SUFFIX);
 export const parseCnnTarget = (url: string): string => parseDomainTarget(url, "CNNLoader", "CNN", CNN_DOMAIN_SUFFIX);
-export const parseLtnTarget = (url: string): string => parseDomainTarget(url, "LTNLoader", "LTN", LTN_DOMAIN_SUFFIX);
+export function parseLtnTarget(url: string): string {
+  if (!hostMatchesSuffix(url, LTN_DOMAIN_SUFFIX)) {
+    throw new LoaderNotApplicableError(
+      "LTNLoader",
+      url,
+      `Not an LTN URL. Expected domain ending with ${LTN_DOMAIN_SUFFIX}`,
+    );
+  }
+  const parts = new URL(url).pathname.split("/").filter(Boolean);
+  const finalPart = parts.at(-1) ?? "";
+  if (!parts.some((part) => part === "news" || part === "article") || !/^\d+$/u.test(finalPart)) {
+    throw new LoaderNotApplicableError("LTNLoader", url, "Not an LTN article URL");
+  }
+  return url;
+}
+
 export const isBbcUrl = (url: string): boolean => hostMatchesSuffix(url, BBC_DOMAIN_SUFFIX);
 export const isCnnUrl = (url: string): boolean => hostMatchesSuffix(url, CNN_DOMAIN_SUFFIX);
-export const isLtnUrl = (url: string): boolean => hostMatchesSuffix(url, LTN_DOMAIN_SUFFIX);
+export function isLtnUrl(url: string): boolean {
+  try {
+    parseLtnTarget(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
 export const isOpenAiWebUrl = (url: string): boolean => hostIn(url, OPENAI_WEB_HOSTS);
 
 export function parsePttTarget(url: string): string {

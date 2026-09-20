@@ -51,7 +51,7 @@ function definition(
 
 export const LOADER_DEFS: readonly LoaderDef[] = [
   definition(PTT, "Taiwan PTT forum posts", "social_post"),
-  definition(TWITTER, "Extracts Twitter/X post content", "social_post", { resourceKind: "browser" }),
+  definition(TWITTER, "Extracts Twitter/X post content", "social_post"),
   definition(TRUTHSOCIAL, "Extracts Truth Social posts", "social_post", { resourceKind: "browser" }),
   definition(REDDIT, "Extracts Reddit posts and comments", "social_post"),
   definition(YOUTUBE, "Extracts YouTube video transcripts", "youtube_video", { resourceKind: "worker" }),

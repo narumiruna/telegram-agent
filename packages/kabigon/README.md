@@ -84,6 +84,10 @@ Install Chromium for the browser and social loaders:
 npx playwright install chromium
 ```
 
+### Twitter/X
+
+The Twitter loader first requests the exact status from `api.fxtwitter.com` and verifies the returned status ID. It falls back to Playwright when that API is unavailable. This avoids returning X login or error pages when X blocks browser automation.
+
 ### Firecrawl
 
 Set `FIRECRAWL_API_KEY` for OpenAI web pages or explicit `firecrawl` loading:
