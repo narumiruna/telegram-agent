@@ -10,7 +10,7 @@ import {
 import { withDeadline } from "../src/core/execution.js";
 import type { Loader } from "../src/core/loader.js";
 import { AttemptStatus } from "../src/core/results.js";
-import { LoadChain, LoadChainExplanation, explainLoadChain, resolveExplicitLoadChain } from "../src/load-chain.js";
+import { explainLoadChain, LoadChain, LoadChainExplanation, resolveExplicitLoadChain } from "../src/load-chain.js";
 import { ContentContract, ContentType } from "../src/pipelines/catalog.js";
 
 const originalKey = process.env.FIRECRAWL_API_KEY;
@@ -134,6 +134,22 @@ describe("load chain", () => {
     });
     await expect(withDeadline(performance.now() + 10, () => chain.load())).rejects.toBeInstanceOf(LoaderError);
     expect(built).toEqual(["waiting"]);
+  });
+
+  it("races caller cancellation without a shared deadline", async () => {
+    class IgnoringLoader implements Loader {
+      async load(): Promise<string> {
+        return new Promise(() => undefined);
+      }
+    }
+    const chain = resolveExplicitLoadChain("https://example.com", ["ignoring"], {
+      getFactory: () => () => new IgnoringLoader(),
+    });
+    const controller = new AbortController();
+    const reason = new Error("cancelled by caller");
+    const loading = chain.load(controller.signal);
+    controller.abort(reason);
+    await expect(loading).rejects.toBe(reason);
   });
 
   it("rejects a generic result for a source-required contract", async () => {

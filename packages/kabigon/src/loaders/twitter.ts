@@ -181,8 +181,9 @@ export class TwitterLoader implements Loader {
         `Could not find the requested tweet (${target.statusId})`,
       );
     };
+    const resources = this.resources;
     const operation = async () => {
-      const browser = await this.resources?.browser();
+      const browser = await resources?.browser();
       return fetchBrowserHtml(target.normalizedUrl, {
         loaderName: "TwitterLoader",
         timeoutMs: this.timeoutMs,
@@ -194,10 +195,11 @@ export class TwitterLoader implements Loader {
         afterGoto: waitForTweet,
         extractContent: extractTweet,
         ...(browser ? { browser } : {}),
+        ...(resources ? { validateUrl: resources.validateUrl.bind(resources) } : {}),
         signal,
       });
     };
-    const content = this.resources ? await this.resources.runBrowser(operation) : await operation();
+    const content = resources ? await resources.runBrowser(operation) : await operation();
     return htmlToMarkdown(content);
   }
 

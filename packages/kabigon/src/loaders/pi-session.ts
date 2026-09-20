@@ -3,7 +3,7 @@ import * as cheerio from "cheerio";
 import { LoaderContentError, LoaderTimeoutError } from "../core/errors.js";
 import type { Loader } from "../core/loader.js";
 import type { ResourceProvider } from "../core/resources.js";
-import { parsePiSessionTarget, type PiSessionTarget } from "../sources/applicability.js";
+import { type PiSessionTarget, parsePiSessionTarget } from "../sources/applicability.js";
 
 const GITHUB_GIST_API = "https://api.github.com/gists/{gistId}";
 const GIST_RAW_HOST = "gist.githubusercontent.com";

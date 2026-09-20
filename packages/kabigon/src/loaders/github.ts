@@ -1,10 +1,10 @@
-import type { Loader } from "../core/loader.js";
 import { InvalidUrlError } from "../core/errors.js";
+import type { Loader } from "../core/loader.js";
 import type { ResourceProvider } from "../core/resources.js";
 import {
-  RAW_GITHUB_HOST,
   parseGitHubRawContentTarget,
   parseGitHubTarget,
+  RAW_GITHUB_HOST,
   requireLoaderApplicability,
 } from "../sources/applicability.js";
 import { extractFirstTagSubtree, htmlToMarkdown } from "./utils.js";

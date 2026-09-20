@@ -7,15 +7,15 @@ import {
 } from "./core/errors.js";
 import { recordAttempt, remainingMilliseconds, withAttemptSink } from "./core/execution.js";
 import type { LoaderFactory } from "./core/loader.js";
-import { AttemptStatus, type AttemptRecord, type LoadResult } from "./core/results.js";
+import { type AttemptRecord, AttemptStatus, type LoadResult } from "./core/results.js";
 import { getLoaderContentType, getLoaderFactory, getLoaderRequirements } from "./loader-registry.js";
 import {
   ContentContract,
+  type ContentContract as ContentContractValue,
   ContentType,
+  type ContentType as ContentTypeValue,
   GENERIC_HTML_LOADERS,
   planForUrl,
-  type ContentContract as ContentContractValue,
-  type ContentType as ContentTypeValue,
 } from "./pipelines/catalog.js";
 
 export type Admission = (loaderName: string, operation: () => Promise<string>) => Promise<string>;
@@ -216,11 +216,11 @@ async function runWithDeadline<T>(
   remaining: number | undefined,
   signal?: AbortSignal,
 ): Promise<T> {
-  if (remaining === undefined) return operation();
-  const timeout = AbortSignal.timeout(Math.max(1, Math.ceil(remaining)));
-  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  const timeout = remaining === undefined ? undefined : AbortSignal.timeout(Math.max(1, Math.ceil(remaining)));
+  const combined = signal && timeout ? AbortSignal.any([signal, timeout]) : (signal ?? timeout);
+  if (combined?.aborted) throw combined.reason;
   const promise = operation();
-  if (combined.aborted) throw combined.reason;
+  if (!combined) return promise;
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(combined.reason);
     combined.addEventListener("abort", onAbort, { once: true });

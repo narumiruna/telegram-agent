@@ -59,6 +59,7 @@ export class NewsArticleLoader implements Loader {
 
   async load(url: string, signal?: AbortSignal): Promise<string> {
     this.validate(url);
+    const resources = this.resources;
     const transports: readonly [string, () => Promise<{ content: string; contentType: string }>][] = [
       [
         "httpx",
@@ -79,17 +80,18 @@ export class NewsArticleLoader implements Loader {
         "browser",
         async () => {
           const operation = async () => {
-            const browser = await this.resources?.browser();
+            const browser = await resources?.browser();
             return fetchBrowserHtmlResponse(url, {
               loaderName: this.loaderName,
               timeoutMs: Math.min(30_000, remainingMilliseconds() ?? 30_000),
               timeoutSuggestion: "Article page timed out while using the browser transport.",
               waitUntil: "domcontentloaded",
               ...(browser ? { browser } : {}),
+              ...(resources ? { validateUrl: resources.validateUrl.bind(resources) } : {}),
               signal,
             });
           };
-          return this.resources ? this.resources.runBrowser(operation) : operation();
+          return resources ? resources.runBrowser(operation) : operation();
         },
       ],
     ];

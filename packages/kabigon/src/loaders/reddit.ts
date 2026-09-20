@@ -93,7 +93,7 @@ function appendComments(lines: string[], children: JsonRecord[], depth = 0): voi
   }
 }
 
-function rssToMarkdown(xml: string, sourceUrl: string): string {
+export function rssToMarkdown(xml: string, sourceUrl: string): string {
   let parsed: JsonRecord;
   try {
     parsed = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true }).parse(xml) as JsonRecord;
@@ -101,10 +101,11 @@ function rssToMarkdown(xml: string, sourceUrl: string): string {
     throw new LoaderContentError("RedditLoader", sourceUrl, `Invalid RSS XML payload: ${String(error)}`);
   }
   const feed = asRecord(parsed.feed);
-  const entriesValue = feed?.entry;
+  if (!feed) throw new LoaderContentError("RedditLoader", sourceUrl, "Response is not an Atom feed.");
+  const entriesValue = feed.entry;
   const entries = Array.isArray(entriesValue) ? entriesValue : entriesValue ? [entriesValue] : [];
-  const lines = [`# ${String(feed?.title ?? "Reddit Post")}`, "", `- URL Source: ${sourceUrl}`, "", "## Entries", ""];
-  if (entries.length === 0) return [...lines, "(No entries)"].join("\n").trim();
+  if (entries.length === 0) throw new LoaderContentError("RedditLoader", sourceUrl, "Atom feed has no entries.");
+  const lines = [`# ${String(feed.title ?? "Reddit Post")}`, "", `- URL Source: ${sourceUrl}`, "", "## Entries", ""];
   for (const raw of entries) {
     const entry = asRecord(raw) ?? {};
     const author = asRecord(entry.author);
@@ -174,8 +175,9 @@ export class RedditLoader implements Loader {
   }
 
   private async loadViaBrowser(url: string, signal?: AbortSignal): Promise<string> {
+    const resources = this.resources;
     const operation = async () => {
-      const browser = await this.resources?.browser();
+      const browser = await resources?.browser();
       return fetchBrowserHtml(convertToOldReddit(url), {
         loaderName: "RedditLoader",
         timeoutMs: Math.min(this.timeoutMs, remainingMilliseconds() ?? this.timeoutMs),
@@ -183,10 +185,11 @@ export class RedditLoader implements Loader {
         waitUntil: "networkidle",
         userAgent: DEFAULT_BROWSER_USER_AGENT,
         ...(browser ? { browser } : {}),
+        ...(resources ? { validateUrl: resources.validateUrl.bind(resources) } : {}),
         signal,
       });
     };
-    return htmlToMarkdown(this.resources ? await this.resources.runBrowser(operation) : await operation());
+    return htmlToMarkdown(resources ? await resources.runBrowser(operation) : await operation());
   }
 
   async load(url: string, signal?: AbortSignal): Promise<string> {

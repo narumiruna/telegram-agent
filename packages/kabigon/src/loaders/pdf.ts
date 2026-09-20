@@ -2,9 +2,12 @@ import { readFile } from "node:fs/promises";
 
 import { LoaderContentError, LoaderNotApplicableError } from "../core/errors.js";
 import type { Loader } from "../core/loader.js";
+import { readResponseBytes, safeFetch } from "../core/network.js";
 import type { ResourceProvider } from "../core/resources.js";
 import { parsePdfTarget, requireLoaderApplicability } from "../sources/applicability.js";
 import { fetchImpersResponse } from "./generic.js";
+
+export const MAX_PDF_BYTES = 25 * 1024 * 1024;
 
 const DEFAULT_HEADERS = {
   "Accept-Language": "zh-TW,zh;q=0.9,ja;q=0.8,en-US;q=0.7,en;q=0.6",
@@ -52,10 +55,10 @@ export class PdfLoader implements Loader {
         headers: DEFAULT_HEADERS,
         redirect: "follow",
         signal,
-      }) ?? fetch(target, { headers: DEFAULT_HEADERS, redirect: "follow", signal }));
+      }) ?? safeFetch(target, { headers: DEFAULT_HEADERS, redirect: "follow", signal }));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       contentType = response.headers.get("content-type") ?? "";
-      data = new Uint8Array(await response.arrayBuffer());
+      data = await readResponseBytes(response, MAX_PDF_BYTES);
     } catch (httpError) {
       try {
         const fallback = await fetchImpersResponse(target, {
@@ -63,6 +66,7 @@ export class PdfLoader implements Loader {
           resources: this.options.resources,
           signal,
           loaderName: "PdfLoader",
+          maxBytes: MAX_PDF_BYTES,
         });
         contentType = fallback.headers.get("content-type") ?? "";
         data = fallback.content;

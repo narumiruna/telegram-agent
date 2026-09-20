@@ -1,11 +1,15 @@
-import type { Loader } from "../core/loader.js";
+import { LoaderContentError, LoaderTimeoutError } from "../core/errors.js";
 import { remainingMilliseconds } from "../core/execution.js";
-import { LoaderContentError } from "../core/errors.js";
+import type { Loader } from "../core/loader.js";
+import { assertPublicUrl, readResponseText, safeFetch } from "../core/network.js";
 import type { ImpersSession, ResourceProvider } from "../core/resources.js";
 import type { RetrievedHtml } from "../core/retrieval.js";
 import { fetchBrowserHtml } from "./browser.js";
 import { ensureUsableContent } from "./content-guard.js";
 import { htmlToMarkdown } from "./utils.js";
+
+export const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
+export const MAX_HTML_BYTES = 10 * 1024 * 1024;
 
 export const DEFAULT_HTTP_HEADERS = {
   "User-Agent":
@@ -16,16 +20,25 @@ export const DEFAULT_HTTP_HEADERS = {
 
 async function checkedFetch(
   url: string,
-  options: { headers?: HeadersInit; resources?: ResourceProvider; signal?: AbortSignal; loaderName: string },
+  options: {
+    headers?: HeadersInit;
+    resources?: ResourceProvider;
+    signal?: AbortSignal;
+    loaderName: string;
+    timeoutMs: number;
+  },
 ): Promise<Response> {
+  const timeoutSignal = AbortSignal.timeout(options.timeoutMs);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
   let response: Response;
   try {
     response = await (options.resources?.fetch(url, {
       headers: options.headers,
       redirect: "follow",
-      signal: options.signal,
-    }) ?? fetch(url, { headers: options.headers, redirect: "follow", signal: options.signal }));
+      signal,
+    }) ?? safeFetch(url, { headers: options.headers, redirect: "follow", signal }));
   } catch (error) {
+    if (timeoutSignal.aborted) throw new LoaderTimeoutError(options.loaderName, url, options.timeoutMs / 1_000);
     throw new LoaderContentError(options.loaderName, url, `HTTP request failed: ${String(error)}`);
   }
   if (!response.ok) {
@@ -36,27 +49,41 @@ async function checkedFetch(
 
 export async function fetchHttpHtml(
   url: string,
-  options: { headers?: HeadersInit; resources?: ResourceProvider; signal?: AbortSignal; loaderName?: string } = {},
+  options: {
+    headers?: HeadersInit;
+    resources?: ResourceProvider;
+    signal?: AbortSignal;
+    loaderName?: string;
+    timeoutMs?: number;
+    maxBytes?: number;
+  } = {},
 ): Promise<RetrievedHtml> {
   const response = await checkedFetch(url, {
     ...options,
     loaderName: options.loaderName ?? "HttpLoader",
+    timeoutMs: options.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS,
   });
-  return { content: await response.text(), contentType: response.headers.get("content-type") ?? "" };
+  return {
+    content: await readResponseText(response, options.maxBytes ?? MAX_HTML_BYTES),
+    contentType: response.headers.get("content-type") ?? "",
+  };
 }
 
 interface GenericLoaderOptions {
   headers?: Record<string, string>;
   resources?: ResourceProvider;
+  timeoutMs?: number;
 }
 
 export class HttpLoader implements Loader {
   readonly headers: Record<string, string>;
   readonly resources?: ResourceProvider;
+  readonly timeoutMs: number;
 
   constructor(options: GenericLoaderOptions = {}) {
     this.headers = { ...DEFAULT_HTTP_HEADERS, ...options.headers };
     this.resources = options.resources;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
   }
 
   async load(url: string, signal?: AbortSignal): Promise<string> {
@@ -65,6 +92,7 @@ export class HttpLoader implements Loader {
       resources: this.resources,
       signal,
       loaderName: "HttpLoader",
+      timeoutMs: this.timeoutMs,
     });
     const result = htmlToMarkdown(response.content);
     ensureUsableContent(result, { loaderName: "HttpLoader", url });
@@ -115,6 +143,7 @@ interface ImpersFetchOptions {
   session?: ImpersSession;
   signal?: AbortSignal;
   loaderName?: string;
+  maxBytes?: number;
 }
 
 export async function fetchImpersResponse(url: string, options: ImpersFetchOptions = {}) {
@@ -136,16 +165,73 @@ export async function fetchImpersResponse(url: string, options: ImpersFetchOptio
         session = owned;
       }
     }
-    const response = await session.get(url, {
-      impersonate: options.impersonate ?? "chrome",
-      timeout,
-      headers: options.headers,
-      allowRedirects: true,
-    });
-    if (response.status >= 400) {
-      throw new LoaderContentError(loaderName, url, `HTTP request failed with status ${response.status}`);
+
+    let currentUrl = new URL(url);
+    for (let redirects = 0; redirects <= 5; redirects += 1) {
+      if (options.resources) await options.resources.validateUrl(currentUrl, options.signal);
+      else await assertPublicUrl(currentUrl, { signal: options.signal });
+      const maxBytes = options.maxBytes;
+      const chunks: Buffer[] = [];
+      let total = 0;
+      let exceededLimit = false;
+      const limitController = maxBytes === undefined ? undefined : new AbortController();
+      const requestSignal =
+        options.signal && limitController
+          ? AbortSignal.any([options.signal, limitController.signal])
+          : (options.signal ?? limitController?.signal);
+      let response: Awaited<ReturnType<ImpersSession["get"]>>;
+      try {
+        response = await session.get(currentUrl.toString(), {
+          impersonate: options.impersonate ?? "chrome",
+          timeout,
+          headers: options.headers,
+          allowRedirects: false,
+          signal: requestSignal,
+          stream: maxBytes !== undefined,
+          ...(maxBytes === undefined
+            ? {}
+            : {
+                acceptEncoding: "identity",
+                contentCallback: (chunk: Buffer) => {
+                  total += chunk.byteLength;
+                  if (total > maxBytes) {
+                    exceededLimit = true;
+                    limitController?.abort(new Error(`Response exceeds the ${maxBytes} byte limit`));
+                    return;
+                  }
+                  chunks.push(Buffer.from(chunk));
+                },
+              }),
+        });
+      } catch (error) {
+        if (exceededLimit) {
+          throw new LoaderContentError(loaderName, url, `Response exceeds the ${maxBytes} byte limit`);
+        }
+        throw error;
+      }
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get("location");
+        await response.close();
+        if (redirects === 5) throw new LoaderContentError(loaderName, url, "URL exceeded the redirect limit");
+        if (!location) throw new LoaderContentError(loaderName, url, "URL redirect did not include a Location header");
+        currentUrl = new URL(location, currentUrl);
+        continue;
+      }
+      if (response.status >= 400) {
+        await response.close();
+        throw new LoaderContentError(loaderName, url, `HTTP request failed with status ${response.status}`);
+      }
+      if (maxBytes !== undefined) {
+        const declaredLength = Number(response.headers.get("content-length"));
+        if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+          await response.close();
+          throw new LoaderContentError(loaderName, url, `Response exceeds the ${maxBytes} byte limit`);
+        }
+        response.setContent(Buffer.concat(chunks));
+      }
+      return response;
     }
-    return response;
+    throw new LoaderContentError(loaderName, url, "URL redirect handling ended unexpectedly");
   } catch (error) {
     if (error instanceof LoaderContentError) throw error;
     throw new LoaderContentError(loaderName, url, `HTTP request failed: ${String(error)}`);
@@ -155,7 +241,7 @@ export async function fetchImpersResponse(url: string, options: ImpersFetchOptio
 }
 
 export async function fetchImpersHtml(url: string, options: ImpersFetchOptions = {}): Promise<RetrievedHtml> {
-  const response = await fetchImpersResponse(url, options);
+  const response = await fetchImpersResponse(url, { ...options, maxBytes: options.maxBytes ?? MAX_HTML_BYTES });
   return { content: response.text, contentType: response.headers.get("content-type") ?? "" };
 }
 
@@ -170,7 +256,8 @@ export class PlaywrightLoader implements Loader {
   constructor(private readonly options: PlaywrightLoaderOptions = {}) {}
 
   async load(url: string, signal?: AbortSignal): Promise<string> {
-    const browser = await this.options.resources?.browser();
+    const resources = this.options.resources;
+    const browser = await resources?.browser();
     const content = await fetchBrowserHtml(url, {
       loaderName: "PlaywrightLoader",
       timeoutMs: this.options.timeoutMs ?? 0,
@@ -179,6 +266,7 @@ export class PlaywrightLoader implements Loader {
       ...(this.options.waitUntil ? { waitUntil: this.options.waitUntil } : {}),
       headless: this.options.headless ?? true,
       ...(browser ? { browser } : {}),
+      ...(resources ? { validateUrl: resources.validateUrl.bind(resources) } : {}),
       signal,
     });
     const result = htmlToMarkdown(content);

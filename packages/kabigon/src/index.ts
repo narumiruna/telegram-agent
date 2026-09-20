@@ -10,9 +10,9 @@ export type { AttemptRecord, AttemptStatus, LoadResult } from "./core/results.js
 export { attemptRecordToObject, loadResultToObject } from "./core/results.js";
 export {
   DEFAULT_FALLBACK_LOADERS,
+  explainLoadChain,
   LoadChain,
   LoadChainExplanation,
-  explainLoadChain,
   resolveExplicitLoadChain,
   resolveLoadChain,
 } from "./load-chain.js";
@@ -23,9 +23,9 @@ export {
   getLoaderDescription,
   getLoaderFactory,
   getLoaderRequirements,
+  type LoaderDef,
   listLoaderDefs,
   listLoaderNames,
-  type LoaderDef,
 } from "./loader-registry.js";
 export * from "./pipelines/catalog.js";
 export * from "./sources/applicability.js";

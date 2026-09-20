@@ -1,6 +1,7 @@
 import type { Browser } from "playwright";
 
 import { remainingMilliseconds, withDeadline } from "./core/execution.js";
+import { assertPublicUrl, type FetchImplementation, type PublicUrlResolver, safeFetch } from "./core/network.js";
 import type { ImpersSession, ResourceProvider } from "./core/resources.js";
 import type { LoadResult } from "./core/results.js";
 import { resolveLoadChain } from "./load-chain.js";
@@ -68,7 +69,8 @@ export interface KabigonClientOptions {
   requestLimit?: number;
   browserLimit?: number;
   workerLimit?: number;
-  fetchImplementation?: typeof fetch;
+  fetchImplementation?: FetchImplementation;
+  resolve?: PublicUrlResolver;
 }
 
 export class KabigonClient implements ResourceProvider, AsyncDisposable {
@@ -76,7 +78,8 @@ export class KabigonClient implements ResourceProvider, AsyncDisposable {
   private readonly requestSlots: Semaphore;
   private readonly browserSlots: Semaphore;
   private readonly workerSlots: Semaphore;
-  private readonly fetchImplementation: typeof fetch;
+  private readonly fetchImplementation: FetchImplementation;
+  private readonly resolve?: PublicUrlResolver;
   private active = false;
   private impersPromise?: Promise<ImpersSession>;
   private browserPromise?: Promise<Browser>;
@@ -96,6 +99,7 @@ export class KabigonClient implements ResourceProvider, AsyncDisposable {
     this.browserSlots = new Semaphore(browserLimit);
     this.workerSlots = new Semaphore(workerLimit);
     this.fetchImplementation = options.fetchImplementation ?? fetch;
+    this.resolve = options.resolve;
   }
 
   start(): this {
@@ -107,9 +111,18 @@ export class KabigonClient implements ResourceProvider, AsyncDisposable {
     if (!this.active) throw new Error(CLIENT_CONTEXT_REQUIRED);
   }
 
+  async validateUrl(input: string | URL, signal?: AbortSignal): Promise<URL> {
+    this.checkActive();
+    return (await assertPublicUrl(input, { resolve: this.resolve, signal })).url;
+  }
+
   fetch(input: string | URL, init?: RequestInit): Promise<Response> {
     this.checkActive();
-    return this.fetchImplementation(input, init);
+    return safeFetch(input, init, {
+      fetchImplementation: this.fetchImplementation,
+      resolve: this.resolve,
+      signal: init?.signal ?? undefined,
+    });
   }
 
   async impersSession(): Promise<ImpersSession> {
@@ -149,10 +162,13 @@ export class KabigonClient implements ResourceProvider, AsyncDisposable {
 
   async loadUrlDetailed(url: string, signal?: AbortSignal): Promise<LoadResult> {
     this.checkActive();
-    validateTarget(url);
     const deadlineAt =
       this.deadlineSeconds === undefined ? undefined : performance.now() + this.deadlineSeconds * 1_000;
-    return withDeadline(deadlineAt, () => {
+    return withDeadline(deadlineAt, async () => {
+      const timeoutSignal = admissionSignal();
+      const validationSignal =
+        signal && timeoutSignal ? AbortSignal.any([signal, timeoutSignal]) : (signal ?? timeoutSignal);
+      await validateTarget(url, this.resolve, validationSignal);
       const chain = resolveLoadChain(url, {
         getFactory: (name) => () => createLoader(name, this),
         admit: (name, operation) => this.admit(name, operation),
@@ -202,13 +218,12 @@ function admissionSignal(): AbortSignal | undefined {
   return remaining === undefined ? undefined : AbortSignal.timeout(Math.max(1, Math.ceil(remaining)));
 }
 
-function validateTarget(target: string): void {
+async function validateTarget(target: string, resolve?: PublicUrlResolver, signal?: AbortSignal): Promise<void> {
+  if (isPdfTarget(target) && !target.startsWith("http://") && !target.startsWith("https://")) return;
   try {
-    const url = new URL(target);
-    if (["http:", "https:"].includes(url.protocol) && url.hostname) return;
-  } catch {
-    // Local PDF paths are checked below.
+    await assertPublicUrl(target, { resolve, signal });
+  } catch (error) {
+    if (error instanceof TypeError && error.message === "URL is invalid") throw new TypeError(INVALID_TARGET);
+    throw error;
   }
-  if (isPdfTarget(target)) return;
-  throw new TypeError(INVALID_TARGET);
 }

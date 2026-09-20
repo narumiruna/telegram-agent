@@ -1,6 +1,7 @@
 import type { Browser, Page, Response } from "playwright";
 
 import { LoaderContentError, LoaderTimeoutError } from "../core/errors.js";
+import { assertPublicUrl } from "../core/network.js";
 import type { RetrievedHtml } from "../core/retrieval.js";
 
 export const DEFAULT_BROWSER_USER_AGENT =
@@ -23,19 +24,44 @@ interface BrowserFetchOptions {
   extractContent?: BrowserContentExtractor;
   browser?: Browser;
   signal?: AbortSignal;
+  validateUrl?: (url: string | URL, signal?: AbortSignal) => Promise<URL>;
 }
 
 async function withBrowser(browser: Browser, url: string, options: BrowserFetchOptions): Promise<RetrievedHtml> {
   if (options.signal?.aborted) throw options.signal.reason;
+  const validateUrl =
+    options.validateUrl ??
+    (async (target: string | URL, signal?: AbortSignal) => (await assertPublicUrl(target, { signal })).url);
+  await validateUrl(url, options.signal);
   const context = await browser.newContext(options.userAgent ? { userAgent: options.userAgent } : {});
   try {
     const page = await context.newPage();
-    if (options.blockedResourceTypes && options.blockedResourceTypes.size > 0) {
-      await page.route("**/*", async (route) => {
-        if (options.blockedResourceTypes?.has(route.request().resourceType())) await route.abort();
+    const validatedOrigins = new Map<string, Promise<URL>>();
+    await page.route("**/*", async (route) => {
+      if (options.blockedResourceTypes?.has(route.request().resourceType())) {
+        await route.abort();
+        return;
+      }
+      const requestUrl = route.request().url();
+      const request = route.request();
+      if (!requestUrl.startsWith("http://") && !requestUrl.startsWith("https://")) {
+        if (request.isNavigationRequest()) await route.abort("blockedbyclient");
         else await route.continue();
-      });
-    }
+        return;
+      }
+      try {
+        const origin = new URL(requestUrl).origin;
+        let validation = request.isNavigationRequest() ? undefined : validatedOrigins.get(origin);
+        if (!validation) {
+          validation = validateUrl(requestUrl, options.signal);
+          if (!request.isNavigationRequest()) validatedOrigins.set(origin, validation);
+        }
+        await validation;
+        await route.continue();
+      } catch {
+        await route.abort("blockedbyclient");
+      }
+    });
     let response: Response | null;
     try {
       response = await page.goto(url, {
