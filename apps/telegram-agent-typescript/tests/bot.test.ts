@@ -55,12 +55,16 @@ function privateMessage(updateId: number, text: string, userId = 7): Update {
   };
 }
 
-function installApiMock(bot: ReturnType<typeof createTelegramAgentBot>["bot"]) {
+function installApiMock(
+  bot: ReturnType<typeof createTelegramAgentBot>["bot"],
+  beforeResponse: (method: string, payload: Record<string, unknown>) => Promise<void> | void = () => {},
+) {
   const calls: Array<{ method: string; payload: Record<string, unknown> }> = [];
   let nextMessageId = 100;
   const transformer: Transformer = async (_previous, method, payload) => {
     const recordedPayload = payload as Record<string, unknown>;
     calls.push({ method, payload: recordedPayload });
+    await beforeResponse(method, recordedPayload);
     if (method === "sendMessage") {
       return {
         ok: true,
@@ -258,6 +262,34 @@ describe("Telegram bot update routing", () => {
     expect(submittedPrompts).toEqual(["重設後"]);
   });
 
+  it("replaces the pending status when reset invalidates a completed submission", async () => {
+    let finishSubmission: ((value: { kind: "completed"; text: string }) => void) | undefined;
+    const pendingSubmission = new Promise<{ kind: "completed"; text: string }>((resolve) => {
+      finishSubmission = resolve;
+    });
+    const sessions = createSessions({
+      submit: vi.fn(async (_chatId, _prompt, options) => {
+        options.onAccepted?.();
+        return pendingSubmission;
+      }),
+    });
+    const telegram = createTelegramAgentBot(loadSettings({ BOT_TOKEN: "test-token" }), sessions, logger, { botInfo });
+    const calls = installApiMock(telegram.bot);
+
+    const runningUpdate = telegram.bot.handleUpdate(privateMessage(12, "長任務"));
+    await vi.waitFor(() => expect(sessions.submit).toHaveBeenCalledOnce());
+    const resetUpdate = privateMessage(13, "/reset");
+    if (resetUpdate.message) {
+      resetUpdate.message.entities = [{ offset: 0, length: 6, type: "bot_command" }];
+    }
+    await telegram.bot.handleUpdate(resetUpdate);
+
+    finishSubmission?.({ kind: "completed", text: "過期回覆" });
+    await runningUpdate;
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage", "sendMessage", "editMessageText"]);
+    expect(calls[2]?.payload.text).toBe("此請求已因重設對話而取消。");
+  });
+
   it("does not publish a stale Morsel reply after reset", async () => {
     let finishPublication: ((value: string) => void) | undefined;
     const pendingPublication = new Promise<string>((resolve) => {
@@ -291,10 +323,11 @@ describe("Telegram bot update routing", () => {
 
     finishPublication?.("https://morsel.example/s/share");
     await runningUpdate;
-    expect(calls.map((call) => call.method)).toEqual(["sendMessage", "sendMessage"]);
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage", "sendMessage", "editMessageText"]);
+    expect(calls[2]?.payload.text).toBe("此請求已因重設對話而取消。");
   });
 
-  it("does not overwrite reset status when an invalidated submission fails", async () => {
+  it("replaces the pending status when an invalidated submission fails", async () => {
     let failSubmission: ((reason: Error) => void) | undefined;
     const pendingSubmission = new Promise<never>((_resolve, reject) => {
       failSubmission = reject;
@@ -315,7 +348,46 @@ describe("Telegram bot update routing", () => {
 
     failSubmission?.(new Error("Pi session access was invalidated by reset"));
     await runningUpdate;
-    expect(calls.map((call) => call.method)).toEqual(["sendMessage", "sendMessage"]);
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage", "sendMessage", "editMessageText"]);
+    expect(calls[2]?.payload.text).toBe("此請求已因重設對話而取消。");
+  });
+
+  it("stops sending reply chunks when reset changes the generation", async () => {
+    let finishChunkDelivery: (() => void) | undefined;
+    const pendingChunkDelivery = new Promise<void>((resolve) => {
+      finishChunkDelivery = resolve;
+    });
+    const staleChunk = "b".repeat(4_096);
+    const sessions = createSessions({
+      submit: vi.fn(async (_chatId, _prompt, options) => {
+        options.onAccepted?.();
+        return { kind: "completed" as const, text: `${"a".repeat(4_096)}${staleChunk}c` };
+      }),
+    });
+    const telegram = createTelegramAgentBot(loadSettings({ BOT_TOKEN: "test-token" }), sessions, logger, { botInfo });
+    const calls = installApiMock(telegram.bot, async (method, payload) => {
+      if (method === "sendMessage" && payload.text === staleChunk) await pendingChunkDelivery;
+    });
+
+    const runningUpdate = telegram.bot.handleUpdate(privateMessage(16, "長回覆"));
+    await vi.waitFor(() => expect(calls.some((call) => call.payload.text === staleChunk)).toBe(true));
+    const resetUpdate = privateMessage(17, "/reset");
+    if (resetUpdate.message) {
+      resetUpdate.message.entities = [{ offset: 0, length: 6, type: "bot_command" }];
+    }
+    await telegram.bot.handleUpdate(resetUpdate);
+
+    finishChunkDelivery?.();
+    await runningUpdate;
+    expect(calls.map((call) => call.method)).toEqual([
+      "sendMessage",
+      "editMessageText",
+      "sendMessage",
+      "sendMessage",
+      "editMessageText",
+    ]);
+    expect(calls.some((call) => call.payload.text === "c")).toBe(false);
+    expect(calls.at(-1)?.payload.text).toBe("此請求已因重設對話而取消。");
   });
 
   it("orders passive group context after an earlier addressed image submission", async () => {

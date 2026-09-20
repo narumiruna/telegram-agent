@@ -177,8 +177,11 @@ export function createTelegramAgentBot(
       "處理中…",
       sourceMessageId ? { reply_parameters: { message_id: sourceMessageId } } : {},
     );
-    if (!isCurrent()) {
+    const cancelStatus = async () => {
       await editStatusWithChunks(context, status.chat.id, status.message_id, "此請求已因重設對話而取消。");
+    };
+    if (!isCurrent()) {
+      await cancelStatus();
       return;
     }
     try {
@@ -186,7 +189,10 @@ export function createTelegramAgentBot(
         images,
         onAccepted: releaseSubmissionTurn,
       });
-      if (!isCurrent()) return;
+      if (!isCurrent()) {
+        await cancelStatus();
+        return;
+      }
       let outboundText = result.text;
       const sanitized = sanitizeTelegramText(outboundText);
       if (
@@ -201,12 +207,30 @@ export function createTelegramAgentBot(
           logger.warn(`Morsel long-reply publication failed for chat_id=${status.chat.id}; falling back`, error);
         }
       }
-      if (!isCurrent()) return;
-      await editStatusWithChunks(context, status.chat.id, status.message_id, outboundText);
+      if (!isCurrent()) {
+        await cancelStatus();
+        return;
+      }
+      if (!(await editStatusWithChunks(context, status.chat.id, status.message_id, outboundText, isCurrent))) {
+        await cancelStatus();
+      }
     } catch (error) {
-      if (!isCurrent()) return;
+      if (!isCurrent()) {
+        await cancelStatus();
+        return;
+      }
       logger.error(`Pi agent request failed for chat_id=${status.chat.id}`, error);
-      await editStatusWithChunks(context, status.chat.id, status.message_id, "AI 服務暫時無法使用，請稍後再試。");
+      if (
+        !(await editStatusWithChunks(
+          context,
+          status.chat.id,
+          status.message_id,
+          "AI 服務暫時無法使用，請稍後再試。",
+          isCurrent,
+        ))
+      ) {
+        await cancelStatus();
+      }
     }
   }
 
@@ -275,17 +299,26 @@ export function createTelegramAgentBot(
   };
 }
 
-async function editStatusWithChunks(context: Context, chatId: number, messageId: number, text: string): Promise<void> {
+async function editStatusWithChunks(
+  context: Context,
+  chatId: number,
+  messageId: number,
+  text: string,
+  isCurrent: () => boolean = () => true,
+): Promise<boolean> {
   const [first = " ", ...rest] = telegramHtmlChunks(text);
+  if (!isCurrent()) return false;
   await context.api.editMessageText(chatId, messageId, first, { parse_mode: "HTML" });
   let replyTo = messageId;
   for (const chunk of rest) {
+    if (!isCurrent()) return false;
     const sent = await context.api.sendMessage(chatId, chunk, {
       parse_mode: "HTML",
       reply_parameters: { message_id: replyTo },
     });
     replyTo = sent.message_id;
   }
+  return isCurrent();
 }
 
 function isAllowed(context: Context, whitelist: ReadonlySet<number>): boolean {
