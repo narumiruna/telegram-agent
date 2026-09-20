@@ -9,8 +9,10 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
-develop-eggs/
 dist/
+node_modules/
+coverage/
+develop-eggs/
 downloads/
 eggs/
 .eggs/

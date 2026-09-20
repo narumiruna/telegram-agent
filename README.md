@@ -541,6 +541,23 @@ just type
 
 Note: `just lint` applies Ruff fixes.
 
+### TypeScript workspaces
+
+The root `package.json` manages `apps/*` and `packages/*` as one npm workspace monorepo. The TypeScript kabigon port is in [`packages/kabigon`](packages/kabigon/README.md).
+
+```bash
+npm install
+npm run build
+npm run typecheck
+npm test
+```
+
+Run a command for only one workspace with `--workspace`, for example:
+
+```bash
+npm test --workspace @telegram-agent/kabigon
+```
+
 ## 🔒 Security Notes
 
 - Never commit `.env`, bot tokens, API keys, cookies, or private URLs.
