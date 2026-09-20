@@ -39,7 +39,7 @@ See the [Python app README](apps/telegram-agent-python/README.md) for configurat
 
 ## Node workspaces
 
-The root `package.json` manages `apps/*` and `packages/*` npm workspaces. GitHub CI, container publishing, and deployment target `apps/telegram-agent-typescript`; the Python app is checked locally with its own toolchain.
+The root `package.json` manages `apps/*` and `packages/*` npm workspaces. GitHub CI, container publishing, and deployment target `apps/telegram-agent-typescript`; Python-only changes do not trigger CI or deployment, and the retained Python app is checked locally with its own toolchain.
 
 ```bash
 npm ci

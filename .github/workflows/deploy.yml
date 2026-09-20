@@ -5,6 +5,14 @@ on:
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/deploy.yml"
+      - ".agents/**"
+      - "apps/telegram-agent-typescript/**"
+      - "package.json"
+      - "package-lock.json"
+      - "packages/kabigon/package.json"
+      - "SOUL.md"
 
 permissions:
   contents: read
@@ -39,9 +47,6 @@ jobs:
             printf 'MORSEL_API_KEY=%s\n' "$MORSEL_API_KEY"
             printf 'TELEGRAM_INSTANT_VIEW_RHASH=%s\n' "$TELEGRAM_INSTANT_VIEW_RHASH"
           } >> .env
-
-      - name: Stop legacy deployment
-        run: docker ps -q --filter label=com.docker.compose.project=telegram-agent | xargs -r docker stop
 
       - name: Deploy TypeScript bot with Docker Compose
         run: |

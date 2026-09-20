@@ -14,7 +14,7 @@
 - Install Node dependencies with `npm ci`; run workspace checks with `npm run format:check`, `npm run lint`, `npm run typecheck`, and `npm test`.
 - Follow `apps/telegram-agent-python/AGENTS.md` for Python commands and conventions.
 - Use `docker compose -f apps/telegram-agent-python/docker-compose.yml ...` or `docker compose -f apps/telegram-agent-typescript/docker-compose.yml ...`; there is no root Compose file.
-- GitHub CI, container publishing, releases, dependency updates, and deployment target the TypeScript bot; validate the retained Python app locally.
+- GitHub CI, container publishing, releases, dependency updates, and deployment target the TypeScript bot; Python-only changes must not trigger CI or deployment, and the retained Python app is validated locally.
 
 ## Security
 
