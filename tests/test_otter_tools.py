@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from telegramagent.otter_tools import OtterCliConfig
 from telegramagent.otter_tools import OtterCliRuntime
 from telegramagent.otter_tools import OtterExpenseTools
+from telegramagent.otter_tools import OtterMutationCancelledError
 from telegramagent.otter_tools import build_otter_tools
 
 
@@ -163,6 +165,29 @@ async def test_runtime_timeout_marks_mutation_outcome_unknown(tmp_path: Path) ->
     assert result["error"]["category"] == "timeout"
     assert result["outcome_unknown"] is True
     assert "Do not retry" in result["response_contract"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_cancellation_warns_that_mutation_outcome_is_unknown(tmp_path: Path) -> None:
+    marker = tmp_path / "started"
+    executable = _fake_otter(
+        tmp_path,
+        f"from pathlib import Path\nimport time\nPath({str(marker)!r}).write_text('started')\ntime.sleep(2)",
+    )
+    runtime = OtterCliRuntime(OtterCliConfig(command=str(executable)))
+    task = asyncio.create_task(runtime.run(["expenses", "add"], mutation=True))
+    for _ in range(100):
+        if marker.exists():
+            break
+        await asyncio.sleep(0.01)
+    assert marker.exists()
+
+    task.cancel()
+
+    with pytest.raises(OtterMutationCancelledError) as raised:
+        await task
+    assert "結果不明" in raised.value.user_message
+    assert "不要直接重試" in raised.value.user_message
 
 
 @pytest.mark.asyncio

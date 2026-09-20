@@ -124,3 +124,16 @@ def test_container_tools_remain_available_without_otter_configuration() -> None:
 
     assert tools == original_tools
     assert capability is original_capability
+
+
+def test_compose_does_not_force_persistent_otter_credentials() -> None:
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "OTTER_CONFIG_PATH:" not in compose
+
+
+def test_deploy_wires_explicit_otter_enable_variable() -> None:
+    workflow = Path(".github/workflows/deploy.yml").read_text(encoding="utf-8")
+
+    assert "BOT_OTTER_TOOLS_ENABLED: ${{ vars.BOT_OTTER_TOOLS_ENABLED }}" in workflow
+    assert "printf 'BOT_OTTER_TOOLS_ENABLED=%s\\n' \"$BOT_OTTER_TOOLS_ENABLED\"" in workflow

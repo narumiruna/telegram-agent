@@ -20,6 +20,7 @@ from telegramagent.agent_runtime import AgentRuntime
 from telegramagent.agent_runtime import AgentRuntimeConfig
 from telegramagent.images import AgentReply
 from telegramagent.images import ImageAttachment
+from telegramagent.otter_tools import OtterMutationCancelledError
 from telegramagent.session import SessionLog
 
 
@@ -46,6 +47,7 @@ class FakeBackend:
         self.release = asyncio.Event()
         self.wait = False
         self.failures: list[Exception] = []
+        self.cancel_error: asyncio.CancelledError | None = None
         self.cancelled = asyncio.Event()
 
     async def run_streamed(
@@ -74,8 +76,10 @@ class FakeBackend:
         try:
             if self.wait:
                 await self.release.wait()
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
             self.cancelled.set()
+            if self.cancel_error is not None:
+                raise self.cancel_error from exc
             raise
         messages = (
             ModelRequest(parts=[UserPromptPart(content=prompt)]),
@@ -216,6 +220,25 @@ async def test_cancel_stops_active_run_and_clears_steering(tmp_path: Path) -> No
     assert [event.type for event in events] == ["agent_start", "cancelled"]
     assert runtime.pending_steering(1) == ()
     assert await runtime.cancel(1) is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_surfaces_mutation_outcome_warning(tmp_path: Path) -> None:
+    backend = FakeBackend()
+    backend.wait = True
+    backend.cancel_error = OtterMutationCancelledError()
+    runtime = AgentRuntime(backend=backend, sessions=SessionLog(tmp_path / "sessions"))
+    events: list[AgentEvent] = []
+    active = asyncio.create_task(runtime.submit(1, "write", event_handler=events.append))
+    await asyncio.sleep(0)
+
+    assert await runtime.cancel(1) is True
+    result = await active
+
+    assert result.kind == "cancelled"
+    assert "結果不明" in result.reply.text
+    assert events[-1].type == "cancelled"
+    assert events[-1].text == result.reply.text
 
 
 @pytest.mark.asyncio

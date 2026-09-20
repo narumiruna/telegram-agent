@@ -65,6 +65,12 @@ class OtterCliConfig:
     max_output_chars: int = 20_000
 
 
+class OtterMutationCancelledError(asyncio.CancelledError):
+    """Cancellation warning for a write that may already have committed."""
+
+    user_message = "任務已取消, 但 Otter 寫入可能已完成, 結果不明。請先查詢該筆資料與餘額, 確認後再操作; 不要直接重試。"
+
+
 class OtterCliRuntime:
     def __init__(self, config: OtterCliConfig) -> None:
         if config.timeout_seconds <= 0:
@@ -122,8 +128,10 @@ class OtterCliRuntime:
                 message=f"The Otter CLI timed out after {self.config.timeout_seconds:g} seconds.",
                 outcome_unknown=mutation,
             )
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
             await _stop_process(process, stdout_task, stderr_task)
+            if mutation:
+                raise OtterMutationCancelledError from exc
             raise
 
         if stdout_truncated or stderr_truncated:

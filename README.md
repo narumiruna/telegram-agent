@@ -190,7 +190,7 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | `BOT_OTTER_MAX_OUTPUT_CHARS` | `20000` | Maximum captured stdout or stderr characters from one Otter CLI command. |
 | `OTTER_URL` | `https://otter.narumi.dev/` | HTTPS Otter server used by the CLI. Remote plain HTTP remains blocked. |
 | `OTTER_TOKEN` | empty | Optional ephemeral Otter token supplied only through deployment secrets. |
-| `OTTER_CONFIG_PATH` | empty | Optional credential file; Compose defaults it under mounted `.telegramagent/`. |
+| `OTTER_CONFIG_PATH` | empty | Optional credential file; for Compose persistence, set it under mounted `.telegramagent/`. |
 | `BOT_EVENTS_ENABLED` | `false` | Enable file-backed immediate events. |
 | `BOT_CONTAINER_TOOLS_ENABLED` | `false` in Compose | Register Docker-only local tools when running inside a container. Incompatible with configured Otter credentials/tools. |
 | `LOGFIRE_ENABLED` | `true` | Configure Logfire when `LOGFIRE_TOKEN` is set. |
@@ -366,8 +366,8 @@ BOT_CONTAINER_TOOLS_ENABLED=false
 
 If `BOT_ENABLED_SKILLS` is non-empty, include `otter-manage-expenses` in that comma-separated list. For ephemeral
 deployment authentication, inject `OTTER_TOKEN` with a secret manager. Never paste it into Telegram or
-commit it to `.env`. For a persistent device credential in Compose, leave `OTTER_TOKEN` unset and run the one-time login
-outside the agent:
+commit it to `.env`. For a persistent device credential in Compose, leave `OTTER_TOKEN` unset, set
+`OTTER_CONFIG_PATH=.telegramagent/otter/credentials.json` in `.env`, and run the one-time login outside the agent:
 
 ```bash
 docker compose build telegramagent
