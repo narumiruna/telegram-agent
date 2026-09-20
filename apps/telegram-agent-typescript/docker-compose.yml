@@ -12,6 +12,10 @@ services:
     restart: unless-stopped
     volumes:
       - ../../.agents:/app/.agents:ro
-      - ../../.events:/app/.events
-      - ../../.telegramagent:/app/.telegramagent
+      - events:/app/.events
+      - state:/app/.telegramagent
       - ../../SOUL.md:/app/SOUL.md:ro
+
+volumes:
+  events:
+  state:
