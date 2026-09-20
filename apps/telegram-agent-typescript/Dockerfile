@@ -27,7 +27,6 @@ RUN groupadd --system app \
     && chown -R app:app /app
 
 COPY --from=production-dependencies --chown=app:app /build/node_modules /app/node_modules
-COPY --from=production-dependencies --chown=app:app /build/apps/telegram-agent-typescript/node_modules /app/apps/telegram-agent-typescript/node_modules
 
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
