@@ -80,28 +80,9 @@ class OtterCliRuntime:
         self.config = config
 
     async def run(self, arguments: list[str], *, mutation: bool = False) -> dict[str, Any]:
-        env = self._environment()
-        try:
-            process = await asyncio.create_subprocess_exec(
-                self.config.command,
-                *arguments,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-            )
-        except FileNotFoundError:
-            return self._error(
-                category="configuration",
-                code="COMMAND_NOT_FOUND",
-                message="The configured Otter CLI executable was not found.",
-            )
-        except OSError as exc:
-            return self._error(
-                category="configuration",
-                code="COMMAND_START_FAILED",
-                message=_redact_text(str(exc), secrets=self._secrets()),
-            )
+        process = await self._start_process(arguments, mutation=mutation)
+        if isinstance(process, dict):
+            return process
 
         if process.stdout is None or process.stderr is None:  # pragma: no cover - subprocess contract
             process.kill()
@@ -161,6 +142,35 @@ class OtterCliRuntime:
 
         error_payload = _parse_json(stderr or stdout)
         return self._cli_error(error_payload, fallback_text=stderr or stdout, mutation=mutation)
+
+    async def _start_process(
+        self, arguments: list[str], *, mutation: bool
+    ) -> asyncio.subprocess.Process | dict[str, Any]:
+        try:
+            return await asyncio.create_subprocess_exec(
+                self.config.command,
+                *arguments,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self._environment(),
+            )
+        except asyncio.CancelledError as exc:
+            if mutation:
+                raise OtterMutationCancelledError from exc
+            raise
+        except FileNotFoundError:
+            return self._error(
+                category="configuration",
+                code="COMMAND_NOT_FOUND",
+                message="The configured Otter CLI executable was not found.",
+            )
+        except OSError as exc:
+            return self._error(
+                category="configuration",
+                code="COMMAND_START_FAILED",
+                message=_redact_text(str(exc), secrets=self._secrets()),
+            )
 
     def _environment(self) -> dict[str, str]:
         environment = {key: value for key, value in os.environ.items() if key in _ENV_ALLOWLIST}

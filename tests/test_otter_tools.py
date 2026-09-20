@@ -68,6 +68,28 @@ print(json.dumps({
 
 
 @pytest.mark.asyncio
+async def test_runtime_cancellation_during_mutation_startup_warns_that_outcome_is_unknown(monkeypatch) -> None:
+    started = asyncio.Event()
+    never_finishes = asyncio.Event()
+
+    async def delayed_subprocess(*_args, **_kwargs):
+        started.set()
+        await never_finishes.wait()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", delayed_subprocess)
+    runtime = OtterCliRuntime(OtterCliConfig(command="otter"))
+    task = asyncio.create_task(runtime.run(["expenses", "add"], mutation=True))
+    await started.wait()
+
+    task.cancel()
+
+    with pytest.raises(OtterMutationCancelledError) as raised:
+        await task
+    assert "結果不明" in raised.value.user_message
+    assert "不要直接重試" in raised.value.user_message
+
+
+@pytest.mark.asyncio
 async def test_runtime_does_not_interpret_argument_as_shell_code(tmp_path: Path) -> None:
     marker = tmp_path / "shell-ran"
     executable = _fake_otter(
