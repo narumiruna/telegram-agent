@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -44,6 +45,8 @@ from telegramagent.morsel import MorselPublisher
 from telegramagent.morsel import build_morsel_tools
 from telegramagent.observability import LogfireConfig
 from telegramagent.observability import configure_logfire
+from telegramagent.otter_tools import OtterCliConfig
+from telegramagent.otter_tools import build_otter_tools
 from telegramagent.session import SessionLog
 from telegramagent.settings import Settings
 from telegramagent.skills import SkillInstaller
@@ -209,11 +212,64 @@ def _container_tools_from_settings(
     return tools, Capability("container_tools", True, description)
 
 
+def _guard_container_tools_for_otter(
+    settings: Settings, tools: tuple[Any, ...], capability: Capability
+) -> tuple[tuple[Any, ...], Capability]:
+    if not tools or not (
+        settings.bot_otter_tools_enabled or settings.otter_token is not None or settings.otter_config_path is not None
+    ):
+        return tools, capability
+    return (), Capability(
+        "container_tools",
+        False,
+        capability.description,
+        "disabled while Otter tools or credentials are configured",
+    )
+
+
 def _gurume_tools_from_settings(settings: Settings) -> tuple[tuple[Any, ...], Capability]:
     description = "Direct Gurume Python tools for Tabelog restaurant recommendations, search, suggestions, and details"
     if not settings.bot_gurume_tools_enabled:
         return (), Capability("tool.gurume", False, description, "disabled")
     return build_gurume_tools(), Capability("tool.gurume", True, description)
+
+
+def _otter_tools_from_settings(
+    settings: Settings, *, project_root: Path | None = None
+) -> tuple[tuple[Any, ...], Capability]:
+    description = "Typed Otter CLI tools for trusted shared-expense trips, participants, balances, and settlements"
+    if not settings.bot_otter_tools_enabled:
+        return (), Capability("tool.otter", False, description, "disabled")
+    if not settings.bot_whitelist:
+        return (), Capability("tool.otter", False, description, "BOT_WHITELIST is empty")
+
+    root = project_root or Path.cwd()
+    command = settings.bot_otter_command
+    command_path = Path(command)
+    if not command_path.is_absolute() and "/" in command:
+        command = str(root / command_path)
+    command_has_path = Path(command).is_absolute() or "/" in command
+    command_is_available = (
+        Path(command).is_file() and os.access(command, os.X_OK) if command_has_path else command_available(command)
+    )
+    if not command_is_available:
+        return (), Capability("tool.otter", False, description, f"command not executable: {settings.bot_otter_command}")
+
+    config_path = settings.otter_config_path
+    if config_path is not None and not config_path.is_absolute():
+        config_path = root / config_path
+    token = settings.otter_token.get_secret_value() if settings.otter_token is not None else None
+    tools = build_otter_tools(
+        OtterCliConfig(
+            command=command,
+            base_url=settings.otter_url,
+            token=token,
+            config_path=config_path,
+            timeout_seconds=settings.bot_otter_timeout_seconds,
+            max_output_chars=settings.bot_otter_max_output_chars,
+        )
+    )
+    return tools, Capability("tool.otter", True, description)
 
 
 def _morsel_tools_from_settings(
@@ -288,7 +344,14 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
             _image_generation_unavailable_reason(settings),
         )
     )
+    otter_tools, otter_capability = _otter_tools_from_settings(settings, project_root=project_root)
+    capabilities.set(otter_capability)
+    if otter_tools:
+        logger.info("Enabled {} typed Otter tool(s)", len(otter_tools))
     container_tools, container_tools_capability = _container_tools_from_settings(settings, project_root=project_root)
+    container_tools, container_tools_capability = _guard_container_tools_for_otter(
+        settings, container_tools, container_tools_capability
+    )
     capabilities.set(container_tools_capability)
     if container_tools:
         logger.info("Enabled {} Docker-only container tool(s)", len(container_tools))
@@ -311,7 +374,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable deb
         capability_summary=capabilities.summary(),
         kabigon_tool_timeout_seconds=settings.bot_kabigon_timeout_seconds,
         mcp_toolsets=mcp_toolsets,
-        tools=(*morsel_tools, *gurume_tools, *container_tools),
+        tools=(*morsel_tools, *gurume_tools, *otter_tools, *container_tools),
         max_attempts=settings.bot_agent_max_attempts,
         retry_base_delay_seconds=settings.bot_agent_retry_base_delay_seconds,
     )

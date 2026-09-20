@@ -156,6 +156,50 @@ def test_gurume_tools_settings_parse_env(monkeypatch) -> None:
     assert settings.bot_gurume_tools_enabled is False
 
 
+def test_otter_tool_settings_parse_env_without_exposing_token(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_OTTER_TOOLS_ENABLED", "true")
+    monkeypatch.setenv("BOT_OTTER_COMMAND", "/usr/local/bin/otter")
+    monkeypatch.setenv("BOT_OTTER_TIMEOUT_SECONDS", "12.5")
+    monkeypatch.setenv("BOT_OTTER_MAX_OUTPUT_CHARS", "900")
+    monkeypatch.setenv("OTTER_URL", "https://otter.example/")
+    monkeypatch.setenv("OTTER_TOKEN", "secret-token")
+    monkeypatch.setenv("OTTER_CONFIG_PATH", ".state/otter.json")
+
+    settings = Settings()
+
+    assert settings.bot_otter_tools_enabled is True
+    assert settings.bot_otter_command == "/usr/local/bin/otter"
+    assert settings.bot_otter_timeout_seconds == 12.5
+    assert settings.bot_otter_max_output_chars == 900
+    assert settings.otter_url == "https://otter.example/"
+    assert settings.otter_token is not None
+    assert settings.otter_token.get_secret_value() == "secret-token"
+    assert settings.otter_config_path == Path(".state/otter.json")
+    assert "secret-token" not in repr(settings)
+
+
+def test_empty_otter_credentials_are_unset(monkeypatch) -> None:
+    monkeypatch.setenv("OTTER_TOKEN", "   ")
+    monkeypatch.setenv("OTTER_CONFIG_PATH", "")
+
+    settings = Settings()
+
+    assert settings.otter_token is None
+    assert settings.otter_config_path is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("BOT_OTTER_TIMEOUT_SECONDS", 0),
+        ("BOT_OTTER_MAX_OUTPUT_CHARS", 99),
+    ],
+)
+def test_otter_settings_reject_invalid_bounds(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate({field: value})
+
+
 def test_container_tool_settings_parse_env(monkeypatch) -> None:
     monkeypatch.setenv("BOT_CONTAINER_TOOLS_ENABLED", "true")
     monkeypatch.setenv("BOT_CONTAINER_TOOLS_ROOT", "/app")

@@ -21,6 +21,7 @@ replies to Morsel, and expose optional runtime tools such as kabigon, Yahoo Fina
 - **Durable context**: `SOUL.md` and structured per-chat model transcripts survive restarts.
 - **Agent runtime**: per-chat execution, a single final Telegram status edit, mid-run steering, idle follow-ups for synthetic events, `/cancel`, request-level transient retries, and per-request context compaction.
 - **Agent Skills**: local `.agents/skills/*/SKILL.md` files are loaded as model instructions.
+- **Otter expenses**: optional typed tools manage trusted shared-expense trips through a pinned Otter CLI.
 - **Docker-ready**: Compose includes mounted runtime state, Playwright browser assets, and optional container tools.
 
 ## 🧱 Architecture
@@ -183,8 +184,15 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | `BOT_FIRECRAWL_MCP_INIT_TIMEOUT_SECONDS` | `10` | Firecrawl MCP initialization timeout. |
 | `BOT_FIRECRAWL_MCP_READ_TIMEOUT_SECONDS` | `120` | Firecrawl MCP read timeout. |
 | `BOT_GURUME_TOOLS_ENABLED` | `true` | Register direct Gurume Python tools for Tabelog restaurant recommendations/search. |
+| `BOT_OTTER_TOOLS_ENABLED` | `false` | Register typed Otter expense tools; requires a non-empty `BOT_WHITELIST` and the CLI executable. |
+| `BOT_OTTER_COMMAND` | `otter` | Otter CLI executable name or path. Compose uses `/usr/local/bin/otter`. |
+| `BOT_OTTER_TIMEOUT_SECONDS` | `30` | Positive deadline for one Otter CLI command. Timed-out writes have an unknown outcome and are not retried. |
+| `BOT_OTTER_MAX_OUTPUT_CHARS` | `20000` | Maximum captured stdout or stderr characters from one Otter CLI command. |
+| `OTTER_URL` | `https://otter.narumi.dev/` | HTTPS Otter server used by the CLI. Remote plain HTTP remains blocked. |
+| `OTTER_TOKEN` | empty | Optional ephemeral Otter token supplied only through deployment secrets. |
+| `OTTER_CONFIG_PATH` | empty | Optional credential file; Compose defaults it under mounted `.telegramagent/`. |
 | `BOT_EVENTS_ENABLED` | `false` | Enable file-backed immediate events. |
-| `BOT_CONTAINER_TOOLS_ENABLED` | `true` in Compose | Register Docker-only local tools when running inside a container. |
+| `BOT_CONTAINER_TOOLS_ENABLED` | `false` in Compose | Register Docker-only local tools when running inside a container. Incompatible with configured Otter credentials/tools. |
 | `LOGFIRE_ENABLED` | `true` | Configure Logfire when `LOGFIRE_TOKEN` is set. |
 | `LOGFIRE_INCLUDE_CONTENT` | `false` | Include prompts/model content in traces only when explicitly enabled. |
 
@@ -335,6 +343,48 @@ This becomes a non-interactive `npx --yes skills@1.5.7 add ... --agent universal
 Skills are instructions only. They do not make scripts/tools executable unless runtime code also wires a capability,
 Pydantic AI tool, or MCP toolset.
 
+### Otter shared expenses
+
+The repository vendors the reviewed `otter-manage-expenses` skill and builds the AGPL-3.0-only Otter CLI from pinned
+upstream commit `7f1af003c331f1f263f94385f9c2d4cdc2142f58`; the image keeps its license and source/ref under
+`/usr/share/doc/otter/`. The bot exposes typed tools instead of a raw CLI or shell. The first
+release supports trip reads/create/update, participant reads/add/rename, expense reads/add/update with equal splits,
+balances, and settlement reads/recording. Destructive deletes and CLI device login are intentionally not agent tools.
+
+This integration uses one Otter identity for the whole deployment. Every Telegram user or chat in `BOT_WHITELIST` can
+access every trip visible to that identity, so use it only within one trusted account/security domain. The tool fails
+closed when the whitelist is empty. General container tools are disabled when Otter tools or credentials are configured
+to prevent shell execution of Otter or credential-file access.
+
+Enable the integration after authentication is ready:
+
+```env
+BOT_WHITELIST=123456789
+BOT_OTTER_TOOLS_ENABLED=true
+BOT_CONTAINER_TOOLS_ENABLED=false
+```
+
+If `BOT_ENABLED_SKILLS` is non-empty, include `otter-manage-expenses` in that comma-separated list. For ephemeral
+deployment authentication, inject `OTTER_TOKEN` with a secret manager. Never paste it into Telegram or
+commit it to `.env`. For a persistent device credential in Compose, leave `OTTER_TOKEN` unset and run the one-time login
+outside the agent:
+
+```bash
+docker compose build telegramagent
+docker compose run --rm -e OTTER_TOKEN= --entrypoint otter telegramagent auth login --no-open
+docker compose run --rm -e OTTER_TOKEN= --entrypoint otter telegramagent auth status
+```
+
+Open the displayed HTTPS page yourself and approve the device code. Compose writes the credential to
+`.telegramagent/otter/credentials.json`, which persists across container replacement and must remain uncommitted. A
+non-zero authentication, permission, configuration, conflict, or connection result is a blocker rather than a retry
+signal.
+
+Typical Telegram requests after enablement include `建立日本旅行，幣別 JPY`、`新增小明和小美`、
+`晚餐 12000 日圓，我付，三人均分` and `現在誰要付誰多少？`. The agent resolves names from current Otter IDs,
+verifies each write with a narrow read, and refreshes balances after expense or settlement changes. If a write times out,
+inspect the trip before retrying because the commit outcome is unknown.
+
 ## 🛠 Commands
 
 | Command | Description |
@@ -449,7 +499,7 @@ Compose mounts `./.events:/app/.events`, so host scripts can write event files w
 
 ## 🧰 Docker-Only Container Tools
 
-Docker Compose enables optional local tools for the chat model:
+Docker Compose can enable optional local tools for the chat model:
 
 ```text
 bash, edit, find, grep, ls, read, write
@@ -465,11 +515,12 @@ Important limits:
 - Tool output is bounded by timeout/read/result limits.
 - Tool results may be sent to the model provider.
 - Writes to image-layer `/app` are not durable across rebuilds; mounted volumes persist.
+- The runtime removes all container tools when Otter tools, `OTTER_TOKEN`, or `OTTER_CONFIG_PATH` are configured.
 
-Disable them with:
+They are disabled by default. Enable them only when Otter is not configured:
 
 ```env
-BOT_CONTAINER_TOOLS_ENABLED=false
+BOT_CONTAINER_TOOLS_ENABLED=true
 ```
 
 ## 📊 Yahoo Finance MCP
