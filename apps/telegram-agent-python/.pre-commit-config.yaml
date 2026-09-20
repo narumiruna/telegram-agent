@@ -1,0 +1,37 @@
+files: ^apps/telegram-agent-python/
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: trailing-whitespace
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.13
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.11.14
+    hooks:
+      - id: uv-lock
+        args: [--project, apps/telegram-agent-python]
+        files: ^apps/telegram-agent-python/(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
+  - repo: local
+    hooks:
+      - id: ty-check
+        name: ty-check
+        entry: uv run --project apps/telegram-agent-python ty check --project apps/telegram-agent-python
+        language: system
+        pass_filenames: false
+      - id: tombi-format
+        name: tombi-format
+        entry: bash -c 'cd apps/telegram-agent-python && uvx --from tombi==0.11.3 tombi format pyproject.toml'
+        language: system
+        files: ^apps/telegram-agent-python/pyproject\.toml$
+        pass_filenames: false

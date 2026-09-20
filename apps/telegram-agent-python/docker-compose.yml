@@ -1,13 +1,13 @@
 services:
   telegramagent:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: apps/telegram-agent-python/Dockerfile
       args:
         PYTHON_VERSION: "3.14"
     image: telegramagent:local
     env_file:
-      - .env
+      - ../../.env
     command: ["--verbose"]
     user: "0:0"
     environment:
@@ -17,7 +17,7 @@ services:
     init: true
     restart: unless-stopped
     volumes:
-      - ./.agents:/app/.agents
-      - ./.events:/app/.events
-      - ./.telegramagent:/app/.telegramagent
-      - ./SOUL.md:/app/SOUL.md:ro
+      - ../../.agents:/app/.agents
+      - ../../.events:/app/.events
+      - ../../.telegramagent:/app/.telegramagent
+      - ../../SOUL.md:/app/SOUL.md:ro

@@ -10,6 +10,8 @@ jobs:
   container:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
       # https://docs.docker.com/build/ci/github-actions/manage-tags-labels/
       - name: Docker meta
         id: meta
@@ -46,6 +48,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
+          context: .
+          file: apps/telegram-agent-typescript/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

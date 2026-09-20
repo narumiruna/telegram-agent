@@ -1,0 +1,566 @@
+# telegramagent Python 🤖
+
+Python implementation of the Telegram AI bot, powered by the Telegram Bot API, Pydantic AI, and an OpenAI-compatible Chat Completions endpoint. This app lives in the [`telegram-agent` monorepo](../../README.md).
+
+It can chat in private messages, behave politely in groups, read replied messages, enrich URLs with extracted content,
+summarize links, convert Telegram documents to Markdown, understand Telegram images, generate images, publish long
+replies to Morsel, and expose optional runtime tools such as kabigon, Yahoo Finance MCP, Firecrawl MCP, and container-local file tools.
+
+## ✨ Highlights
+
+- **Telegram-native behavior**: private chat replies, group mention handling, reply-to-bot handling, and bot-loop guards.
+- **Reply context**: when mentioned in a group reply, the bot includes the replied message sender, type, date, text/caption,
+  and URL context in the LLM prompt.
+- **URL enrichment**: HTTP(S), YouTube, X/Twitter, and general webpages are fetched or loaded through kabigon when possible.
+- **Document input**: Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV, and text-based PDF attachments are
+  converted locally to bounded Markdown with AnyDoc and kept in conversation context.
+- **Image input/output**: Telegram photos can be sent to a vision-capable model; `/image` can call an image-generation
+  endpoint when enabled.
+- **Rich and long replies**: Mermaid, Vega-Lite, and LaTeX answers plus replies over the configured smart-routing
+  threshold can be published to Morsel and replaced with a contextual share link and Telegram preview.
+- **Durable context**: `SOUL.md` and structured per-chat model transcripts survive restarts.
+- **Agent runtime**: per-chat execution, a single final Telegram status edit, mid-run steering, idle follow-ups for synthetic events, `/cancel`, request-level transient retries, and per-request context compaction.
+- **Agent Skills**: local `.agents/skills/*/SKILL.md` files are loaded as model instructions.
+- **Docker-ready**: Compose includes mounted runtime state, Playwright browser assets, and optional container tools.
+
+## 🧱 Architecture
+
+```text
+Telegram updates
+  -> telegramagent.telegram
+  -> command / bounded document conversion / image / reply-context / proactive URL routing
+  -> telegramagent.agent_runtime (per-chat state, steering/follow-up intent, lifecycle, compaction)
+  -> telegramagent.llm via Pydantic AI
+  -> OpenAI-compatible API and tools
+  -> one final Telegram status edit and response
+```
+
+Important modules:
+
+| Area | File |
+| --- | --- |
+| CLI and app wiring | `src/telegramagent/cli.py` |
+| Telegram Bot API client and handlers | `src/telegramagent/telegram.py` |
+| AnyDoc document conversion | `src/telegramagent/documents.py` |
+| Per-chat agent orchestration | `src/telegramagent/agent_runtime.py` |
+| LLM and Pydantic AI adapter | `src/telegramagent/llm.py` |
+| Structured session store | `src/telegramagent/session.py` |
+| Proactive URL and YouTube handling | `src/telegramagent/actions.py` |
+| Configuration | `src/telegramagent/settings.py` |
+| Morsel publishing | `src/telegramagent/morsel.py` |
+| Tests | `tests/` |
+
+## 🚀 Quick Start
+
+Run these commands from the repository root so the app can use the shared `.env`, `SOUL.md`, `.agents`, and runtime state.
+
+Install dependencies:
+
+```bash
+uv sync --project apps/telegram-agent-python
+```
+
+Create a local `.env`:
+
+```bash
+cp apps/telegram-agent-python/.env.example .env
+```
+
+Set at least:
+
+```env
+BOT_TOKEN=your Telegram Bot token
+OPENAI_API_KEY=your API key
+OPENAI_MODEL=gpt-5.6-luna
+```
+
+Run locally:
+
+```bash
+uv run --project apps/telegram-agent-python telegramagent
+```
+
+Run with Docker Compose:
+
+```bash
+docker compose -f apps/telegram-agent-python/docker-compose.yml up -d --build
+docker compose -f apps/telegram-agent-python/docker-compose.yml logs -f telegramagent
+```
+
+Stop Docker Compose:
+
+```bash
+docker compose -f apps/telegram-agent-python/docker-compose.yml down
+```
+
+## ⚙️ Configuration
+
+All runtime settings are environment variables. Start from `apps/telegram-agent-python/.env.example`; the most common settings are below.
+
+### Telegram
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOT_TOKEN` | empty | Telegram Bot API token from BotFather. |
+| `BOT_WHITELIST` | empty | Comma-separated chat IDs or user IDs allowed to use the bot. Empty allows everyone. |
+| `BOT_MAX_CONSECUTIVE_REPLIES_TO_BOTS` | `1` | Safety limit for bot-to-bot reply chains. Use `0` to never reply to bots. |
+| `BOT_GROUP_PASSIVE_CONTEXT_ENABLED` | `true` | Store unaddressed group messages as passive context without replying. |
+
+### Model
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible API base URL. |
+| `OPENAI_API_KEY` | empty | API key for the configured provider. |
+| `OPENAI_MODEL` | `gpt-5.6-luna` | Chat model used for replies. |
+
+### Long replies
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MORSEL_URL` | `https://morsel.narumi.dev/` | Public Morsel origin used to create and validate rich Markdown share URLs. |
+| `MORSEL_API_KEY` | empty | Bearer API key required for any Morsel publishing. |
+| `MORSEL_MODE` | `smart` | `disabled` publishes nothing, `rich_only` enables only the agent tool, and `smart` also routes long replies. |
+| `MORSEL_LONG_REPLY_THRESHOLD` | `2000` | Sanitized character count after which `smart` mode publishes an ordinary reply; valid range is 1–4096. |
+| `MORSEL_SHARE_EXPIRES_IN_SECONDS` | `2592000` | Lifetime assigned to non-Instant-View shares (30 days by default; valid range is 1–315360000). |
+| `MORSEL_TELEGRAM_INSTANT_VIEW` | `true` | Create Telegram Instant View source pages; these shares cannot expire and disclose the complete rendered article to Telegram. |
+| `TELEGRAM_INSTANT_VIEW_RHASH` | empty | Optional domain-specific template hash appended to Morsel URLs as `tg_rhash` before Telegram approves the template. |
+| `MORSEL_TIMEOUT_SECONDS` | `12` | Positive timeout for the single Morsel share-creation request. |
+
+### Context
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOT_SOUL_PATH` | `SOUL.md` | Persona and voice instructions. |
+| `BOT_SESSION_LOG_DIR` | `.telegramagent/sessions` | Structured v2 per-chat Pydantic AI transcripts used after restarts. |
+| `BOT_AGENT_MAX_ATTEMPTS` | `3` | Maximum attempts for one transient model request/assistant turn; completed tools are not replayed. |
+| `BOT_AGENT_RETRY_BASE_DELAY_SECONDS` | `1` | Initial cancellable exponential delay between model-request attempts. |
+| `BOT_AGENT_CONTEXT_TOKEN_BUDGET` | `100000` | Approximate context budget that drives automatic compaction. |
+| `BOT_AGENT_COMPACTION_TRIGGER_RATIO` | `0.8` | Fraction of the context budget at which compaction starts. |
+| `BOT_AGENT_CHARS_PER_TOKEN` | `4` | Token-estimation fallback when the provider cannot count ahead. |
+| `BOT_SKILLS_DIR` | `.agents/skills` | Directory for Agent Skills. |
+| `BOT_ENABLED_SKILLS` | empty | Comma-separated skill names. Empty loads every skill. |
+| `BOT_SKILL_ADMINS` | empty | Users/chats allowed to manage skills/context files. Empty reuses `BOT_WHITELIST`. |
+
+> **Breaking session format:** the runtime writes `session-v2.jsonl` and intentionally ignores legacy `log.jsonl` files. Clear `BOT_SESSION_LOG_DIR` before deploying this version if old conversation state must not remain on disk.
+
+### URL Handling
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOT_PROACTIVE_ENABLED` | `true` | Automatically handle safe URL actions and short follow-ups like `go`. |
+| `BOT_PROACTIVE_URL_TIMEOUT_SECONDS` | `15` | Built-in URL fetch timeout. |
+| `BOT_KABIGON_TIMEOUT_SECONDS` | `180` | kabigon fallback timeout. |
+| `BOT_PROACTIVE_MAX_EXTRACTED_CHARS` | `12000` | Max content sent into URL-summary prompts. |
+| `BOT_PROACTIVE_PENDING_TTL_SECONDS` | `900` | How long follow-up actions can reuse a pending URL. |
+| `BOT_PROACTIVE_ALLOWED_SCHEMES` | `http,https` | URL schemes accepted by the proactive router. |
+
+### Documents
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOT_DOCUMENT_INPUT_ENABLED` | `true` | Convert supported Telegram documents to Markdown for the agent. |
+| `BOT_DOCUMENT_MAX_BYTES` | `20000000` | Reject downloads larger than this bounded byte limit. |
+| `BOT_DOCUMENT_MAX_MARKDOWN_CHARS` | `50000` | Maximum aggregate converted Markdown included in one agent turn. |
+| `BOT_DOCUMENT_CONVERSION_TIMEOUT_SECONDS` | `30` | Maximum caller wait for one local AnyDoc conversion. |
+| `BOT_DOCUMENT_MAX_CONCURRENT_CONVERSIONS` | `2` | Maximum local document conversions running concurrently. |
+
+### Images
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOT_IMAGE_INPUT_ENABLED` | `true` | Allow Telegram photos/image documents as model input. |
+| `BOT_IMAGE_MAX_BYTES` | `8000000` | Reject larger image downloads. |
+| `BOT_IMAGE_GENERATION_ENABLED` | `false` | Enable `/image <prompt>`. |
+| `BOT_IMAGE_GENERATION_MODEL` | `gpt-image-1` | Image generation model. |
+| `BOT_IMAGE_GENERATION_SIZE` | `1024x1024` | Image generation size. |
+
+### Optional Integrations
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOT_YFINANCE_MCP_ENABLED` | `true` | Register Yahoo Finance MCP tools through `yfmcp`. |
+| `FIRECRAWL_API_KEY` | empty | Authenticate the hosted Firecrawl MCP endpoint and Firecrawl-backed kabigon loading. |
+| `BOT_FIRECRAWL_MCP_ENABLED` | `true` | Register hosted Firecrawl MCP tools when `FIRECRAWL_API_KEY` is configured. |
+| `BOT_FIRECRAWL_MCP_INIT_TIMEOUT_SECONDS` | `10` | Firecrawl MCP initialization timeout. |
+| `BOT_FIRECRAWL_MCP_READ_TIMEOUT_SECONDS` | `120` | Firecrawl MCP read timeout. |
+| `BOT_GURUME_TOOLS_ENABLED` | `true` | Register direct Gurume Python tools for Tabelog restaurant recommendations/search. |
+| `BOT_EVENTS_ENABLED` | `false` | Enable file-backed immediate events. |
+| `BOT_CONTAINER_TOOLS_ENABLED` | `true` in Compose | Register Docker-only local tools when running inside a container. |
+| `LOGFIRE_ENABLED` | `true` | Configure Logfire when `LOGFIRE_TOKEN` is set. |
+| `LOGFIRE_INCLUDE_CONTENT` | `false` | Include prompts/model content in traces only when explicitly enabled. |
+
+## 💬 Telegram Behavior
+
+### Private Chats
+
+In private chats, the bot replies to normal text, commands, images, supported documents, and proactive URL actions.
+
+### Groups and Supergroups
+
+To avoid interrupting group conversations, the bot replies only when:
+
+1. The message mentions the bot, for example `@your_bot 你怎麼看？`
+2. The message directly replies to a bot message
+
+When `BOT_GROUP_PASSIVE_CONTEXT_ENABLED=true`, unaddressed group messages are stored as passive context without calling
+the LLM. The next addressed message can then use recent group context.
+
+### Reply Context 🧵
+
+When a group message mentions the bot while replying to another message, the prompt includes:
+
+- replied message sender
+- message type (`text`, `photo`, `video`, `document`, `sticker`, `voice`, and so on)
+- message date when available
+- text or caption when available
+- readable placeholder for non-text messages
+- URLs found in the replied message and current message
+- extracted URL context when URL enrichment succeeds
+
+If the current message is only the bot mention, the bot is instructed to respond directly to the replied content instead
+of asking what to do.
+
+### Document Input 📄
+
+Send a supported document directly or mention the bot while replying to one. A caption becomes the instruction; without
+one, the bot reads and summarizes the document. Supported extensions are `.doc`, `.docx`, `.docm`, `.ppt`, `.pps`,
+`.pot`, `.pptx`, `.pptm`, `.ppsx`, `.ppsm`, `.xls`, `.xlsx`, `.xlsm`, `.xlsb`, `.odt`, `.ods`, `.odp`, `.rtf`, `.epub`,
+`.csv`, and `.pdf`.
+
+The file is downloaded into a bounded in-memory buffer, converted locally by `firecrawl-anydoc`, and sent to the agent as
+untrusted Markdown reference material. The original bytes are not sent to the model or stored. Converted Markdown is
+stored in the normal session transcript so follow-up questions can refer to it; long output is truncated with a visible
+marker. Image documents continue to use vision input.
+
+Local AnyDoc conversion does not OCR scanned/image-only PDFs and does not pass embedded document assets to the vision
+model. Encrypted, malformed, unsupported, oversized, overly complex, empty, or timed-out conversions return an explicit
+failure instead of silently dropping the attachment.
+
+## 🔗 URL Handling
+
+When proactive mode is enabled, supported links are handled directly instead of asking the user what to do.
+
+| URL type | Behavior |
+| --- | --- |
+| YouTube | Fetch available transcripts/subtitles, then summarize. |
+| X/Twitter status URLs | Try source-aware kabigon/browser extraction; detect and reject X browser-blocker pages. |
+| General HTTP(S) pages | Use bounded built-in text/HTML fetch first, then kabigon fallback. |
+| Follow-ups | `go`, `開始`, `繼續`, `抓抓看`, and similar triggers reuse the most recent pending URL. |
+
+Safety rules:
+
+- Only public `http` and `https` URLs are accepted.
+- Localhost, private networks, link-local addresses, and cloud metadata IPs are blocked.
+- Built-in fetch has timeout and max-size limits.
+- Large extracted content is truncated before it is sent to the model.
+- Fetch failures are reported honestly; the bot should not pretend it read content it did not read.
+
+### X/Twitter Notes
+
+Telegram link previews do not expose the preview card title/body through Bot API message fields. For X/Twitter links,
+the bot must fetch the target URL itself. Some X pages return a browser blocker page such as "JavaScript is not
+available"; these are treated as extraction failures and trigger kabigon/browser fallback.
+
+The Docker image installs Playwright Chromium and its Debian runtime dependencies so kabigon's browser-based loaders can
+run inside the container.
+
+## 🧠 Context Files
+
+The bot can load one always-on runtime context file before Agent Skills:
+
+- `SOUL.md`: identity, voice, values, and hard boundaries
+
+`MEMORY.md` is maintainer-facing repo memory for future coding agents. It is not loaded into Telegram runtime
+instructions.
+
+Instruction order:
+
+```text
+core rules -> SOUL.md -> Agent Skills -> conversation history -> user message
+```
+
+Edit the repository's `SOUL.md` to customize the bot's identity and voice.
+
+Reload at runtime:
+
+```text
+/soul reload
+```
+
+Keep context files safe. Do not store API keys, bot tokens, cookies, private URLs, passwords, or sensitive personal data.
+
+## 🧩 Agent Skills
+
+Skills are loaded from:
+
+```text
+.agents/skills/<skill-name>/SKILL.md
+```
+
+Minimal skill:
+
+```md
+---
+name: chat-style
+description: Telegram reply style. Use when replying to Telegram messages.
+---
+
+# Chat Style
+
+- Use Traditional Chinese.
+- Keep replies short.
+```
+
+Load only selected skills:
+
+```env
+BOT_ENABLED_SKILLS=chat-style,other-skill
+```
+
+Install skills from Telegram:
+
+```text
+/skills add vercel-labs/agent-skills --skill commit
+/skills list
+```
+
+Natural-language install requests are also supported:
+
+```text
+安裝 narumiruna/skills 的 skills 所有
+```
+
+This becomes a non-interactive `npx --yes skills@1.5.7 add ... --agent universal --yes --copy` command. Compose mounts
+`../../.agents:/app/.agents` from the repository root, so installed skills persist across container rebuilds.
+
+Skills are instructions only. They do not make scripts/tools executable unless runtime code also wires a capability,
+Pydantic AI tool, or MCP toolset.
+
+## 🛠 Commands
+
+| Command | Description |
+| --- | --- |
+| `/start` | Show an introduction. |
+| `/help` | Show help. |
+| `/id` | Show current chat/user ID for allowlist setup. |
+| `/reset` | Clear conversation memory for the current chat. |
+| `/cancel` | Cancel the active run for this chat and discard pending steering and follow-up input. |
+| `/ask <question>` | Ask the AI assistant directly. |
+| `/image <prompt>` | Generate an image when image output is enabled. |
+| `/skills add <package>` | Install Agent Skills with `npx`. |
+| `/skills list` | List installed Agent Skills. |
+| `/soul show\|reload\|path` | Inspect or reload `SOUL.md`. |
+| `/events list\|show <name>\|cancel <name>\|reload` | Manage file-backed events. |
+| `/tasks list\|show <id>\|cancel <id>` | Inspect or cancel proactive runtime tasks. |
+
+## 🖼 Image Input and Output
+
+Image input:
+
+- Users can send Telegram photos or image documents.
+- Captions are preserved as the user prompt.
+- The configured chat model/provider must support vision.
+- Oversized images are rejected before model submission.
+
+Image output:
+
+- Disabled by default.
+- Enable `BOT_IMAGE_GENERATION_ENABLED=true`.
+- Use `/image <prompt>`.
+- Requires an OpenAI-compatible `/images/generations` endpoint.
+
+## 📣 Morsel Rich and Long Replies
+
+Configure `MORSEL_API_KEY` and select a `MORSEL_MODE`; `MORSEL_URL` defaults to
+`https://morsel.narumi.dev/`. The routing modes are:
+
+| Mode | Rich Mermaid, Vega-Lite, and LaTeX answers | Ordinary long replies |
+| --- | --- | --- |
+| `disabled` | Kept in Telegram-readable form | Kept in Telegram chunks |
+| `rich_only` | Published through `publish_markdown_to_morsel` | Kept in Telegram chunks |
+| `smart` (default) | Published through `publish_markdown_to_morsel` | Published above `MORSEL_LONG_REPLY_THRESHOLD` |
+
+When the rich-rendering tool is available, the agent sends the complete Markdown answer to it and returns the share URL
+instead of duplicating raw diagram, chart, or formula markup in Telegram. If the tool cannot publish, the agent must not
+claim success and falls back to a Telegram-readable plain-text answer.
+
+In default `smart` mode, a sanitized ordinary reply of exactly **2000 characters** remains in Telegram, while one of
+**2001 characters** is published and represented by a short Traditional Chinese context line containing its character
+count plus the share URL. `rich_only` stops automatic long-reply publishing, and `disabled` stops all new Morsel shares.
+If publication is unavailable or rejected, the bot falls back to Telegram messages split into chunks of at most 4096
+characters. Set `MORSEL_LONG_REPLY_THRESHOLD` to customize this boundary.
+
+By default, new shares are non-expiring Telegram Instant View source pages. Instant View exposes the complete rendered
+article to Telegram, which may cache it independently; the Morsel deployment must also have its domain-specific
+Telegram template installed. Before Telegram approves the template, set `TELEGRAM_INSTANT_VIEW_RHASH` to the
+hash from the editor's **View in Telegram** link so the bot appends `?tg_rhash=<hash>` to each Morsel URL. Once
+approved, this setting may be removed and regular Morsel URLs will work for all Telegram users. Set
+`MORSEL_TELEGRAM_INSTANT_VIEW=false` to
+create shares that expire after `MORSEL_SHARE_EXPIRES_IN_SECONDS` (30 days by default); changing the lifetime affects
+only future shares, and expired links must be republished. Each share includes an explicit Open Graph title and description derived from a bounded
+Markdown prefix and normalized to Morsel's limits. This non-consuming preview can be requested repeatedly by anyone
+holding the capability URL until expiration or revocation, while the full capability URL grants access to the share.
+Use `rich_only` or `disabled` when ordinary content must remain in Telegram.
+
+Share creation performs one request bounded by `MORSEL_TIMEOUT_SECONDS`. It is intentionally not retried because the
+Morsel create endpoint has no idempotency contract and a retry could create duplicate shares. Returned URLs must match
+`MORSEL_URL` and a documented Morsel capability route before they are sent to Telegram. To roll back Morsel delivery
+without changing code, select `rich_only` or `disabled`, or lower the threshold as needed.
+
+## 📁 File-Backed Immediate Events
+
+When `BOT_EVENTS_ENABLED=true`, the bot scans:
+
+```text
+BOT_EVENTS_DIR/inbox/*.json
+```
+
+Example `.events/inbox/summarize-video.json`:
+
+```json
+{
+  "type": "immediate",
+  "name": "summarize-video",
+  "chat_id": 123456,
+  "text": "請整理 https://youtu.be/iG-hzh9roNw",
+  "reply_mode": "edit-status",
+  "created_by": "external-script"
+}
+```
+
+The bot dispatches it as:
+
+```text
+[EVENT:summarize-video] 請整理 https://youtu.be/iG-hzh9roNw
+```
+
+`reply_mode` values:
+
+- `send`: send the result as a new message.
+- `edit-status`: send `處理中…`, then edit that bot-owned status message into the final result.
+
+Event safety:
+
+- Event names must match `^[a-z0-9-]{1,40}$`.
+- Event text is length-limited.
+- Event text cannot execute management commands.
+- Successful events can be archived to `processed/`; invalid or failed events go to `failed/`.
+
+Compose mounts `../../.events:/app/.events` from the repository root, so host scripts can write event files without rebuilding the image.
+
+## 🧰 Docker-Only Container Tools
+
+Docker Compose enables optional local tools for the chat model:
+
+```text
+bash, edit, find, grep, ls, read, write
+```
+
+These tools are registered only when the runtime detects it is inside a container and
+`BOT_CONTAINER_TOOLS_ENABLED=true`.
+
+Important limits:
+
+- Filesystem tools are scoped to `BOT_CONTAINER_TOOLS_ROOT`.
+- `bash` runs in that root but can mutate container files or mounted state.
+- Tool output is bounded by timeout/read/result limits.
+- Tool results may be sent to the model provider.
+- Writes to image-layer `/app` are not durable across rebuilds; mounted volumes persist.
+
+Disable them with:
+
+```env
+BOT_CONTAINER_TOOLS_ENABLED=false
+```
+
+## 📊 Yahoo Finance MCP
+
+When `BOT_YFINANCE_MCP_ENABLED=true`, the bot registers the `yfmcp` MCP toolset for stock, ETF, options, financial
+statement, holder, sector, news, and price-chart lookups.
+
+Financial responses are informational only and are not investment advice.
+
+## 🔥 Firecrawl MCP
+
+When `BOT_FIRECRAWL_MCP_ENABLED=true` and `FIRECRAWL_API_KEY` is configured, the bot registers Firecrawl's hosted
+Streamable HTTP MCP toolset at `https://mcp.firecrawl.dev/{FIRECRAWL_API_KEY}/v2/mcp`. This provides web search,
+scraping, crawling, extraction, interaction, and research tools without running a separate MCP process.
+
+For local Python runs, put `FIRECRAWL_API_KEY` in the ignored root `.env`. Keep the key out of committed files;
+endpoint URLs are redacted in application logs and HTTP trace attributes.
+
+## 🍽️ Gurume Restaurant Tools
+
+Gurume's direct Python tools are enabled by default for Japanese restaurant search through Tabelog. The bot registers a
+high-level `recommend_japanese_restaurants` tool plus lower-level search, detail, area-suggestion, keyword-suggestion,
+and cuisine-list tools.
+
+Set `BOT_GURUME_TOOLS_ENABLED=false` to disable the direct tools.
+
+## 🔭 Observability
+
+Set `LOGFIRE_TOKEN` to enable Logfire at startup. The bot forwards Loguru logs and instruments HTTPX, Pydantic AI, and
+MCP calls.
+
+Prompt/model-response content is not sent by default. Enable content capture only when you intentionally want it:
+
+```env
+LOGFIRE_INCLUDE_CONTENT=true
+```
+
+Stdlib logging is routed through Loguru. Noisy HTTP/OpenAI debug loggers are suppressed by default, and common token-like
+values are redacted before forwarding.
+
+## 🧪 Development
+
+Run the app from the repository root:
+
+```bash
+uv sync --project apps/telegram-agent-python
+uv run --project apps/telegram-agent-python telegramagent
+docker compose -f apps/telegram-agent-python/docker-compose.yml up -d --build
+docker compose -f apps/telegram-agent-python/docker-compose.yml logs -f telegramagent
+```
+
+Run the quality gate from the Python app directory:
+
+```bash
+cd apps/telegram-agent-python
+uv run ruff format --check
+uv run ruff check .
+uv run ty check .
+uv run pytest -q tests
+```
+
+The app's `justfile` also provides aggregate recipes:
+
+```bash
+just --justfile apps/telegram-agent-python/justfile all
+just --justfile apps/telegram-agent-python/justfile test
+just --justfile apps/telegram-agent-python/justfile lint
+just --justfile apps/telegram-agent-python/justfile type
+```
+
+Note: `just lint` applies Ruff fixes. See the [root README](../../README.md) for npm workspace commands.
+
+## 🔒 Security Notes
+
+- Never commit `.env`, bot tokens, API keys, cookies, or private URLs.
+- Keep `SOUL.md` and `MEMORY.md` free of secrets.
+- URL fetching blocks private/local network targets.
+- Risky side-effect actions should require explicit confirmation.
+- Container tools can expose file contents to the model provider; keep secrets outside mounted tool roots.
+
+## 📦 Docker Volumes
+
+Compose mounts these paths by default:
+
+```yaml
+- ../../.agents:/app/.agents
+- ../../.events:/app/.events
+- ../../.telegramagent:/app/.telegramagent
+- ../../SOUL.md:/app/SOUL.md:ro
+```
+
+This keeps skills, events, and session logs durable while allowing `SOUL.md` edits without rebuilding the image.

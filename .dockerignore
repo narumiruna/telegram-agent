@@ -1,10 +1,16 @@
 .git
 .venv
+**/.venv
 .env
+**/.env
 .coverage
+**/.coverage
 .pytest_cache
+**/.pytest_cache
 .ruff_cache
+**/.ruff_cache
 __pycache__
+**/__pycache__
 *.py[cod]
 dist
 **/dist

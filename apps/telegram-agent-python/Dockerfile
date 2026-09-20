@@ -10,8 +10,8 @@ ENV UV_LINK_MODE=copy
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=apps/telegram-agent-python/uv.lock,target=uv.lock \
+    --mount=type=bind,source=apps/telegram-agent-python/pyproject.toml,target=pyproject.toml \
     uv sync --frozen --no-install-project --no-dev --no-editable
 
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM uv-deps AS uv
 
-ADD . /app
+COPY apps/telegram-agent-python/ /app/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 

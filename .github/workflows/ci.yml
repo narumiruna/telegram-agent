@@ -10,21 +10,23 @@ on:
       - main
 
 jobs:
-  ci:
+  typescript:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.14"]
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-node@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          node-version: 24
+          cache: npm
       - name: Install dependencies
-        run: uv sync
+        run: npm ci
+      - name: Check formatting
+        run: npm run format:check --workspace telegramagent-typescript
       - name: Lint
-        run: uv run ruff check .
+        run: npm run lint --workspace telegramagent-typescript
       - name: Type check
-        run: uv run ty check .
+        run: npm run typecheck --workspace telegramagent-typescript
       - name: Test
-        run: uv run pytest -v -s --cov=src --cov-report=xml tests
+        run: npm test --workspace telegramagent-typescript
+      - name: Build
+        run: npm run build --workspace telegramagent-typescript

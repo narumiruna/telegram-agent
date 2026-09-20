@@ -1,6 +1,6 @@
 # telegramagent TypeScript
 
-TypeScript migration of `telegramagent`, isolated under `./apps/telegram-agent-typescript` while the Python service remains available.
+Primary `telegramagent` service used by CI/CD, isolated under `./apps/telegram-agent-typescript`; the Python implementation remains available for local development and reference.
 
 ## Runtime stack
 
