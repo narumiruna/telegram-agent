@@ -3,5 +3,6 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
-npm exec -- biome check --write --staged --no-errors-on-unmatched
-git update-index --again
+biome migrate --write
+biome format --write
+biome check --write
