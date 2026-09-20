@@ -34,7 +34,7 @@
     "@telegram-agent/kabigon": "0.19.6",
     "grammy": "1.46.0",
     "ipaddr.js": "2.5.0",
-    "undici": "8.10.2",
+    "undici": "^8.10.2",
     "zod": "4.6.5"
   },
   "devDependencies": {
