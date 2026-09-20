@@ -2,6 +2,15 @@ name: Deploy
 
 on:
   workflow_dispatch:
+    inputs:
+      bot:
+        description: Bot implementation to deploy
+        required: true
+        default: python
+        type: choice
+        options:
+          - python
+          - typescript
   push:
     branches:
       - main
@@ -16,6 +25,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: self-hosted
+    env:
+      BOT_IMPLEMENTATION: ${{ inputs.bot || 'python' }}
 
     steps:
       - name: Checkout repository
@@ -42,7 +53,22 @@ jobs:
 
       - name: Deploy with Docker Compose
         run: |
-          docker compose up -d --build --remove-orphans
+          case "$BOT_IMPLEMENTATION" in
+            python)
+              docker compose build
+              docker compose -f apps/telegram-agent-typescript/docker-compose.yml down --remove-orphans
+              docker compose up -d --no-build --remove-orphans
+              ;;
+            typescript)
+              docker compose -f apps/telegram-agent-typescript/docker-compose.yml build
+              docker compose down --remove-orphans
+              docker compose -f apps/telegram-agent-typescript/docker-compose.yml up -d --no-build --remove-orphans
+              ;;
+            *)
+              echo "Unsupported bot implementation: $BOT_IMPLEMENTATION" >&2
+              exit 1
+              ;;
+          esac
           docker image prune -f
 
       - name: Remove environment file
