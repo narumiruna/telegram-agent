@@ -186,6 +186,7 @@ export function createTelegramAgentBot(
         images,
         onAccepted: releaseSubmissionTurn,
       });
+      if (!isCurrent()) return;
       let outboundText = result.text;
       const sanitized = sanitizeTelegramText(outboundText);
       if (
@@ -200,8 +201,10 @@ export function createTelegramAgentBot(
           logger.warn(`Morsel long-reply publication failed for chat_id=${status.chat.id}; falling back`, error);
         }
       }
+      if (!isCurrent()) return;
       await editStatusWithChunks(context, status.chat.id, status.message_id, outboundText);
     } catch (error) {
+      if (!isCurrent()) return;
       logger.error(`Pi agent request failed for chat_id=${status.chat.id}`, error);
       await editStatusWithChunks(context, status.chat.id, status.message_id, "AI 服務暫時無法使用，請稍後再試。");
     }

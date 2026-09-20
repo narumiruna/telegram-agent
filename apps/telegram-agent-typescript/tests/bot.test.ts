@@ -258,6 +258,66 @@ describe("Telegram bot update routing", () => {
     expect(submittedPrompts).toEqual(["重設後"]);
   });
 
+  it("does not publish a stale Morsel reply after reset", async () => {
+    let finishPublication: ((value: string) => void) | undefined;
+    const pendingPublication = new Promise<string>((resolve) => {
+      finishPublication = resolve;
+    });
+    const sessions = createSessions({
+      submit: vi.fn(async (_chatId, _prompt, options) => {
+        options.onAccepted?.();
+        return { kind: "completed" as const, text: "這是一段很長的回覆內容" };
+      }),
+    });
+    const publish = vi.fn(async () => pendingPublication);
+    const settings = loadSettings({
+      BOT_TOKEN: "test-token",
+      MORSEL_API_KEY: "secret",
+      MORSEL_LONG_REPLY_THRESHOLD: "5",
+    });
+    const telegram = createTelegramAgentBot(settings, sessions, logger, {
+      botInfo,
+      morselPublisher: { isConfigured: true, publish },
+    });
+    const calls = installApiMock(telegram.bot);
+
+    const runningUpdate = telegram.bot.handleUpdate(privateMessage(12, "請回答"));
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+    const resetUpdate = privateMessage(13, "/reset");
+    if (resetUpdate.message) {
+      resetUpdate.message.entities = [{ offset: 0, length: 6, type: "bot_command" }];
+    }
+    await telegram.bot.handleUpdate(resetUpdate);
+
+    finishPublication?.("https://morsel.example/s/share");
+    await runningUpdate;
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage", "sendMessage"]);
+  });
+
+  it("does not overwrite reset status when an invalidated submission fails", async () => {
+    let failSubmission: ((reason: Error) => void) | undefined;
+    const pendingSubmission = new Promise<never>((_resolve, reject) => {
+      failSubmission = reject;
+    });
+    const sessions = createSessions({
+      submit: vi.fn(async () => pendingSubmission),
+    });
+    const telegram = createTelegramAgentBot(loadSettings({ BOT_TOKEN: "test-token" }), sessions, logger, { botInfo });
+    const calls = installApiMock(telegram.bot);
+
+    const runningUpdate = telegram.bot.handleUpdate(privateMessage(14, "長任務"));
+    await vi.waitFor(() => expect(sessions.submit).toHaveBeenCalledOnce());
+    const resetUpdate = privateMessage(15, "/reset");
+    if (resetUpdate.message) {
+      resetUpdate.message.entities = [{ offset: 0, length: 6, type: "bot_command" }];
+    }
+    await telegram.bot.handleUpdate(resetUpdate);
+
+    failSubmission?.(new Error("Pi session access was invalidated by reset"));
+    await runningUpdate;
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage", "sendMessage"]);
+  });
+
   it("orders passive group context after an earlier addressed image submission", async () => {
     let finishImageDownload: ((response: Response) => void) | undefined;
     const pendingImageDownload = new Promise<Response>((resolve) => {
