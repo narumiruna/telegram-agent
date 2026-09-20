@@ -1,7 +1,10 @@
+import { CurlOpt } from "impers";
+
 import { LoaderContentError, LoaderTimeoutError } from "../core/errors.js";
 import { remainingMilliseconds } from "../core/execution.js";
 import type { Loader } from "../core/loader.js";
 import { assertPublicUrl, readResponseText, safeFetch } from "../core/network.js";
+import { type PublicProxy, startPublicProxy } from "../core/public-proxy.js";
 import type { ImpersSession, ResourceProvider } from "../core/resources.js";
 import type { RetrievedHtml } from "../core/retrieval.js";
 import { DEFAULT_BROWSER_TIMEOUT_MS, fetchBrowserHtml } from "./browser.js";
@@ -157,7 +160,14 @@ export async function fetchImpersResponse(url: string, options: ImpersFetchOptio
     remaining === undefined ? Number.POSITIVE_INFINITY : remaining / 1_000,
   );
   let owned: ImpersSession | undefined;
+  let ownedProxy: PublicProxy | undefined;
   try {
+    let proxy: string;
+    if (options.resources) proxy = await options.resources.impersProxy();
+    else {
+      ownedProxy = await startPublicProxy();
+      proxy = ownedProxy.url;
+    }
     let session = options.session;
     if (!session) {
       if (options.resources) session = await options.resources.impersSession();
@@ -189,6 +199,8 @@ export async function fetchImpersResponse(url: string, options: ImpersFetchOptio
           timeout,
           headers: requestHeaders,
           allowRedirects: false,
+          proxy,
+          curlOptions: { [CurlOpt.NOPROXY]: "" },
           signal: requestSignal,
           stream: maxBytes !== undefined,
           ...(maxBytes === undefined
@@ -246,6 +258,7 @@ export async function fetchImpersResponse(url: string, options: ImpersFetchOptio
     throw new LoaderContentError(loaderName, url, `HTTP request failed: ${String(error)}`);
   } finally {
     await owned?.close();
+    await ownedProxy?.close();
   }
 }
 

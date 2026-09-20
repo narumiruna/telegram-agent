@@ -134,15 +134,17 @@ export class TwitterLoader implements Loader {
   private async loadViaFxTwitter(target: TwitterTarget, signal?: AbortSignal): Promise<string> {
     if (!target.statusId) throw new LoaderNotApplicableError("TwitterLoader", target.url, "Missing status ID");
     const apiUrl = toFxTwitterApiUrl(target.statusId);
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+    const activeSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
     const response = await (this.resources?.fetch(apiUrl, {
       headers: { Accept: "application/json", "User-Agent": DEFAULT_BROWSER_USER_AGENT },
       redirect: "follow",
-      signal,
+      signal: activeSignal,
     }) ??
       fetch(apiUrl, {
         headers: { Accept: "application/json", "User-Agent": DEFAULT_BROWSER_USER_AGENT },
         redirect: "follow",
-        signal,
+        signal: activeSignal,
       }));
     if (!response.ok) {
       throw new LoaderContentError("TwitterLoader", target.url, `FxTwitter returned HTTP ${response.status}`);

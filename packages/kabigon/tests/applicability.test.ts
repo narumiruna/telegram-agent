@@ -51,7 +51,10 @@ describe("source applicability", () => {
   it("parses source-specific targets", () => {
     expect(parseYouTubeVideoTarget("https://youtu.be/dQw4w9WgXcQ").videoId).toBe("dQw4w9WgXcQ");
     expect(parseGitHubRawContentTarget("https://github.com/a/b/blob/main/README.md").rawUrl).toBe(
-      "https://raw.githubusercontent.com/a/b/main/README.md",
+      "https://github.com/a/b/blob/main/README.md?raw=1",
+    );
+    expect(parseGitHubRawContentTarget("https://github.com/a/b/blob/feature/foo/README.md").rawUrl).toBe(
+      "https://github.com/a/b/blob/feature/foo/README.md?raw=1",
     );
     expect(parseTwitterTarget("https://fxtwitter.com/user/status/1")).toMatchObject({
       normalizedUrl: "https://x.com/user/status/1",

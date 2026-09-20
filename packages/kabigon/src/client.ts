@@ -2,6 +2,7 @@ import type { Browser } from "playwright";
 
 import { remainingMilliseconds, withDeadline } from "./core/execution.js";
 import { assertPublicUrl, type FetchImplementation, type PublicUrlResolver, safeFetch } from "./core/network.js";
+import { type PublicProxy, startPublicProxy } from "./core/public-proxy.js";
 import type { ImpersSession, ResourceProvider } from "./core/resources.js";
 import type { LoadResult } from "./core/results.js";
 import { resolveLoadChain } from "./load-chain.js";
@@ -82,6 +83,7 @@ export class KabigonClient implements ResourceProvider, AsyncDisposable {
   private readonly resolve?: PublicUrlResolver;
   private active = false;
   private impersPromise?: Promise<ImpersSession>;
+  private proxyPromise?: Promise<PublicProxy>;
   private browserPromise?: Promise<Browser>;
 
   constructor(options: KabigonClientOptions = {}) {
@@ -131,6 +133,12 @@ export class KabigonClient implements ResourceProvider, AsyncDisposable {
       this.impersPromise = import("impers").then(({ Session }) => new Session({ impersonate: "chrome" }));
     }
     return this.impersPromise;
+  }
+
+  async impersProxy(): Promise<string> {
+    this.checkActive();
+    if (!this.proxyPromise) this.proxyPromise = startPublicProxy({ resolve: this.resolve });
+    return (await this.proxyPromise).url;
   }
 
   async browser(): Promise<Browser> {
@@ -183,12 +191,14 @@ export class KabigonClient implements ResourceProvider, AsyncDisposable {
 
   async close(): Promise<void> {
     if (!this.active) return;
-    const [browser, impers] = await Promise.all([
+    const [browser, impers, proxy] = await Promise.all([
       this.browserPromise?.catch(() => undefined),
       this.impersPromise?.catch(() => undefined),
+      this.proxyPromise?.catch(() => undefined),
     ]);
     this.browserPromise = undefined;
     this.impersPromise = undefined;
+    this.proxyPromise = undefined;
     this.active = false;
     const errors: unknown[] = [];
     if (browser) {
@@ -201,6 +211,13 @@ export class KabigonClient implements ResourceProvider, AsyncDisposable {
     if (impers) {
       try {
         await impers.close();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (proxy) {
+      try {
+        await proxy.close();
       } catch (error) {
         errors.push(error);
       }

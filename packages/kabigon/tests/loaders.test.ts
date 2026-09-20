@@ -16,16 +16,29 @@ describe("source loaders", () => {
   it("normalizes GitHub blob URLs and preserves raw content", async () => {
     const resources = {
       fetch: async (input: string | URL) => {
-        expect(String(input)).toBe("https://raw.githubusercontent.com/a/b/main/demo.ts");
+        expect(String(input)).toBe("https://github.com/a/b/blob/main/demo.ts?raw=1");
         return new Response("export const value = 1;", { headers: { "content-type": "text/plain" } });
       },
     } as unknown as ResourceProvider;
     expect(toRawGitHubUrl("https://github.com/a/b/blob/main/demo.ts")).toBe(
-      "https://raw.githubusercontent.com/a/b/main/demo.ts",
+      "https://github.com/a/b/blob/main/demo.ts?raw=1",
     );
     await expect(new GitHubLoader({ resources }).load("https://github.com/a/b/blob/main/demo.ts")).resolves.toBe(
       "export const value = 1;",
     );
+  });
+
+  it("times out stalled GitHub requests", async () => {
+    const resources = {
+      fetch: async (_input: string | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+        }),
+    } as unknown as ResourceProvider;
+
+    await expect(
+      new GitHubLoader({ resources, timeoutMs: 5 }).load("https://raw.githubusercontent.com/a/b/main/demo.ts"),
+    ).rejects.toBeInstanceOf(LoaderTimeoutError);
   });
 
   it("bounds GitHub response bodies", async () => {
@@ -85,6 +98,7 @@ describe("source loaders", () => {
       allowRedirects: false,
       stream: true,
       acceptEncoding: "identity",
+      proxy: expect.stringMatching(/^http:\/\/127\.0\.0\.1:[0-9]+$/u),
     });
   });
 
@@ -107,7 +121,10 @@ describe("source loaders", () => {
       },
       close: async () => undefined,
     } as unknown as ImpersSession;
-    const resources = { validateUrl: async (input: string | URL) => new URL(input) } as unknown as ResourceProvider;
+    const resources = {
+      validateUrl: async (input: string | URL) => new URL(input),
+      impersProxy: async () => "http://127.0.0.1:8080",
+    } as unknown as ResourceProvider;
 
     await fetchImpersResponse("https://example.com/start", {
       session,
@@ -263,6 +280,44 @@ describe("source loaders", () => {
     expect(() =>
       renderFxTwitterPayload({ tweet: { id: "other" } }, "requested", "https://x.com/example/status/requested"),
     ).toThrow("requested tweet");
+  });
+
+  it("times out stalled Firecrawl requests", async () => {
+    const resources = {
+      fetch: async (_input: string | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+        }),
+    } as unknown as ResourceProvider;
+    await expect(
+      new FirecrawlLoader({ apiKey: "test", resources, timeoutMs: 5 }).load("https://example.com"),
+    ).rejects.toBeInstanceOf(LoaderTimeoutError);
+  });
+
+  it("abandons a stalled FxTwitter request and starts the browser fallback", async () => {
+    let apiAborted = false;
+    const resources = {
+      fetch: async (_input: string | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => {
+              apiAborted = true;
+              reject(init.signal?.reason);
+            },
+            { once: true },
+          );
+        }),
+      browser: async () => {
+        throw new Error("browser fallback started");
+      },
+      runBrowser: async (operation: () => Promise<unknown>) => operation(),
+    } as unknown as ResourceProvider;
+
+    await expect(
+      new TwitterLoader({ resources, timeoutMs: 5 }).load("https://x.com/example/status/123456789"),
+    ).rejects.toThrow("browser fallback started");
+    expect(apiAborted).toBe(true);
   });
 
   it("extracts markdown from Firecrawl's response envelope", async () => {

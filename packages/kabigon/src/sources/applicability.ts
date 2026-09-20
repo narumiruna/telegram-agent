@@ -151,11 +151,11 @@ export function parseGitHubTarget(url: string): GitHubTarget {
   if (parsed.hostname !== GITHUB_HOST) throw new InvalidUrlError(url, "GitHub");
   const parts = parsed.pathname.split("/").filter(Boolean);
   if (parts.length >= 5 && parts[2] === "blob") {
-    const [owner, repo, , ref, ...pathParts] = parts;
-    const path = pathParts.join("/");
-    if (!owner || !repo || !ref || !path) throw new InvalidUrlError(url, "GitHub blob file");
-    const rawUrl = `https://${RAW_GITHUB_HOST}/${owner}/${repo}/${ref}/${path}`;
-    return { url, rawUrl, isRawContent: true };
+    const [owner, repo, , ...refAndPath] = parts;
+    if (!owner || !repo || refAndPath.length < 2) throw new InvalidUrlError(url, "GitHub blob file");
+    const rawUrl = new URL(parsed);
+    rawUrl.searchParams.set("raw", "1");
+    return { url, rawUrl: rawUrl.toString(), isRawContent: true };
   }
   return { url, isRawContent: false };
 }

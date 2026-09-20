@@ -36,19 +36,23 @@ export function parseVideoId(url: string): string {
 export class YouTubeLoader implements Loader {
   constructor(private readonly languages: readonly string[] = DEFAULT_LANGUAGES) {}
 
-  async load(url: string): Promise<string> {
+  async load(url: string, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     const videoId = requireLoaderApplicability("YouTubeLoader", url, parseYouTubeVideoTarget).videoId;
     const { fetchTranscript } = await import("youtube-transcript");
     const failures: unknown[] = [];
     for (const language of [...this.languages, undefined]) {
+      signal?.throwIfAborted();
       try {
         const snippets = await fetchTranscript(videoId, language ? { lang: language } : undefined);
+        signal?.throwIfAborted();
         const result = snippets
           .map((snippet) => snippet.text.trim())
           .filter(Boolean)
           .join("\n");
         if (result) return result;
       } catch (error) {
+        signal?.throwIfAborted();
         failures.push(error);
       }
     }
