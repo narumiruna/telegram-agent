@@ -5,9 +5,7 @@ updates:
     schedule:
       interval: "weekly"
   - package-ecosystem: "npm"
-    directories:
-      - "/"
-      - "/apps/*"
-      - "/packages/*"
+    directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 10
