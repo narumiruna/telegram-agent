@@ -15,9 +15,12 @@ describe("Telegram message normalization", () => {
     expect(stripBotMention(message.text, "fakebot")).toBe("請回答");
   });
 
-  it("records unaddressed group messages as passive context", () => {
+  it("records unaddressed user and sender-chat messages as passive context", () => {
     expect(passiveGroupContext({ message_id: 1, text: "我想吃牛肉麵", from: { id: 7, username: "alice" } })).toBe(
       "[群組旁聽訊息 from @alice] 我想吃牛肉麵",
+    );
+    expect(passiveGroupContext({ message_id: 2, text: "頻道公告", sender_chat: { id: -100, title: "公告頻道" } })).toBe(
+      "[群組旁聽訊息 from 公告頻道] 頻道公告",
     );
   });
 

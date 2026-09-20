@@ -26,13 +26,16 @@ describe("MorselPublisher", () => {
     );
   });
 
-  it("rejects cross-origin and malformed share URLs", async () => {
+  it.each([
+    `https://evil.example/s/${capability}`,
+    `https://morsel.example/\ts/${capability}`,
+    `https://morsel.example/s/${capability}\n`,
+  ])("rejects cross-origin, malformed, and control-containing share URLs", async (shareUrl) => {
     const publisher = new MorselPublisher("https://morsel.example/", "secret", {
       timeoutMs: 1_000,
       expiresInSeconds: 60,
       telegramInstantView: false,
-      fetchImplementation: async () =>
-        Response.json({ id: "share", share_url: `https://evil.example/s/${capability}` }, { status: 201 }),
+      fetchImplementation: async () => Response.json({ id: "share", share_url: shareUrl }, { status: 201 }),
     });
 
     await expect(publisher.publish("content")).rejects.toBeInstanceOf(MorselPublishError);

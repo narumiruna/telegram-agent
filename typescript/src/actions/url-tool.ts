@@ -1,8 +1,10 @@
+import type { LookupAddress } from "node:dns";
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Agent, type Dispatcher, fetch as undiciFetch } from "undici";
 
 import type { Settings } from "../config/settings.js";
 
@@ -46,53 +48,78 @@ export interface FetchedUrl {
   truncated: boolean;
 }
 
+type UrlFetchImplementation = (
+  input: string | URL,
+  init?: Omit<RequestInit, "dispatcher"> & { dispatcher?: Dispatcher },
+) => Promise<Response>;
+
+type PublicUrlResolver = typeof lookup;
+
 interface FetchPublicUrlOptions {
   allowedSchemes: ReadonlySet<string>;
   maxChars: number;
   timeoutMs: number;
   signal?: AbortSignal;
-  fetchImplementation?: typeof fetch;
+  fetchImplementation?: UrlFetchImplementation;
+  resolve?: PublicUrlResolver;
+}
+
+interface ResolvedPublicUrl {
+  url: URL;
+  addresses: LookupAddress[];
 }
 
 export async function fetchPublicUrl(urlValue: string, options: FetchPublicUrlOptions): Promise<FetchedUrl> {
-  const fetchImplementation = options.fetchImplementation ?? fetch;
+  const fetchImplementation = options.fetchImplementation ?? (undiciFetch as unknown as UrlFetchImplementation);
   const timeoutSignal = AbortSignal.timeout(options.timeoutMs);
   const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
-  let current = await assertPublicUrl(urlValue, options.allowedSchemes);
+  let currentValue = urlValue;
 
   for (let redirects = 0; redirects <= 5; redirects += 1) {
-    const response = await fetchImplementation(current, {
-      headers: { "user-agent": "telegramagent/0.0 (+public URL text loader)" },
-      redirect: "manual",
-      signal,
-    });
-    if (redirectStatuses.has(response.status)) {
-      if (redirects === 5) throw new Error("URL exceeded the redirect limit");
-      const location = response.headers.get("location");
-      if (!location) throw new Error("URL redirect did not include a Location header");
-      current = await assertPublicUrl(new URL(location, current).toString(), options.allowedSchemes);
-      continue;
-    }
-    if (!response.ok) throw new Error(`URL returned HTTP ${response.status}`);
+    const current = await resolvePublicUrl(currentValue, options.allowedSchemes, options.resolve ?? lookup);
+    const dispatcher = new Agent({ connect: { lookup: createPinnedLookup(current.addresses) } });
+    try {
+      const response = await fetchImplementation(current.url, {
+        dispatcher,
+        headers: { "user-agent": "telegramagent/0.0 (+public URL text loader)" },
+        redirect: "manual",
+        signal,
+      });
+      if (redirectStatuses.has(response.status)) {
+        await response.body?.cancel();
+        if (redirects === 5) throw new Error("URL exceeded the redirect limit");
+        const location = response.headers.get("location");
+        if (!location) throw new Error("URL redirect did not include a Location header");
+        currentValue = new URL(location, current.url).toString();
+        continue;
+      }
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error(`URL returned HTTP ${response.status}`);
+      }
 
-    const contentType = (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? "";
-    if (!acceptedContentTypes.some((accepted) => contentType.startsWith(accepted))) {
-      throw new Error(`URL returned unsupported content type: ${contentType || "unknown"}`);
+      const contentType = (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? "";
+      if (!acceptedContentTypes.some((accepted) => contentType.startsWith(accepted))) {
+        await response.body?.cancel();
+        throw new Error(`URL returned unsupported content type: ${contentType || "unknown"}`);
+      }
+      const bytes = await readBoundedBody(response, Math.max(options.maxChars * 4, 64_000));
+      const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+      const title = contentType.includes("html") ? htmlTitle(decoded) : undefined;
+      const extracted = contentType.includes("html") ? htmlToText(decoded) : decoded.trim();
+      const truncated = extracted.length > options.maxChars;
+      return {
+        url: urlValue,
+        finalUrl: current.url.toString(),
+        status: response.status,
+        contentType,
+        ...(title ? { title } : {}),
+        text: truncated ? `${extracted.slice(0, options.maxChars).trimEnd()}…` : extracted,
+        truncated,
+      };
+    } finally {
+      await dispatcher.close();
     }
-    const bytes = await readBoundedBody(response, Math.max(options.maxChars * 4, 64_000));
-    const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    const title = contentType.includes("html") ? htmlTitle(decoded) : undefined;
-    const extracted = contentType.includes("html") ? htmlToText(decoded) : decoded.trim();
-    const truncated = extracted.length > options.maxChars;
-    return {
-      url: urlValue,
-      finalUrl: current.toString(),
-      status: response.status,
-      contentType,
-      ...(title ? { title } : {}),
-      text: truncated ? `${extracted.slice(0, options.maxChars).trimEnd()}…` : extracted,
-      truncated,
-    };
   }
   throw new Error("URL loader ended unexpectedly");
 }
@@ -100,8 +127,16 @@ export async function fetchPublicUrl(urlValue: string, options: FetchPublicUrlOp
 export async function assertPublicUrl(
   urlValue: string,
   allowedSchemes: ReadonlySet<string> = new Set(["http", "https"]),
-  resolve: typeof lookup = lookup,
+  resolve: PublicUrlResolver = lookup,
 ): Promise<URL> {
+  return (await resolvePublicUrl(urlValue, allowedSchemes, resolve)).url;
+}
+
+async function resolvePublicUrl(
+  urlValue: string,
+  allowedSchemes: ReadonlySet<string>,
+  resolve: PublicUrlResolver,
+): Promise<ResolvedPublicUrl> {
   let url: URL;
   try {
     url = new URL(urlValue);
@@ -111,20 +146,48 @@ export async function assertPublicUrl(
   const scheme = url.protocol.replace(/:$/, "").toLowerCase();
   if (!allowedSchemes.has(scheme)) throw new Error(`URL scheme is not allowed: ${scheme}`);
   if (url.username || url.password) throw new Error("URL credentials are not allowed");
-  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+  const hostname = normalizeHostname(url.hostname);
   if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local")) {
     throw new Error("Local URL targets are not allowed");
   }
 
-  if (isIP(hostname)) {
+  const family = isIP(hostname);
+  if (family) {
     if (!isPublicIp(hostname)) throw new Error("Private or non-routable URL targets are not allowed");
-    return url;
+    return { url, addresses: [{ address: hostname, family }] };
   }
   const addresses = await resolve(hostname, { all: true, verbatim: true });
   if (addresses.length === 0 || addresses.some((entry) => !isPublicIp(entry.address))) {
     throw new Error("URL hostname resolved to a private or non-routable address");
   }
-  return url;
+  return { url, addresses };
+}
+
+export function createPinnedLookup(addresses: readonly LookupAddress[]): LookupFunction {
+  return (_hostname, options, callback) => {
+    const requestedFamily = typeof options.family === "string" ? Number(options.family.slice(-1)) : options.family;
+    const candidates = requestedFamily ? addresses.filter((entry) => entry.family === requestedFamily) : [...addresses];
+    const selected = candidates[0];
+    if (!selected) {
+      const error = Object.assign(new Error("No validated address matches the requested family"), {
+        code: "ENOTFOUND",
+      });
+      callback(error, options.all ? [] : "", requestedFamily || 0);
+      return;
+    }
+    if (options.all) {
+      callback(null, candidates);
+      return;
+    }
+    callback(null, selected.address, selected.family);
+  };
+}
+
+function normalizeHostname(hostname: string): string {
+  return hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
 }
 
 export function isPublicIp(address: string): boolean {

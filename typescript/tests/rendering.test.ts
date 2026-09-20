@@ -9,6 +9,12 @@ describe("Telegram rendering", () => {
     ]);
   });
 
+  it("does not interpret Markdown markers inside generated links", () => {
+    expect(telegramHtmlChunks("https://example.test/a**b**c")).toEqual([
+      '<a href="https://example.test/a**b**c">https://example.test/a**b**c</a>',
+    ]);
+  });
+
   it("chunks by Unicode code point and strips disallowed controls", () => {
     expect(telegramHtmlChunks("😀😀😀", 2)).toEqual(["😀😀", "😀"]);
     expect(sanitizeTelegramText("a\u0000b\r\nc")).toBe("ab\nc");

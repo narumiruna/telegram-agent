@@ -45,7 +45,9 @@ export function passiveGroupContext(message: TelegramMessageLike): string {
   const text = messageText(message).trim();
   const image = selectImageReference(message);
   const parts = [text, image ? `[圖片: ${image.filename}; 未讀取圖片內容]` : ""].filter(Boolean);
-  return parts.length > 0 ? `[群組旁聽訊息 from ${actorName(message.from)}] ${parts.join("\n")}` : "";
+  return parts.length > 0
+    ? `[群組旁聽訊息 from ${actorName(message.sender_chat ?? message.from)}] ${parts.join("\n")}`
+    : "";
 }
 
 export function promptWithReplyContext(message: TelegramMessageLike, currentText: string): string {

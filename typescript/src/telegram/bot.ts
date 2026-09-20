@@ -1,9 +1,11 @@
+import { run, type RunnerHandle } from "@grammyjs/runner";
 import { Bot, type Context, GrammyError, HttpError } from "grammy";
+import type { UserFromGetMe } from "grammy/types";
 
 import type { ChatSessionRegistry } from "../agent/session-registry.js";
 import type { Settings } from "../config/settings.js";
 import type { Logger } from "../logging.js";
-import { createMorselPublisher } from "../morsel.js";
+import { createMorselPublisher, type MorselPublisher } from "../morsel.js";
 import { downloadTelegramImage, TelegramDownloadTooLargeError } from "./files.js";
 import {
   defaultImagePrompt,
@@ -23,14 +25,24 @@ export interface TelegramAgentBot {
   stop(): Promise<void>;
 }
 
+interface TelegramBotDependencies {
+  botInfo?: UserFromGetMe;
+  imageFetchImplementation?: typeof fetch;
+  morselPublisher?: Pick<MorselPublisher, "isConfigured" | "publish">;
+}
+
+const updateConcurrency = 16;
+
 export function createTelegramAgentBot(
   settings: Settings,
   sessions: ChatSessionRegistry,
   logger: Logger,
+  dependencies: TelegramBotDependencies = {},
 ): TelegramAgentBot {
-  const bot = new Bot(settings.botToken);
+  const bot = new Bot(settings.botToken, dependencies.botInfo ? { botInfo: dependencies.botInfo } : {});
   const botReplyStreaks = new Map<number, number>();
-  const morselPublisher = createMorselPublisher(settings);
+  let runner: RunnerHandle | undefined;
+  const morselPublisher = dependencies.morselPublisher ?? createMorselPublisher(settings);
 
   bot.use(async (context, next) => {
     if (!isAllowed(context, settings.botWhitelist)) return;
@@ -105,7 +117,13 @@ export function createTelegramAgentBot(
     try {
       images = await Promise.all(
         references.map((reference) =>
-          downloadTelegramImage(context.api, settings.botToken, reference, settings.botImageMaxBytes),
+          downloadTelegramImage(
+            context.api,
+            settings.botToken,
+            reference,
+            settings.botImageMaxBytes,
+            dependencies.imageFetchImplementation,
+          ),
         ),
       );
     } catch (error) {
@@ -170,13 +188,18 @@ export function createTelegramAgentBot(
   return {
     bot,
     async start() {
-      await bot.start({
-        allowed_updates: ["message"],
-        onStart: (me) => logger.info(`Telegram bot started as @${me.username}`),
+      await bot.init();
+      logger.info(`Telegram bot started as @${bot.botInfo.username}`);
+      runner = run(bot, {
+        runner: { fetch: { allowed_updates: ["message"] } },
+        sink: { concurrency: updateConcurrency },
       });
+      await runner.task();
     },
     async stop() {
-      await bot.stop();
+      if (!runner) return;
+      await runner.stop();
+      runner = undefined;
     },
   };
 }

@@ -67,24 +67,24 @@ function formatInlineMarkdown(text: string, convertBold: boolean): string {
 }
 
 function formatMarkdownText(text: string, convertBold: boolean): string {
-  const escaped = escapeWithLinks(text);
-  return convertBold ? escaped.replace(boldPattern, "<b>$1</b>") : escaped.replace(boldPattern, "$1");
-}
-
-function escapeWithLinks(text: string): string {
   const output: string[] = [];
   let cursor = 0;
   for (const match of text.matchAll(plainUrlPattern)) {
     const index = match.index;
     const rawUrl = match[0];
     const url = trimUrl(rawUrl);
-    output.push(escapeHtml(text.slice(cursor, index)));
+    output.push(formatPlainMarkdown(text.slice(cursor, index), convertBold));
     output.push(`<a href="${escapeAttribute(encodeURI(url))}">${escapeHtml(url)}</a>`);
-    output.push(escapeHtml(rawUrl.slice(url.length)));
+    output.push(formatPlainMarkdown(rawUrl.slice(url.length), convertBold));
     cursor = index + rawUrl.length;
   }
-  output.push(escapeHtml(text.slice(cursor)));
+  output.push(formatPlainMarkdown(text.slice(cursor), convertBold));
   return output.join("");
+}
+
+function formatPlainMarkdown(text: string, convertBold: boolean): string {
+  const escaped = escapeHtml(text);
+  return convertBold ? escaped.replace(boldPattern, "<b>$1</b>") : escaped.replace(boldPattern, "$1");
 }
 
 function chunkByCodePoints(text: string, limit: number): string[] {

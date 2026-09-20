@@ -164,7 +164,13 @@ function validateMorselOrigin(value: string): URL {
 }
 
 function validateShareUrl(value: string, base: URL): string {
-  const share = new URL(value);
+  if (hasAsciiControl(value)) throw new MorselPublishError("Morsel returned an invalid share URL");
+  let share: URL;
+  try {
+    share = new URL(value);
+  } catch {
+    throw new MorselPublishError("Morsel returned an invalid share URL");
+  }
   if (share.origin !== base.origin || share.username || share.password) {
     throw new MorselPublishError("Morsel returned an invalid share URL");
   }
@@ -175,6 +181,13 @@ function validateShareUrl(value: string, base: URL): string {
     ["", "/"].includes(share.pathname) && !share.search && shareCapabilityPattern.test(fragmentCapability);
   if (!validPath && !validFragment) throw new MorselPublishError("Morsel returned an invalid share URL");
   return share.toString();
+}
+
+function hasAsciiControl(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint < 0x20 || codePoint === 0x7f;
+  });
 }
 
 function previewMetadata(text: string): { title: string; description: string } {
