@@ -36,8 +36,8 @@ jobs:
             echo "LOGFIRE_TOKEN=${{secrets.LOGFIRE_TOKEN}}"
             echo "LOGFIRE_ENVIRONMENT=${{vars.LOGFIRE_ENVIRONMENT}}"
             echo "FIRECRAWL_API_KEY=${{secrets.FIRECRAWL_API_KEY}}"
-            printf 'MORSEL_API_KEY=%s\n' "$MORSEL_API_KEY"
-            printf 'TELEGRAM_INSTANT_VIEW_RHASH=%s\n' "$TELEGRAM_INSTANT_VIEW_RHASH"
+            echo "MORSEL_API_KEY=${{secrets.MORSEL_API_KEY}}"
+            echo "TELEGRAM_INSTANT_VIEW_RHASH=${{vars.TELEGRAM_INSTANT_VIEW_RHASH}}"
           } >> .env
 
       - name: Deploy TypeScript bot with Docker Compose
