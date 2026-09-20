@@ -1,8 +1,9 @@
 import type { LookupAddress } from "node:dns";
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 
 import ipaddr from "ipaddr.js";
+import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from "undici";
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_REDIRECTS = 5;
@@ -12,6 +13,7 @@ export type PublicUrlResolver = (hostname: string, options: { all: true; verbati
 export type FetchImplementation = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 const defaultResolver: PublicUrlResolver = (hostname, options) => lookup(hostname, options);
+const resolverDispatchers = new WeakMap<PublicUrlResolver, Agent>();
 
 interface PublicUrlOptions {
   resolve?: PublicUrlResolver;
@@ -26,6 +28,45 @@ interface SafeFetchOptions extends PublicUrlOptions {
 export function isPublicIp(address: string): boolean {
   if (isIP(address) === 0) return false;
   return ipaddr.process(address).range() === "unicast";
+}
+
+function validateResolvedAddresses(addresses: readonly LookupAddress[]): void {
+  if (addresses.length === 0 || addresses.some((entry) => !isPublicIp(entry.address))) {
+    throw new TypeError("URL hostname resolved to a private or non-routable address");
+  }
+}
+
+function createValidatedLookup(resolve: PublicUrlResolver): LookupFunction {
+  return (hostname, options, callback) => {
+    resolve(hostname, { all: true, verbatim: true }).then(
+      (addresses) => {
+        try {
+          validateResolvedAddresses(addresses);
+          const requestedFamily = options.family === 4 || options.family === "IPv4" ? 4 : 0;
+          const family = options.family === 6 || options.family === "IPv6" ? 6 : requestedFamily;
+          const compatible = family === 0 ? addresses : addresses.filter((entry) => entry.family === family);
+          if (compatible.length === 0) throw new Error(`URL hostname has no IPv${family} address`);
+          if (options.all) callback(null, [...compatible]);
+          else {
+            const selected = compatible[0];
+            if (!selected) throw new Error("URL hostname did not resolve to an address");
+            callback(null, selected.address, selected.family);
+          }
+        } catch (error) {
+          callback(error instanceof Error ? error : new Error(String(error)), "", 0);
+        }
+      },
+      (error: unknown) => callback(error instanceof Error ? error : new Error(String(error)), "", 0),
+    );
+  };
+}
+
+function dispatcherFor(resolve: PublicUrlResolver): Agent {
+  const existing = resolverDispatchers.get(resolve);
+  if (existing) return existing;
+  const dispatcher = new Agent({ connect: { lookup: createValidatedLookup(resolve) } });
+  resolverDispatchers.set(resolve, dispatcher);
+  return dispatcher;
 }
 
 export async function assertPublicUrl(
@@ -61,9 +102,7 @@ export async function assertPublicUrl(
     (options.resolve ?? defaultResolver)(hostname, { all: true, verbatim: true }),
     options.signal,
   );
-  if (addresses.length === 0 || addresses.some((entry) => !isPublicIp(entry.address))) {
-    throw new TypeError("URL hostname resolved to a private or non-routable address");
-  }
+  validateResolvedAddresses(addresses);
   return { url, addresses };
 }
 
@@ -72,7 +111,6 @@ export async function safeFetch(
   init: RequestInit = {},
   options: SafeFetchOptions = {},
 ): Promise<Response> {
-  const fetchImplementation = options.fetchImplementation ?? fetch;
   const maxRedirects = options.maxRedirects ?? MAX_REDIRECTS;
   const signal = options.signal ?? init.signal ?? undefined;
   let current = new URL(input);
@@ -82,14 +120,33 @@ export async function safeFetch(
 
   for (let redirects = 0; redirects <= maxRedirects; redirects += 1) {
     await assertPublicUrl(current, { resolve: options.resolve, signal });
-    const response = await fetchImplementation(current, {
+    const requestInit = {
       ...init,
       method,
       body,
       headers,
-      redirect: "manual",
+      redirect: "manual" as const,
       signal,
-    });
+    };
+    let response: Response;
+    if (options.fetchImplementation) response = await options.fetchImplementation(current, requestInit);
+    else {
+      try {
+        response = (await undiciFetch(current, {
+          ...requestInit,
+          dispatcher: dispatcherFor(options.resolve ?? defaultResolver),
+        } as unknown as UndiciRequestInit)) as unknown as Response;
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.cause instanceof TypeError &&
+          error.cause.message.includes("private or non-routable")
+        ) {
+          throw error.cause;
+        }
+        throw error;
+      }
+    }
     if (!REDIRECT_STATUSES.has(response.status)) return response;
 
     await response.body?.cancel();

@@ -10,6 +10,7 @@ import { htmlToMarkdown } from "./utils.js";
 
 export const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
 export const MAX_HTML_BYTES = 10 * 1024 * 1024;
+const SENSITIVE_HEADERS = new Set(["authorization", "cookie", "proxy-authorization"]);
 
 export const DEFAULT_HTTP_HEADERS = {
   "User-Agent":
@@ -167,6 +168,7 @@ export async function fetchImpersResponse(url: string, options: ImpersFetchOptio
     }
 
     let currentUrl = new URL(url);
+    const requestHeaders = { ...options.headers };
     for (let redirects = 0; redirects <= 5; redirects += 1) {
       if (options.resources) await options.resources.validateUrl(currentUrl, options.signal);
       else await assertPublicUrl(currentUrl, { signal: options.signal });
@@ -184,7 +186,7 @@ export async function fetchImpersResponse(url: string, options: ImpersFetchOptio
         response = await session.get(currentUrl.toString(), {
           impersonate: options.impersonate ?? "chrome",
           timeout,
-          headers: options.headers,
+          headers: requestHeaders,
           allowRedirects: false,
           signal: requestSignal,
           stream: maxBytes !== undefined,
@@ -214,7 +216,13 @@ export async function fetchImpersResponse(url: string, options: ImpersFetchOptio
         await response.close();
         if (redirects === 5) throw new LoaderContentError(loaderName, url, "URL exceeded the redirect limit");
         if (!location) throw new LoaderContentError(loaderName, url, "URL redirect did not include a Location header");
-        currentUrl = new URL(location, currentUrl);
+        const nextUrl = new URL(location, currentUrl);
+        if (nextUrl.origin !== currentUrl.origin) {
+          for (const name of Object.keys(requestHeaders)) {
+            if (SENSITIVE_HEADERS.has(name.toLowerCase())) delete requestHeaders[name];
+          }
+        }
+        currentUrl = nextUrl;
         continue;
       }
       if (response.status >= 400) {

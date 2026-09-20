@@ -1,12 +1,13 @@
 import { readFile } from "node:fs/promises";
 
-import { LoaderContentError, LoaderNotApplicableError } from "../core/errors.js";
+import { LoaderContentError, LoaderNotApplicableError, LoaderTimeoutError } from "../core/errors.js";
 import type { Loader } from "../core/loader.js";
 import { readResponseBytes, safeFetch } from "../core/network.js";
 import type { ResourceProvider } from "../core/resources.js";
 import { parsePdfTarget, requireLoaderApplicability } from "../sources/applicability.js";
 import { fetchImpersResponse } from "./generic.js";
 
+export const DEFAULT_PDF_TIMEOUT_MS = 20_000;
 export const MAX_PDF_BYTES = 25 * 1024 * 1024;
 
 const DEFAULT_HEADERS = {
@@ -31,13 +32,20 @@ export async function readPdfContent(data: Uint8Array): Promise<string> {
 }
 
 export class PdfLoader implements Loader {
-  constructor(private readonly options: { resources?: ResourceProvider } = {}) {}
+  constructor(private readonly options: { resources?: ResourceProvider; timeoutMs?: number } = {}) {}
 
   async load(target: string, signal?: AbortSignal): Promise<string> {
-    requireLoaderApplicability("PdfLoader", target, parsePdfTarget);
-    if (!target.startsWith("http://") && !target.startsWith("https://")) {
+    const parsedTarget = requireLoaderApplicability("PdfLoader", target, parsePdfTarget);
+    let remoteUrl: URL | undefined;
+    try {
+      const parsed = new URL(parsedTarget);
+      if (["http:", "https:"].includes(parsed.protocol)) remoteUrl = parsed;
+    } catch {
+      // Valid non-URL PDF targets are local paths.
+    }
+    if (!remoteUrl) {
       try {
-        return await readPdfContent(await readFile(target));
+        return await readPdfContent(await readFile(parsedTarget));
       } catch (error) {
         throw new LoaderContentError(
           "PdfLoader",
@@ -48,29 +56,35 @@ export class PdfLoader implements Loader {
       }
     }
 
+    const remoteTarget = remoteUrl.toString();
+    const timeoutMs = this.options.timeoutMs ?? DEFAULT_PDF_TIMEOUT_MS;
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
     let data: Uint8Array;
     let contentType: string;
     try {
-      const response = await (this.options.resources?.fetch(target, {
+      const response = await (this.options.resources?.fetch(remoteTarget, {
         headers: DEFAULT_HEADERS,
         redirect: "follow",
-        signal,
-      }) ?? safeFetch(target, { headers: DEFAULT_HEADERS, redirect: "follow", signal }));
+        signal: requestSignal,
+      }) ?? safeFetch(remoteTarget, { headers: DEFAULT_HEADERS, redirect: "follow", signal: requestSignal }));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       contentType = response.headers.get("content-type") ?? "";
       data = await readResponseBytes(response, MAX_PDF_BYTES);
     } catch (httpError) {
+      if (timeoutSignal.aborted) throw new LoaderTimeoutError("PdfLoader", target, timeoutMs / 1_000);
       try {
-        const fallback = await fetchImpersResponse(target, {
+        const fallback = await fetchImpersResponse(remoteTarget, {
           headers: DEFAULT_HEADERS,
           resources: this.options.resources,
-          signal,
+          signal: requestSignal,
           loaderName: "PdfLoader",
           maxBytes: MAX_PDF_BYTES,
         });
         contentType = fallback.headers.get("content-type") ?? "";
         data = fallback.content;
       } catch (impersError) {
+        if (timeoutSignal.aborted) throw new LoaderTimeoutError("PdfLoader", target, timeoutMs / 1_000);
         throw new LoaderContentError(
           "PdfLoader",
           target,

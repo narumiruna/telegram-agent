@@ -78,7 +78,7 @@ export class KabigonClient implements ResourceProvider, AsyncDisposable {
   private readonly requestSlots: Semaphore;
   private readonly browserSlots: Semaphore;
   private readonly workerSlots: Semaphore;
-  private readonly fetchImplementation: FetchImplementation;
+  private readonly fetchImplementation?: FetchImplementation;
   private readonly resolve?: PublicUrlResolver;
   private active = false;
   private impersPromise?: Promise<ImpersSession>;
@@ -98,7 +98,7 @@ export class KabigonClient implements ResourceProvider, AsyncDisposable {
     this.requestSlots = new Semaphore(requestLimit);
     this.browserSlots = new Semaphore(browserLimit);
     this.workerSlots = new Semaphore(workerLimit);
-    this.fetchImplementation = options.fetchImplementation ?? fetch;
+    this.fetchImplementation = options.fetchImplementation;
     this.resolve = options.resolve;
   }
 
@@ -119,7 +119,7 @@ export class KabigonClient implements ResourceProvider, AsyncDisposable {
   fetch(input: string | URL, init?: RequestInit): Promise<Response> {
     this.checkActive();
     return safeFetch(input, init, {
-      fetchImplementation: this.fetchImplementation,
+      ...(this.fetchImplementation ? { fetchImplementation: this.fetchImplementation } : {}),
       resolve: this.resolve,
       signal: init?.signal ?? undefined,
     });
@@ -219,7 +219,13 @@ function admissionSignal(): AbortSignal | undefined {
 }
 
 async function validateTarget(target: string, resolve?: PublicUrlResolver, signal?: AbortSignal): Promise<void> {
-  if (isPdfTarget(target) && !target.startsWith("http://") && !target.startsWith("https://")) return;
+  let isRemote = false;
+  try {
+    isRemote = ["http:", "https:"].includes(new URL(target).protocol);
+  } catch {
+    // Non-URL PDF targets are handled as local paths.
+  }
+  if (isPdfTarget(target) && !isRemote) return;
   try {
     await assertPublicUrl(target, { resolve, signal });
   } catch (error) {

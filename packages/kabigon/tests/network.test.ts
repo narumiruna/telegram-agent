@@ -24,6 +24,17 @@ describe("network safety", () => {
     await expect(assertPublicUrl("https://public.example/path", { resolve })).rejects.toThrow("private");
   });
 
+  it("rejects DNS rebinding at the connection lookup", async () => {
+    let calls = 0;
+    const resolve: PublicUrlResolver = async () => {
+      calls += 1;
+      return [{ address: calls === 1 ? "93.184.216.34" : "127.0.0.1", family: 4 }];
+    };
+
+    await expect(safeFetch("https://rebind.example/path", {}, { resolve })).rejects.toThrow("private");
+    expect(calls).toBe(2);
+  });
+
   it("validates every redirect before issuing the next request", async () => {
     const fetchImplementation = vi.fn(
       async () => new Response(null, { status: 302, headers: { location: "http://127.0.0.1/admin" } }),

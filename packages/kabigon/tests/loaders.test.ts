@@ -5,7 +5,7 @@ import { LoaderContentError, LoaderTimeoutError } from "../src/core/errors.js";
 import type { ImpersSession, ResourceProvider } from "../src/core/resources.js";
 import { FirecrawlLoader } from "../src/loaders/firecrawl.js";
 import { fetchImpersHtml, fetchImpersResponse, HttpLoader } from "../src/loaders/generic.js";
-import { GitHubLoader, toRawGitHubUrl } from "../src/loaders/github.js";
+import { GitHubLoader, MAX_GITHUB_BYTES, toRawGitHubUrl } from "../src/loaders/github.js";
 import { MAX_PDF_BYTES, PdfLoader } from "../src/loaders/pdf.js";
 import { convertToOldReddit, rssToMarkdown, toRedditJsonUrl, toRedditRssUrl } from "../src/loaders/reddit.js";
 import { ReelLoader } from "../src/loaders/reel.js";
@@ -26,6 +26,21 @@ describe("source loaders", () => {
     await expect(new GitHubLoader({ resources }).load("https://github.com/a/b/blob/main/demo.ts")).resolves.toBe(
       "export const value = 1;",
     );
+  });
+
+  it("bounds GitHub response bodies", async () => {
+    const resources = {
+      fetch: async () =>
+        new Response(null, {
+          headers: {
+            "content-length": String(MAX_GITHUB_BYTES + 1),
+            "content-type": "text/plain",
+          },
+        }),
+    } as unknown as ResourceProvider;
+    await expect(
+      new GitHubLoader({ resources }).load("https://raw.githubusercontent.com/a/b/main/demo.ts"),
+    ).rejects.toThrow(`${MAX_GITHUB_BYTES} byte limit`);
   });
 
   it("normalizes Reddit endpoint variants", () => {
@@ -73,6 +88,42 @@ describe("source loaders", () => {
     });
   });
 
+  it("strips sensitive impers headers on cross-origin redirects", async () => {
+    const requestedHeaders: Record<string, string>[] = [];
+    let request = 0;
+    const session = {
+      get: async (_url: string, options: Record<string, unknown>) => {
+        requestedHeaders.push({ ...(options.headers as Record<string, string>) });
+        request += 1;
+        return {
+          status: request === 1 ? 302 : 200,
+          text: "done",
+          headers: {
+            get: (name: string) => (request === 1 && name === "location" ? "https://other.example/final" : null),
+          },
+          setContent: () => undefined,
+          close: async () => undefined,
+        };
+      },
+      close: async () => undefined,
+    } as unknown as ImpersSession;
+    const resources = { validateUrl: async (input: string | URL) => new URL(input) } as unknown as ResourceProvider;
+
+    await fetchImpersResponse("https://example.com/start", {
+      session,
+      resources,
+      headers: {
+        Authorization: "Bearer secret",
+        Cookie: "session=secret",
+        "Proxy-Authorization": "Basic secret",
+        Accept: "text/html",
+      },
+    });
+
+    expect(requestedHeaders[0]).toMatchObject({ Authorization: "Bearer secret", Cookie: "session=secret" });
+    expect(requestedHeaders[1]).toEqual({ Accept: "text/html" });
+  });
+
   it("aborts an impers response while it exceeds the byte limit", async () => {
     const session = {
       get: async (_url: string, options: Record<string, unknown>) => {
@@ -99,6 +150,31 @@ describe("source loaders", () => {
     await expect(new HttpLoader({ resources, timeoutMs: 5 }).load("https://example.com")).rejects.toBeInstanceOf(
       LoaderTimeoutError,
     );
+  });
+
+  it("times out stalled remote PDF requests by default", async () => {
+    const resources = {
+      fetch: async (_input: string | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+        }),
+    } as unknown as ResourceProvider;
+    await expect(
+      new PdfLoader({ resources, timeoutMs: 5 }).load("https://example.com/stalled.pdf"),
+    ).rejects.toBeInstanceOf(LoaderTimeoutError);
+  });
+
+  it("treats mixed-case HTTP schemes as remote PDF URLs", async () => {
+    const requests: string[] = [];
+    const resources = {
+      fetch: async (input: string | URL) => {
+        requests.push(String(input));
+        return new Response("not a PDF", { headers: { "content-type": "text/plain" } });
+      },
+    } as unknown as ResourceProvider;
+
+    await expect(new PdfLoader({ resources }).load("HTTPS://example.com/file.pdf")).rejects.toThrow("Not a PDF file");
+    expect(requests).toEqual(["https://example.com/file.pdf"]);
   });
 
   it("rejects remote PDFs that declare an oversized response", async () => {

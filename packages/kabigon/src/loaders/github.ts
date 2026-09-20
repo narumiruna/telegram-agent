@@ -1,5 +1,6 @@
 import { InvalidUrlError } from "../core/errors.js";
 import type { Loader } from "../core/loader.js";
+import { readResponseText } from "../core/network.js";
 import type { ResourceProvider } from "../core/resources.js";
 import {
   parseGitHubRawContentTarget,
@@ -8,6 +9,8 @@ import {
   requireLoaderApplicability,
 } from "../sources/applicability.js";
 import { extractFirstTagSubtree, htmlToMarkdown } from "./utils.js";
+
+export const MAX_GITHUB_BYTES = 10 * 1024 * 1024;
 
 export function toRawGitHubUrl(url: string): string {
   return parseGitHubRawContentTarget(url).rawUrl ?? url;
@@ -39,7 +42,7 @@ export class GitHubLoader implements Loader {
       if (!["text", "json", "xml"].some((type) => contentType.includes(type))) {
         throw new InvalidUrlError(url, `GitHub text content-type (got ${JSON.stringify(contentType)})`);
       }
-      return response.text();
+      return readResponseText(response, MAX_GITHUB_BYTES);
     }
 
     const response = await this.get(
@@ -51,6 +54,6 @@ export class GitHubLoader implements Loader {
     if (!contentType.includes("html")) {
       throw new InvalidUrlError(url, `GitHub HTML content-type (got ${JSON.stringify(contentType)})`);
     }
-    return htmlToMarkdown(extractMainHtml(await response.text()));
+    return htmlToMarkdown(extractMainHtml(await readResponseText(response, MAX_GITHUB_BYTES)));
   }
 }
