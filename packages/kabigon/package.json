@@ -1,0 +1,53 @@
+{
+  "name": "@telegram-agent/kabigon",
+  "version": "0.19.6",
+  "description": "Source-aware URL content extraction for TypeScript and Node.js",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "kabigon": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./loaders": {
+      "types": "./dist/loaders/index.d.ts",
+      "import": "./dist/loaders/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "biome check .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "cheerio": "1.2.0",
+    "fast-xml-parser": "5.11.1",
+    "impers": "0.1.2",
+    "pdf-parse": "2.4.5",
+    "playwright": "1.63.0",
+    "turndown": "7.2.2",
+    "youtube-transcript": "1.3.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@types/node": "22.19.19",
+    "@types/turndown": "5.0.6",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}
