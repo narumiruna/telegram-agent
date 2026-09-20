@@ -70,9 +70,7 @@ export class MorselPublisher {
     if (!isShareMetadata(metadata)) throw new MorselPublishError("Morsel returned invalid share metadata");
     const shareUrl = validateShareUrl(metadata.share_url, this.#baseUrl);
     if (this.options.telegramInstantView && this.options.telegramInstantViewRhash) {
-      const instantViewUrl = new URL(shareUrl);
-      instantViewUrl.searchParams.set("tg_rhash", this.options.telegramInstantViewRhash);
-      return instantViewUrl.toString();
+      return `${shareUrl}?tg_rhash=${this.options.telegramInstantViewRhash}`;
     }
     return shareUrl;
   }

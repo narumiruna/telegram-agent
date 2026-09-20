@@ -1,4 +1,4 @@
-import { run, type RunnerHandle } from "@grammyjs/runner";
+import { type RunnerHandle, run } from "@grammyjs/runner";
 import { Bot, type Context, GrammyError, HttpError } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
 
@@ -41,6 +41,7 @@ export function createTelegramAgentBot(
 ): TelegramAgentBot {
   const bot = new Bot(settings.botToken, dependencies.botInfo ? { botInfo: dependencies.botInfo } : {});
   const botReplyStreaks = new Map<number, number>();
+  const submissionTails = new Map<number, Promise<void>>();
   let runner: RunnerHandle | undefined;
   const morselPublisher = dependencies.morselPublisher ?? createMorselPublisher(settings);
 
@@ -79,7 +80,7 @@ export function createTelegramAgentBot(
       await context.reply("請使用 /ask <問題>。", replyOptions(context));
       return;
     }
-    await answer(context, prompt);
+    await inSubmissionOrder(context.chat.id, (release) => answer(context, prompt, [], release));
   });
 
   bot.on("message", async (context) => {
@@ -104,40 +105,42 @@ export function createTelegramAgentBot(
     }
 
     if (fromBot) botReplyStreaks.set(context.chat.id, (botReplyStreaks.get(context.chat.id) ?? 0) + 1);
-    const strippedText = privateChat
-      ? messageText(message).trim()
-      : stripBotMention(messageText(message), context.me.username);
-    const references = imageReferences(message);
-    if (references.length > 0 && !settings.botImageInputEnabled) {
-      await context.reply("目前未啟用圖片輸入。", replyOptions(context));
-      return;
-    }
+    await inSubmissionOrder(context.chat.id, async (release) => {
+      const strippedText = privateChat
+        ? messageText(message).trim()
+        : stripBotMention(messageText(message), context.me.username);
+      const references = imageReferences(message);
+      if (references.length > 0 && !settings.botImageInputEnabled) {
+        await context.reply("目前未啟用圖片輸入。", replyOptions(context));
+        return;
+      }
 
-    let images: Array<{ type: "image"; data: string; mimeType: string }>;
-    try {
-      images = await Promise.all(
-        references.map((reference) =>
-          downloadTelegramImage(
-            context.api,
-            settings.botToken,
-            reference,
-            settings.botImageMaxBytes,
-            dependencies.imageFetchImplementation,
+      let images: Array<{ type: "image"; data: string; mimeType: string }>;
+      try {
+        images = await Promise.all(
+          references.map((reference) =>
+            downloadTelegramImage(
+              context.api,
+              settings.botToken,
+              reference,
+              settings.botImageMaxBytes,
+              dependencies.imageFetchImplementation,
+            ),
           ),
-        ),
-      );
-    } catch (error) {
-      const message =
-        error instanceof TelegramDownloadTooLargeError
-          ? "圖片超過允許的大小，無法處理。"
-          : "無法下載 Telegram 圖片，請稍後再試。";
-      logger.warn(`Telegram image input failed for chat_id=${context.chat.id}`, error);
-      await context.reply(message, replyOptions(context));
-      return;
-    }
+        );
+      } catch (error) {
+        const message =
+          error instanceof TelegramDownloadTooLargeError
+            ? "圖片超過允許的大小，無法處理。"
+            : "無法下載 Telegram 圖片，請稍後再試。";
+        logger.warn(`Telegram image input failed for chat_id=${context.chat.id}`, error);
+        await context.reply(message, replyOptions(context));
+        return;
+      }
 
-    const basePrompt = strippedText || (images.length > 0 ? defaultImagePrompt : "請回應這則訊息。");
-    await answer(context, promptWithReplyContext(message, basePrompt), images);
+      const basePrompt = strippedText || (images.length > 0 ? defaultImagePrompt : "請回應這則訊息。");
+      await answer(context, promptWithReplyContext(message, basePrompt), images, release);
+    });
   });
 
   bot.catch((error) => {
@@ -155,7 +158,8 @@ export function createTelegramAgentBot(
   async function answer(
     context: Context,
     prompt: string,
-    images: Array<{ type: "image"; data: string; mimeType: string }> = [],
+    images: Array<{ type: "image"; data: string; mimeType: string }>,
+    releaseSubmissionTurn: () => void,
   ): Promise<void> {
     const sourceMessageId = context.message?.message_id;
     const status = await context.reply(
@@ -163,7 +167,10 @@ export function createTelegramAgentBot(
       sourceMessageId ? { reply_parameters: { message_id: sourceMessageId } } : {},
     );
     try {
-      const result = await sessions.submit(context.chat?.id ?? status.chat.id, prompt, { images });
+      const result = await sessions.submit(context.chat?.id ?? status.chat.id, prompt, {
+        images,
+        onAccepted: releaseSubmissionTurn,
+      });
       let outboundText = result.text;
       const sanitized = sanitizeTelegramText(outboundText);
       if (
@@ -182,6 +189,30 @@ export function createTelegramAgentBot(
     } catch (error) {
       logger.error(`Pi agent request failed for chat_id=${status.chat.id}`, error);
       await editStatusWithChunks(context, status.chat.id, status.message_id, "AI 服務暫時無法使用，請稍後再試。");
+    }
+  }
+
+  async function inSubmissionOrder(chatId: number, task: (release: () => void) => Promise<void>): Promise<void> {
+    const previous = submissionTails.get(chatId) ?? Promise.resolve();
+    let openGate = () => {};
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const tail = previous.then(() => gate);
+    submissionTails.set(chatId, tail);
+    await previous;
+
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      openGate();
+      if (submissionTails.get(chatId) === tail) submissionTails.delete(chatId);
+    };
+    try {
+      await task(release);
+    } finally {
+      release();
     }
   }
 

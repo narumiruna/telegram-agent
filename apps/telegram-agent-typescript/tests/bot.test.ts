@@ -1,10 +1,10 @@
+import type { Transformer } from "grammy";
+import type { Update, UserFromGetMe } from "grammy/types";
+import { describe, expect, it, vi } from "vitest";
 import type { ChatSessionRegistry } from "../src/agent/session-registry.js";
 import { loadSettings } from "../src/config/settings.js";
 import type { Logger } from "../src/logging.js";
 import { createTelegramAgentBot } from "../src/telegram/bot.js";
-import type { Transformer } from "grammy";
-import type { Update, UserFromGetMe } from "grammy/types";
-import { describe, expect, it, vi } from "vitest";
 
 const botInfo: UserFromGetMe = {
   id: 999,
@@ -31,7 +31,10 @@ const logger: Logger = {
 
 function createSessions(overrides: Partial<ChatSessionRegistry> = {}): ChatSessionRegistry {
   return {
-    submit: vi.fn(async () => ({ kind: "completed" as const, text: "AI 回覆" })),
+    submit: vi.fn(async (_chatId: number, _prompt: string, options: { onAccepted?: () => void } = {}) => {
+      options.onAccepted?.();
+      return { kind: "completed" as const, text: "AI 回覆" };
+    }),
     appendPassiveContext: vi.fn(async () => undefined),
     cancel: vi.fn(async () => false),
     reset: vi.fn(async () => undefined),
@@ -69,6 +72,17 @@ function installApiMock(bot: ReturnType<typeof createTelegramAgentBot>["bot"]) {
         },
       } as never;
     }
+    if (method === "getFile") {
+      return {
+        ok: true,
+        result: {
+          file_id: String(recordedPayload.file_id),
+          file_unique_id: "image-unique-id",
+          file_size: 5,
+          file_path: "photos/image.jpg",
+        },
+      } as never;
+    }
     return { ok: true, result: true } as never;
   };
   bot.api.config.use(transformer);
@@ -83,7 +97,10 @@ describe("Telegram bot update routing", () => {
 
     await telegram.bot.handleUpdate(privateMessage(1, "你好"));
 
-    expect(sessions.submit).toHaveBeenCalledWith(7, "你好", { images: [] });
+    expect(sessions.submit).toHaveBeenCalledWith(7, "你好", {
+      images: [],
+      onAccepted: expect.any(Function),
+    });
     expect(calls.map((call) => call.method)).toEqual(["sendMessage", "editMessageText"]);
     expect(calls[1]?.payload.text).toBe("AI 回覆");
   });
@@ -145,6 +162,53 @@ describe("Telegram bot update routing", () => {
     expect(sessions.cancel).toHaveBeenCalledWith(7);
     finishSubmit?.({ kind: "completed", text: "已完成" });
     await runningUpdate;
+  });
+
+  it("preserves per-chat submission order while an earlier image downloads", async () => {
+    let finishImageDownload: ((response: Response) => void) | undefined;
+    const pendingImageDownload = new Promise<Response>((resolve) => {
+      finishImageDownload = resolve;
+    });
+    let finishFirstSubmission: ((value: { kind: "completed"; text: string }) => void) | undefined;
+    const pendingFirstSubmission = new Promise<{ kind: "completed"; text: string }>((resolve) => {
+      finishFirstSubmission = resolve;
+    });
+    const submissionOrder: string[] = [];
+    const sessions = createSessions({
+      submit: vi.fn(async (_chatId, prompt, options) => {
+        submissionOrder.push(prompt);
+        options.onAccepted?.();
+        return prompt === "第一張" ? pendingFirstSubmission : { kind: "completed" as const, text: "AI 回覆" };
+      }),
+    });
+    const imageFetchImplementation = vi.fn<typeof fetch>(async () => pendingImageDownload);
+    const telegram = createTelegramAgentBot(loadSettings({ BOT_TOKEN: "test-token" }), sessions, logger, {
+      botInfo,
+      imageFetchImplementation,
+    });
+    installApiMock(telegram.bot);
+    const photoUpdate = privateMessage(6, "");
+    if (photoUpdate.message) {
+      photoUpdate.message.photo = [
+        { file_id: "image", file_unique_id: "image-unique-id", width: 100, height: 100, file_size: 5 },
+      ];
+      photoUpdate.message.caption = "第一張";
+      delete photoUpdate.message.text;
+    }
+
+    const firstHandling = telegram.bot.handleUpdate(photoUpdate);
+    await vi.waitFor(() => expect(imageFetchImplementation).toHaveBeenCalledOnce());
+    const secondHandling = telegram.bot.handleUpdate(privateMessage(7, "第二則"));
+    await Promise.resolve();
+    expect(sessions.submit).not.toHaveBeenCalled();
+
+    finishImageDownload?.(new Response("image"));
+    await vi.waitFor(() => expect(sessions.submit).toHaveBeenCalledTimes(2));
+    await secondHandling;
+    expect(submissionOrder).toEqual(["第一張", "第二則"]);
+
+    finishFirstSubmission?.({ kind: "completed", text: "第一則完成" });
+    await firstHandling;
   });
 
   it("reports oversized image errors without invoking the agent", async () => {

@@ -1,6 +1,6 @@
-import { createPiSessionFactory } from "./agent/pi-session-factory.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createPiSessionFactory } from "./agent/pi-session-factory.js";
 
 import { asSessionCreator, ChatSessionRegistry } from "./agent/session-registry.js";
 import { loadSettings } from "./config/settings.js";

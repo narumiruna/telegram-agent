@@ -34,6 +34,7 @@ export type SessionCreator = (chatId: number) => Promise<SessionHandle>;
 export class ChatSessionRegistry {
   readonly #sessions = new Map<number, SessionHandle>();
   readonly #creating = new Map<number, Promise<SessionHandle>>();
+  readonly #generations = new Map<number, number>();
 
   constructor(
     private readonly createSession: SessionCreator,
@@ -44,21 +45,27 @@ export class ChatSessionRegistry {
   async submit(
     chatId: number,
     prompt: string,
-    options: { images?: ImageContent[]; intent?: SubmissionIntent } = {},
+    options: { images?: ImageContent[]; intent?: SubmissionIntent; onAccepted?: () => void } = {},
   ): Promise<SubmissionResult> {
     const session = await this.#getOrCreate(chatId);
     const images = options.images ?? [];
     if (session.isStreaming) {
       if (options.intent === "followUp") {
-        await session.followUp(prompt, images);
+        const submission = session.followUp(prompt, images);
+        options.onAccepted?.();
+        await submission;
         return { kind: "followed_up", text: "已將新訊息排在目前任務完成後處理。" };
       }
-      await session.steer(prompt, images);
+      const submission = session.steer(prompt, images);
+      options.onAccepted?.();
+      await submission;
       return { kind: "steered", text: "已將新訊息加入目前任務。" };
     }
 
     const previousMessageCount = session.messages.length;
-    await session.prompt(prompt, images.length > 0 ? { images } : undefined);
+    const submission = session.prompt(prompt, images.length > 0 ? { images } : undefined);
+    options.onAccepted?.();
+    await submission;
     return {
       kind: "completed",
       text: lastAssistantText(session.messages.slice(previousMessageCount)) || "模型沒有回覆內容，請稍後再試。",
@@ -83,6 +90,7 @@ export class ChatSessionRegistry {
   }
 
   async reset(chatId: number): Promise<void> {
+    this.#generations.set(chatId, (this.#generations.get(chatId) ?? 0) + 1);
     const session = this.#sessions.get(chatId);
     if (session) {
       if (session.isStreaming) {
@@ -97,6 +105,9 @@ export class ChatSessionRegistry {
   }
 
   async dispose(): Promise<void> {
+    for (const chatId of this.#creating.keys()) {
+      this.#generations.set(chatId, (this.#generations.get(chatId) ?? 0) + 1);
+    }
     await Promise.all(
       [...this.#sessions.values()].map(async (session) => {
         if (session.isStreaming) {
@@ -117,15 +128,21 @@ export class ChatSessionRegistry {
     const inflight = this.#creating.get(chatId);
     if (inflight) return inflight;
 
-    const creation = this.createSession(chatId);
-    this.#creating.set(chatId, creation);
-    try {
-      const session = await creation;
+    const generation = this.#generations.get(chatId) ?? 0;
+    const creation = this.createSession(chatId).then((session) => {
+      if ((this.#generations.get(chatId) ?? 0) !== generation) {
+        session.dispose();
+        throw new Error("Pi session creation was invalidated by reset");
+      }
       this.#sessions.set(chatId, session);
       this.logger.debug(`Created Pi AgentSession for chat_id=${chatId}`);
       return session;
+    });
+    this.#creating.set(chatId, creation);
+    try {
+      return await creation;
     } finally {
-      this.#creating.delete(chatId);
+      if (this.#creating.get(chatId) === creation) this.#creating.delete(chatId);
     }
   }
 }

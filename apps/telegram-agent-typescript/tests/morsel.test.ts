@@ -26,6 +26,21 @@ describe("MorselPublisher", () => {
     );
   });
 
+  it("appends the Instant View hash inside fragment-form share routes", async () => {
+    const publisher = new MorselPublisher("https://morsel.example/", "secret", {
+      timeoutMs: 1_000,
+      expiresInSeconds: 60,
+      telegramInstantView: true,
+      telegramInstantViewRhash: "preview-hash",
+      fetchImplementation: async () =>
+        Response.json({ id: "share", share_url: `https://morsel.example/#/s/${capability}` }, { status: 201 }),
+    });
+
+    await expect(publisher.publish("content")).resolves.toBe(
+      `https://morsel.example/#/s/${capability}?tg_rhash=preview-hash`,
+    );
+  });
+
   it.each([
     `https://evil.example/s/${capability}`,
     `https://morsel.example/\ts/${capability}`,

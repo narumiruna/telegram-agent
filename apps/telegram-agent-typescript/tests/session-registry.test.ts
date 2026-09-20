@@ -83,6 +83,36 @@ describe("ChatSessionRegistry", () => {
     expect(sessions.get(2)?.prompts).toEqual(["other"]);
   });
 
+  it("invalidates a session that finishes creating after reset", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "telegramagent-ts-"));
+    const staleSession = new FakeSession();
+    const replacementSession = new FakeSession();
+    let finishCreation: ((session: SessionHandle) => void) | undefined;
+    const pendingCreation = new Promise<SessionHandle>((resolve) => {
+      finishCreation = resolve;
+    });
+    const createSession = vi.fn(async () =>
+      createSession.mock.calls.length === 1 ? pendingCreation : replacementSession,
+    );
+    const registry = new ChatSessionRegistry(createSession, root, logger);
+
+    const staleSubmission = registry.submit(1, "stale");
+    const concurrentStaleSubmission = registry.submit(1, "also stale");
+    const staleOutcome = expect(staleSubmission).rejects.toThrow("invalidated by reset");
+    const concurrentStaleOutcome = expect(concurrentStaleSubmission).rejects.toThrow("invalidated by reset");
+    await vi.waitFor(() => expect(createSession).toHaveBeenCalledOnce());
+    await registry.reset(1);
+    const replacementSubmission = registry.submit(1, "fresh");
+    await vi.waitFor(() => expect(createSession).toHaveBeenCalledTimes(2));
+    finishCreation?.(staleSession);
+
+    await Promise.all([staleOutcome, concurrentStaleOutcome]);
+    await expect(replacementSubmission).resolves.toEqual({ kind: "completed", text: "AI: fresh" });
+    expect(staleSession.disposed).toBe(true);
+    expect(staleSession.prompts).toEqual([]);
+    expect(replacementSession.prompts).toEqual(["fresh"]);
+  });
+
   it("delegates steering, follow-up, passive context, cancellation, and reset to Pi sessions", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "telegramagent-ts-"));
     const session = new FakeSession();

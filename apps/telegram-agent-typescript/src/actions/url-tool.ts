@@ -4,6 +4,7 @@ import { isIP, type LookupFunction } from "node:net";
 
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import ipaddr from "ipaddr.js";
 import { Agent, type Dispatcher, fetch as undiciFetch } from "undici";
 
 import type { Settings } from "../config/settings.js";
@@ -76,7 +77,7 @@ export async function fetchPublicUrl(urlValue: string, options: FetchPublicUrlOp
   let currentValue = urlValue;
 
   for (let redirects = 0; redirects <= 5; redirects += 1) {
-    const current = await resolvePublicUrl(currentValue, options.allowedSchemes, options.resolve ?? lookup);
+    const current = await resolvePublicUrl(currentValue, options.allowedSchemes, options.resolve ?? lookup, signal);
     const dispatcher = new Agent({ connect: { lookup: createPinnedLookup(current.addresses) } });
     try {
       const response = await fetchImplementation(current.url, {
@@ -128,14 +129,16 @@ export async function assertPublicUrl(
   urlValue: string,
   allowedSchemes: ReadonlySet<string> = new Set(["http", "https"]),
   resolve: PublicUrlResolver = lookup,
+  signal?: AbortSignal,
 ): Promise<URL> {
-  return (await resolvePublicUrl(urlValue, allowedSchemes, resolve)).url;
+  return (await resolvePublicUrl(urlValue, allowedSchemes, resolve, signal)).url;
 }
 
 async function resolvePublicUrl(
   urlValue: string,
   allowedSchemes: ReadonlySet<string>,
   resolve: PublicUrlResolver,
+  signal?: AbortSignal,
 ): Promise<ResolvedPublicUrl> {
   let url: URL;
   try {
@@ -156,7 +159,7 @@ async function resolvePublicUrl(
     if (!isPublicIp(hostname)) throw new Error("Private or non-routable URL targets are not allowed");
     return { url, addresses: [{ address: hostname, family }] };
   }
-  const addresses = await resolve(hostname, { all: true, verbatim: true });
+  const addresses = await withAbortSignal(resolve(hostname, { all: true, verbatim: true }), signal);
   if (addresses.length === 0 || addresses.some((entry) => !isPublicIp(entry.address))) {
     throw new Error("URL hostname resolved to a private or non-routable address");
   }
@@ -191,35 +194,29 @@ function normalizeHostname(hostname: string): string {
 }
 
 export function isPublicIp(address: string): boolean {
-  if (address.toLowerCase().startsWith("::ffff:")) return isPublicIp(address.slice(7));
-  if (isIP(address) === 4) {
-    const octets = address.split(".").map(Number);
-    const [first = 0, second = 0] = octets;
-    return !(
-      first === 0 ||
-      first === 10 ||
-      first === 127 ||
-      (first === 100 && second >= 64 && second <= 127) ||
-      (first === 169 && second === 254) ||
-      (first === 172 && second >= 16 && second <= 31) ||
-      (first === 192 && second === 0) ||
-      (first === 192 && second === 168) ||
-      (first === 198 && (second === 18 || second === 19)) ||
-      first >= 224
+  if (isIP(address) === 0) return false;
+  return ipaddr.process(address).range() === "unicast";
+}
+
+function withAbortSignal<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return operation;
+  if (signal.aborted)
+    return Promise.reject(signal.reason ?? new DOMException("The operation was aborted", "AbortError"));
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new DOMException("The operation was aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
     );
-  }
-  if (isIP(address) === 6) {
-    const normalized = address.toLowerCase();
-    return !(
-      normalized === "::" ||
-      normalized === "::1" ||
-      normalized.startsWith("fc") ||
-      normalized.startsWith("fd") ||
-      /^fe[89ab]/u.test(normalized) ||
-      normalized.startsWith("ff")
-    );
-  }
-  return false;
+  });
 }
 
 async function readBoundedBody(response: Response, maxBytes: number): Promise<Uint8Array> {
