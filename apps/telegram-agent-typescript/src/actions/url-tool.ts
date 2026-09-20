@@ -4,6 +4,12 @@ import { isIP, type LookupFunction } from "node:net";
 
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import {
+  isTwitterStatusUrl,
+  isYouTubeVideoUrl,
+  loadUrlDetailed,
+  type LoadResult as KabigonLoadResult,
+} from "@telegram-agent/kabigon";
 import ipaddr from "ipaddr.js";
 import { Agent, type Dispatcher, fetch as undiciFetch } from "undici";
 
@@ -11,6 +17,13 @@ import type { Settings } from "../config/settings.js";
 
 const redirectStatuses = new Set([301, 302, 303, 307, 308]);
 const acceptedContentTypes = ["text/", "application/json", "application/xml", "application/xhtml+xml"];
+const blockerPhrases = [
+  "javascript is not available",
+  "javascript is disabled in this browser",
+  "please wait for verification",
+  "verify you are a human",
+  "verify you're a human",
+];
 
 export function buildUrlTools(settings: Settings): ToolDefinition[] {
   if (!settings.botProactiveEnabled) return [];
@@ -19,15 +32,16 @@ export function buildUrlTools(settings: Settings): ToolDefinition[] {
       name: "load_public_url",
       label: "Load public URL",
       description:
-        "Load readable text from a public HTTP(S) URL. Use this when the user asks about a URL. Private, local, oversized, non-text, and unsafe redirect targets are rejected.",
+        "Load readable text or Markdown from a public HTTP(S) URL. The bounded built-in loader is tried first, then kabigon handles source-specific or blocked content. Private, local, oversized, and unsafe redirect targets are rejected.",
       parameters: Type.Object({
         url: Type.String({ description: "The absolute public HTTP(S) URL to load" }),
       }),
       execute: async (_toolCallId, parameters, signal) => {
-        const result = await fetchPublicUrl(parameters.url, {
+        const result = await loadPublicUrl(parameters.url, {
           allowedSchemes: settings.botProactiveAllowedSchemes,
           maxChars: settings.botProactiveMaxExtractedChars,
           timeoutMs: Math.round(settings.botProactiveUrlTimeoutSeconds * 1_000),
+          kabigonTimeoutSeconds: settings.botKabigonTimeoutSeconds,
           signal,
         });
         return {
@@ -37,6 +51,18 @@ export function buildUrlTools(settings: Settings): ToolDefinition[] {
       },
     }),
   ];
+}
+
+export interface LoadedUrl {
+  url: string;
+  finalUrl: string;
+  source: "built-in" | "kabigon";
+  contentType: string;
+  title?: string;
+  text: string;
+  truncated: boolean;
+  status?: number;
+  loaderId?: string;
 }
 
 export interface FetchedUrl {
@@ -65,9 +91,69 @@ interface FetchPublicUrlOptions {
   resolve?: PublicUrlResolver;
 }
 
+type KabigonLoadImplementation = (
+  url: string,
+  options: { deadlineSeconds?: number; signal?: AbortSignal },
+) => Promise<KabigonLoadResult>;
+
+interface LoadPublicUrlOptions extends FetchPublicUrlOptions {
+  kabigonTimeoutSeconds: number;
+  kabigonLoadImplementation?: KabigonLoadImplementation;
+}
+
 interface ResolvedPublicUrl {
   url: URL;
   addresses: LookupAddress[];
+}
+
+export async function loadPublicUrl(urlValue: string, options: LoadPublicUrlOptions): Promise<LoadedUrl> {
+  const validationTimeout = AbortSignal.timeout(options.timeoutMs);
+  const validationSignal = options.signal ? AbortSignal.any([options.signal, validationTimeout]) : validationTimeout;
+  await assertPublicUrl(urlValue, options.allowedSchemes, options.resolve ?? lookup, validationSignal);
+
+  let builtInError: unknown;
+  try {
+    const result = await fetchPublicUrl(urlValue, options);
+    if (!requiresKabigon(urlValue, result)) {
+      return {
+        url: result.url,
+        finalUrl: result.finalUrl,
+        source: "built-in",
+        contentType: result.contentType,
+        ...(result.title ? { title: result.title } : {}),
+        text: result.text,
+        truncated: result.truncated,
+        status: result.status,
+      };
+    }
+    builtInError = new Error("The built-in loader did not extract source-specific content");
+  } catch (error) {
+    builtInError = error;
+  }
+
+  try {
+    const load = options.kabigonLoadImplementation ?? loadUrlDetailed;
+    const result = await load(urlValue, {
+      deadlineSeconds: options.kabigonTimeoutSeconds,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    const content = result.content.trim();
+    if (!content) throw new Error("kabigon returned no content");
+    const truncated = content.length > options.maxChars;
+    return {
+      url: urlValue,
+      finalUrl: urlValue,
+      source: "kabigon",
+      contentType: result.contentType,
+      text: truncated
+        ? `${content.slice(0, options.maxChars)}\n\n[truncated by telegramagent: ${content.length} -> ${options.maxChars} chars]`
+        : content,
+      truncated,
+      loaderId: result.loaderId,
+    };
+  } catch (kabigonError) {
+    throw new AggregateError([builtInError, kabigonError], "Built-in and kabigon URL loading both failed");
+  }
 }
 
 export async function fetchPublicUrl(urlValue: string, options: FetchPublicUrlOptions): Promise<FetchedUrl> {
@@ -123,6 +209,20 @@ export async function fetchPublicUrl(urlValue: string, options: FetchPublicUrlOp
     }
   }
   throw new Error("URL loader ended unexpectedly");
+}
+
+function requiresKabigon(urlValue: string, result: FetchedUrl): boolean {
+  if (!result.title && !result.text.trim()) return true;
+  if (
+    isYouTubeVideoUrl(urlValue) ||
+    isYouTubeVideoUrl(result.finalUrl) ||
+    isTwitterStatusUrl(urlValue) ||
+    isTwitterStatusUrl(result.finalUrl)
+  ) {
+    return true;
+  }
+  const content = `${result.title ?? ""} ${result.text}`.toLowerCase();
+  return blockerPhrases.some((phrase) => content.includes(phrase));
 }
 
 export async function assertPublicUrl(

@@ -154,6 +154,7 @@ export interface Settings {
   botSoulMaxChars: number;
   botProactiveEnabled: boolean;
   botProactiveUrlTimeoutSeconds: number;
+  botKabigonTimeoutSeconds: number;
   botProactiveMaxExtractedChars: number;
   botProactiveAllowedSchemes: ReadonlySet<string>;
   botSessionLogDir: string;
@@ -195,6 +196,7 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env, proje
     botSoulMaxChars: parsed.BOT_SOUL_MAX_CHARS,
     botProactiveEnabled: parsed.BOT_PROACTIVE_ENABLED,
     botProactiveUrlTimeoutSeconds: parsed.BOT_PROACTIVE_URL_TIMEOUT_SECONDS,
+    botKabigonTimeoutSeconds: parsed.BOT_KABIGON_TIMEOUT_SECONDS,
     botProactiveMaxExtractedChars: parsed.BOT_PROACTIVE_MAX_EXTRACTED_CHARS,
     botProactiveAllowedSchemes: parsed.BOT_PROACTIVE_ALLOWED_SCHEMES,
     botSessionLogDir: path.resolve(root, parsed.BOT_SESSION_LOG_DIR),

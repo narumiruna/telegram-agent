@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "build:dependencies": "npm run build --workspace @telegram-agent/kabigon",
     "dev": "node --env-file-if-exists=../../.env --env-file-if-exists=.env --import tsx src/index.ts",
     "start": "node --env-file-if-exists=../../.env --env-file-if-exists=.env dist/index.js",
     "format": "biome format --write .",
@@ -15,6 +16,12 @@
     "lint": "biome lint .",
     "check": "biome check .",
     "check:write": "biome check --write .",
+    "prebuild": "npm run build:dependencies",
+    "predev": "npm run build:dependencies",
+    "prestart": "npm run build:dependencies",
+    "pretest": "npm run build:dependencies",
+    "pretest:watch": "npm run build:dependencies",
+    "pretypecheck": "npm run build:dependencies",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -24,6 +31,7 @@
     "@earendil-works/pi-ai": "0.85.1",
     "@earendil-works/pi-coding-agent": "0.85.1",
     "@grammyjs/runner": "2.0.3",
+    "@telegram-agent/kabigon": "0.19.6",
     "grammy": "1.46.0",
     "ipaddr.js": "2.5.0",
     "undici": "8.10.2",

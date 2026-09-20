@@ -11,7 +11,7 @@ on:
       - "apps/telegram-agent-typescript/**"
       - "package.json"
       - "package-lock.json"
-      - "packages/kabigon/package.json"
+      - "packages/kabigon/**"
       - "SOUL.md"
 
 permissions:

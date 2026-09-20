@@ -2,7 +2,13 @@ import type { lookup } from "node:dns/promises";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { assertPublicUrl, createPinnedLookup, fetchPublicUrl, isPublicIp } from "../src/actions/url-tool.js";
+import {
+  assertPublicUrl,
+  createPinnedLookup,
+  fetchPublicUrl,
+  isPublicIp,
+  loadPublicUrl,
+} from "../src/actions/url-tool.js";
 
 const options = {
   allowedSchemes: new Set(["http", "https"]),
@@ -95,5 +101,105 @@ describe("public URL loading", () => {
     await expect(
       fetchPublicUrl("https://8.8.8.8/redirect", { ...options, fetchImplementation: redirectFetch }),
     ).rejects.toThrow("Private");
+  });
+
+  it("returns a successful built-in result without invoking kabigon", async () => {
+    const fetchImplementation = vi.fn(async () => {
+      return new Response("plain content", { headers: { "content-type": "text/plain" } });
+    });
+    const kabigonLoadImplementation = vi.fn(async () => {
+      throw new Error("kabigon should not be called");
+    });
+
+    await expect(
+      loadPublicUrl("https://8.8.8.8/page", {
+        ...options,
+        fetchImplementation,
+        kabigonTimeoutSeconds: 12,
+        kabigonLoadImplementation,
+      }),
+    ).resolves.toMatchObject({
+      source: "built-in",
+      text: "plain content",
+      status: 200,
+    });
+    expect(kabigonLoadImplementation).not.toHaveBeenCalled();
+  });
+
+  it("falls back to bounded kabigon output with the configured deadline", async () => {
+    const fetchImplementation = vi.fn(async () => {
+      return new Response("%PDF", { headers: { "content-type": "application/pdf" } });
+    });
+    const kabigonLoadImplementation = vi.fn(async () => ({
+      content: "abcdef",
+      loaderId: "pdf",
+      contentType: "markdown",
+      downgraded: false,
+      attempts: [],
+    }));
+
+    await expect(
+      loadPublicUrl("https://8.8.8.8/file.pdf", {
+        ...options,
+        maxChars: 3,
+        fetchImplementation,
+        kabigonTimeoutSeconds: 12,
+        kabigonLoadImplementation,
+      }),
+    ).resolves.toMatchObject({
+      source: "kabigon",
+      loaderId: "pdf",
+      contentType: "markdown",
+      text: "abc\n\n[truncated by telegramagent: 6 -> 3 chars]",
+      truncated: true,
+    });
+    expect(kabigonLoadImplementation).toHaveBeenCalledWith("https://8.8.8.8/file.pdf", {
+      deadlineSeconds: 12,
+    });
+  });
+
+  it("uses kabigon for source-specific URLs even when generic HTML loads", async () => {
+    const resolve = vi.fn(async () => [{ address: "8.8.8.8", family: 4 as const }]) as unknown as typeof lookup;
+    const fetchImplementation = vi.fn(async () => {
+      return new Response("<html><body>YouTube shell</body></html>", {
+        headers: { "content-type": "text/html" },
+      });
+    });
+    const kabigonLoadImplementation = vi.fn(async () => ({
+      content: "video transcript",
+      loaderId: "youtube-transcript",
+      contentType: "transcript",
+      downgraded: false,
+      attempts: [],
+    }));
+
+    await expect(
+      loadPublicUrl("https://youtu.be/dQw4w9WgXcQ", {
+        ...options,
+        resolve,
+        fetchImplementation,
+        kabigonTimeoutSeconds: 30,
+        kabigonLoadImplementation,
+      }),
+    ).resolves.toMatchObject({
+      source: "kabigon",
+      loaderId: "youtube-transcript",
+      text: "video transcript",
+    });
+  });
+
+  it("rejects unsafe targets before invoking kabigon", async () => {
+    const kabigonLoadImplementation = vi.fn(async () => {
+      throw new Error("kabigon should not be called");
+    });
+
+    await expect(
+      loadPublicUrl("http://127.0.0.1/private", {
+        ...options,
+        kabigonTimeoutSeconds: 12,
+        kabigonLoadImplementation,
+      }),
+    ).rejects.toThrow("Private");
+    expect(kabigonLoadImplementation).not.toHaveBeenCalled();
   });
 });
