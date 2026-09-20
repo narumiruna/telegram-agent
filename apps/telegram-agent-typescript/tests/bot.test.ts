@@ -384,9 +384,11 @@ describe("Telegram bot update routing", () => {
       "editMessageText",
       "sendMessage",
       "sendMessage",
+      "deleteMessage",
       "editMessageText",
     ]);
     expect(calls.some((call) => call.payload.text === "c")).toBe(false);
+    expect(calls.at(-2)?.payload.message_id).toBe(102);
     expect(calls.at(-1)?.payload.text).toBe("此請求已因重設對話而取消。");
   });
 

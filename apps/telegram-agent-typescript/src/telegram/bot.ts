@@ -316,6 +316,10 @@ async function editStatusWithChunks(
       parse_mode: "HTML",
       reply_parameters: { message_id: replyTo },
     });
+    if (!isCurrent()) {
+      await context.api.deleteMessage(chatId, sent.message_id);
+      return false;
+    }
     replyTo = sent.message_id;
   }
   return isCurrent();
