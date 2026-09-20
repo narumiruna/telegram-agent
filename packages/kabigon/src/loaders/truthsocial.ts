@@ -70,7 +70,12 @@ export class TruthSocialLoader implements Loader {
       blockedResourceTypes: DEFAULT_BLOCKED_RESOURCE_TYPES,
       extractContent: (page) => extractTruthSocialPost(page, url, statusId, this.timeoutMs),
       ...(browser ? { browser } : {}),
-      ...(resources ? { validateUrl: resources.validateUrl.bind(resources) } : {}),
+      ...(resources
+        ? {
+            validateUrl: resources.validateUrl.bind(resources),
+            fetchUrl: resources.fetch.bind(resources),
+          }
+        : {}),
       signal,
     });
     return htmlToMarkdown(content);

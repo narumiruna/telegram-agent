@@ -28,6 +28,16 @@ describe("HTML extraction", () => {
     expect(extractNewsArticleText(html, url, "NewsLoader")).toBe("A  body\nline");
   });
 
+  it("requires article-specific markup for BBC and CNN extraction", () => {
+    expect(extractNewsArticleText("<article><p>Article body</p></article>", url, "NewsLoader")).toBe("Article body");
+    expect(() =>
+      extractNewsArticleText("<main><h1>Sign in</h1><p>Login required</p></main>", url, "NewsLoader"),
+    ).toThrow("Could not find article body");
+    expect(() => extractNewsArticleText("<html><body>Blocker</body></html>", url, "NewsLoader")).toThrow(
+      "Could not find article body",
+    );
+  });
+
   it("extracts LTN's article div and removes advertising subtrees", () => {
     const html = '<div class="text boxTitle boxText"><p>Lead</p><div id="ad-1">Ad</div><p>Body</p></div>';
     const result = extractLtnArticleText(html, url, "LTNLoader");

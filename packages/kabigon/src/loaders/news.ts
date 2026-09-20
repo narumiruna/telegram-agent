@@ -8,7 +8,7 @@ import { AttemptStatus } from "../core/results.js";
 import { parseBbcTarget, parseCnnTarget, parseLtnTarget } from "../sources/applicability.js";
 import { fetchBrowserHtmlResponse } from "./browser.js";
 import { fetchHttpHtml, fetchImpersHtml } from "./generic.js";
-import { extractArticleBodyFromJsonLd, extractFirstTagSubtree, htmlToMarkdown } from "./utils.js";
+import { extractArticleBodyFromJsonLd, htmlToMarkdown } from "./utils.js";
 
 export const DEFAULT_NEWS_ARTICLE_HEADERS = {
   Accept: "text/html,application/xhtml+xml",
@@ -20,7 +20,11 @@ type NewsSource = "bbc" | "cnn" | "ltn";
 export function extractNewsArticleText(html: string, url: string, loaderName: string): string {
   const jsonLdBody = extractArticleBodyFromJsonLd(html);
   if (jsonLdBody) return jsonLdBody;
-  const result = htmlToMarkdown(extractFirstTagSubtree(html, ["article", "main"], "script,style,noscript,svg")).trim();
+  const $ = cheerio.load(html);
+  const article = $("article").first();
+  if (article.length === 0) throw new LoaderContentError(loaderName, url, "Could not find article body");
+  article.find("script,style,noscript,svg").remove();
+  const result = htmlToMarkdown($.html(article)).trim();
   if (!result) throw new LoaderContentError(loaderName, url, "Could not find article body");
   return result;
 }
@@ -87,7 +91,12 @@ export class NewsArticleLoader implements Loader {
               timeoutSuggestion: "Article page timed out while using the browser transport.",
               waitUntil: "domcontentloaded",
               ...(browser ? { browser } : {}),
-              ...(resources ? { validateUrl: resources.validateUrl.bind(resources) } : {}),
+              ...(resources
+                ? {
+                    validateUrl: resources.validateUrl.bind(resources),
+                    fetchUrl: resources.fetch.bind(resources),
+                  }
+                : {}),
               signal,
             });
           };

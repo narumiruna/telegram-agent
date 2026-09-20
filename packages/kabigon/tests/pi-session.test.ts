@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ResourceProvider } from "../src/core/resources.js";
-import { PiSessionLoader } from "../src/loaders/pi-session.js";
+import { MAX_PI_SESSION_BYTES, PiSessionLoader } from "../src/loaders/pi-session.js";
 
 const sharedUrl = "https://pi.dev/session/#0230effc86f4a142c885cb59fe9725d5";
 const rawUrl = "https://gist.githubusercontent.com/alice/id/raw/revision/session.html";
@@ -58,6 +58,21 @@ function sessionHtml(): string {
 }
 
 describe("Pi session loader", () => {
+  it("rejects oversized raw session files", async () => {
+    const resources = {
+      fetch: async (input: string | URL) => {
+        if (String(input).includes("api.github.com")) {
+          return Response.json({ files: { "session.html": { truncated: true, raw_url: rawUrl } } });
+        }
+        return new Response(null, { headers: { "content-length": String(MAX_PI_SESSION_BYTES + 1) } });
+      },
+    } as unknown as ResourceProvider;
+
+    await expect(new PiSessionLoader({ resources }).load(sharedUrl)).rejects.toThrow(
+      `${MAX_PI_SESSION_BYTES} byte limit`,
+    );
+  });
+
   it("fetches truncated Gists and renders only the selected ancestry", async () => {
     const requested: string[] = [];
     const resources = {

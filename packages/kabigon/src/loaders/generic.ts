@@ -4,11 +4,12 @@ import type { Loader } from "../core/loader.js";
 import { assertPublicUrl, readResponseText, safeFetch } from "../core/network.js";
 import type { ImpersSession, ResourceProvider } from "../core/resources.js";
 import type { RetrievedHtml } from "../core/retrieval.js";
-import { fetchBrowserHtml } from "./browser.js";
+import { DEFAULT_BROWSER_TIMEOUT_MS, fetchBrowserHtml } from "./browser.js";
 import { ensureUsableContent } from "./content-guard.js";
 import { htmlToMarkdown } from "./utils.js";
 
 export const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
+export const DEFAULT_PLAYWRIGHT_TIMEOUT_MS = DEFAULT_BROWSER_TIMEOUT_MS;
 export const MAX_HTML_BYTES = 10 * 1024 * 1024;
 const SENSITIVE_HEADERS = new Set(["authorization", "cookie", "proxy-authorization"]);
 
@@ -268,13 +269,18 @@ export class PlaywrightLoader implements Loader {
     const browser = await resources?.browser();
     const content = await fetchBrowserHtml(url, {
       loaderName: "PlaywrightLoader",
-      timeoutMs: this.options.timeoutMs ?? 0,
+      timeoutMs: this.options.timeoutMs ?? DEFAULT_PLAYWRIGHT_TIMEOUT_MS,
       timeoutSuggestion:
         "The page took too long to load. Try increasing the timeout or using a faster waitUntil option.",
       ...(this.options.waitUntil ? { waitUntil: this.options.waitUntil } : {}),
       headless: this.options.headless ?? true,
       ...(browser ? { browser } : {}),
-      ...(resources ? { validateUrl: resources.validateUrl.bind(resources) } : {}),
+      ...(resources
+        ? {
+            validateUrl: resources.validateUrl.bind(resources),
+            fetchUrl: resources.fetch.bind(resources),
+          }
+        : {}),
       signal,
     });
     const result = htmlToMarkdown(content);

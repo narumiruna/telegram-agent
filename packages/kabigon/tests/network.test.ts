@@ -35,6 +35,21 @@ describe("network safety", () => {
     expect(calls).toBe(2);
   });
 
+  it("returns redirects without following them in manual mode", async () => {
+    const fetchImplementation = vi.fn(
+      async () => new Response(null, { status: 302, headers: { location: "https://other.example/final" } }),
+    );
+    const resolve = resolverFor([{ address: "93.184.216.34", family: 4 }]);
+
+    const response = await safeFetch(
+      "https://public.example/start",
+      { redirect: "manual" },
+      { fetchImplementation, resolve },
+    );
+    expect(response.status).toBe(302);
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+  });
+
   it("validates every redirect before issuing the next request", async () => {
     const fetchImplementation = vi.fn(
       async () => new Response(null, { status: 302, headers: { location: "http://127.0.0.1/admin" } }),

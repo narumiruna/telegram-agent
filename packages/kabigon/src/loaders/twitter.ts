@@ -195,7 +195,12 @@ export class TwitterLoader implements Loader {
         afterGoto: waitForTweet,
         extractContent: extractTweet,
         ...(browser ? { browser } : {}),
-        ...(resources ? { validateUrl: resources.validateUrl.bind(resources) } : {}),
+        ...(resources
+          ? {
+              validateUrl: resources.validateUrl.bind(resources),
+              fetchUrl: resources.fetch.bind(resources),
+            }
+          : {}),
         signal,
       });
     };

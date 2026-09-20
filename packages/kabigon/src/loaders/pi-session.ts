@@ -2,11 +2,13 @@ import * as cheerio from "cheerio";
 
 import { LoaderContentError, LoaderTimeoutError } from "../core/errors.js";
 import type { Loader } from "../core/loader.js";
+import { readResponseText } from "../core/network.js";
 import type { ResourceProvider } from "../core/resources.js";
 import { type PiSessionTarget, parsePiSessionTarget } from "../sources/applicability.js";
 
 const GITHUB_GIST_API = "https://api.github.com/gists/{gistId}";
 const GIST_RAW_HOST = "gist.githubusercontent.com";
+export const MAX_PI_SESSION_BYTES = 10 * 1024 * 1024;
 type JsonRecord = Record<string, unknown>;
 
 function record(value: unknown): JsonRecord | undefined {
@@ -253,9 +255,10 @@ export class PiSessionLoader implements Loader {
       const file = gistFile((await response.json()) as unknown, target, url);
       let content = text(file.content);
       if (file.truncated === true || !content) {
-        content = await (
-          await this.get(validatedRawUrl(file.raw_url, url), { redirect: "follow", signal: activeSignal })
-        ).text();
+        content = await readResponseText(
+          await this.get(validatedRawUrl(file.raw_url, url), { redirect: "follow", signal: activeSignal }),
+          MAX_PI_SESSION_BYTES,
+        );
       }
       return renderPiSessionMarkdown(decodeSessionExport(content, url), { sourceUrl: url, leafId: target.leafId });
     } catch (error) {

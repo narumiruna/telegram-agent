@@ -1,12 +1,14 @@
 import type { Browser, Page, Response } from "playwright";
 
 import { LoaderContentError, LoaderTimeoutError } from "../core/errors.js";
-import { assertPublicUrl } from "../core/network.js";
+import { assertPublicUrl, type FetchImplementation, readResponseBytes, safeFetch } from "../core/network.js";
 import type { RetrievedHtml } from "../core/retrieval.js";
 
 export const DEFAULT_BROWSER_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 export const DEFAULT_BLOCKED_RESOURCE_TYPES = new Set(["font", "image", "media"]);
+export const DEFAULT_BROWSER_TIMEOUT_MS = 30_000;
+export const MAX_BROWSER_BYTES = 10 * 1024 * 1024;
 
 export type BrowserWaitUntil = "commit" | "domcontentloaded" | "load" | "networkidle";
 export type BrowserPageHook = (page: Page) => Promise<void>;
@@ -25,65 +27,92 @@ interface BrowserFetchOptions {
   browser?: Browser;
   signal?: AbortSignal;
   validateUrl?: (url: string | URL, signal?: AbortSignal) => Promise<URL>;
+  fetchUrl?: FetchImplementation;
+  maxBytes?: number;
 }
 
 async function withBrowser(browser: Browser, url: string, options: BrowserFetchOptions): Promise<RetrievedHtml> {
   if (options.signal?.aborted) throw options.signal.reason;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_BROWSER_TIMEOUT_MS;
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const activeSignal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
   const validateUrl =
     options.validateUrl ??
     (async (target: string | URL, signal?: AbortSignal) => (await assertPublicUrl(target, { signal })).url);
-  await validateUrl(url, options.signal);
-  const context = await browser.newContext(options.userAgent ? { userAgent: options.userAgent } : {});
+  await validateUrl(url, activeSignal);
+  const fetchUrl = options.fetchUrl ?? safeFetch;
+  const maxBytes = options.maxBytes ?? MAX_BROWSER_BYTES;
+  const context = await browser.newContext({
+    ...(options.userAgent ? { userAgent: options.userAgent } : {}),
+    serviceWorkers: "block",
+  });
   try {
-    const page = await context.newPage();
-    const validatedOrigins = new Map<string, Promise<URL>>();
-    await page.route("**/*", async (route) => {
-      if (options.blockedResourceTypes?.has(route.request().resourceType())) {
+    let routeError: unknown;
+    await context.routeWebSocket("**/*", async (route) => route.close({ code: 1008, reason: "Blocked by kabigon" }));
+    await context.route("**/*", async (route) => {
+      const request = route.request();
+      if (options.blockedResourceTypes?.has(request.resourceType())) {
         await route.abort();
         return;
       }
-      const requestUrl = route.request().url();
-      const request = route.request();
+      const requestUrl = request.url();
       if (!requestUrl.startsWith("http://") && !requestUrl.startsWith("https://")) {
         if (request.isNavigationRequest()) await route.abort("blockedbyclient");
         else await route.continue();
         return;
       }
       try {
-        const origin = new URL(requestUrl).origin;
-        let validation = request.isNavigationRequest() ? undefined : validatedOrigins.get(origin);
-        if (!validation) {
-          validation = validateUrl(requestUrl, options.signal);
-          if (!request.isNavigationRequest()) validatedOrigins.set(origin, validation);
-        }
-        await validation;
-        await route.continue();
-      } catch {
+        const postData = request.postDataBuffer();
+        const response = await fetchUrl(requestUrl, {
+          method: request.method(),
+          headers: await request.allHeaders(),
+          body: postData ? Uint8Array.from(postData) : undefined,
+          redirect: "manual",
+          signal: activeSignal,
+        });
+        const headers = Object.fromEntries(
+          [...response.headers].filter(
+            ([name]) => !["content-encoding", "content-length", "transfer-encoding"].includes(name.toLowerCase()),
+          ),
+        );
+        await route.fulfill({
+          status: response.status,
+          headers,
+          body: Buffer.from(await readResponseBytes(response, maxBytes)),
+        });
+      } catch (error) {
+        routeError ??= error;
         await route.abort("blockedbyclient");
       }
     });
+    const page = await context.newPage();
     let response: Response | null;
     try {
       response = await page.goto(url, {
-        ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+        timeout: timeoutMs,
         ...(options.waitUntil ? { waitUntil: options.waitUntil } : {}),
       });
     } catch (error) {
-      if (error instanceof Error && error.name === "TimeoutError") {
-        throw new LoaderTimeoutError(
-          options.loaderName,
-          url,
-          (options.timeoutMs ?? 30_000) / 1_000,
-          options.timeoutSuggestion,
-        );
+      if (options.signal?.aborted) throw options.signal.reason;
+      if (timeoutSignal.aborted || (error instanceof Error && error.name === "TimeoutError")) {
+        throw new LoaderTimeoutError(options.loaderName, url, timeoutMs / 1_000, options.timeoutSuggestion);
       }
+      if (routeError) throw routeError;
       throw error;
     }
+    if (routeError) throw routeError;
     if (response && response.status() >= 400) {
       throw new LoaderContentError(options.loaderName, url, `HTTP request failed with status ${response.status()}`);
     }
     if (options.afterGoto) await options.afterGoto(page);
+    const domBytes = await page.evaluate(() => new Blob([document.documentElement.outerHTML]).size);
+    if (domBytes > maxBytes) {
+      throw new LoaderContentError(options.loaderName, url, `Browser DOM exceeds the ${maxBytes} byte limit`);
+    }
     const content = options.extractContent ? await options.extractContent(page) : await page.content();
+    if (Buffer.byteLength(content) > maxBytes) {
+      throw new LoaderContentError(options.loaderName, url, `Browser content exceeds the ${maxBytes} byte limit`);
+    }
     return { content, contentType: (await response?.headerValue("content-type")) ?? "text/html" };
   } finally {
     await context.close();

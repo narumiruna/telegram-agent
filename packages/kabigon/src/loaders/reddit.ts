@@ -185,7 +185,12 @@ export class RedditLoader implements Loader {
         waitUntil: "networkidle",
         userAgent: DEFAULT_BROWSER_USER_AGENT,
         ...(browser ? { browser } : {}),
-        ...(resources ? { validateUrl: resources.validateUrl.bind(resources) } : {}),
+        ...(resources
+          ? {
+              validateUrl: resources.validateUrl.bind(resources),
+              fetchUrl: resources.fetch.bind(resources),
+            }
+          : {}),
         signal,
       });
     };

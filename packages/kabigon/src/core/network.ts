@@ -148,8 +148,10 @@ export async function safeFetch(
       }
     }
     if (!REDIRECT_STATUSES.has(response.status)) return response;
+    if (init.redirect === "manual") return response;
 
     await response.body?.cancel();
+    if (init.redirect === "error") throw new Error("URL redirect was not allowed");
     if (redirects === maxRedirects) throw new Error("URL exceeded the redirect limit");
     const location = response.headers.get("location");
     if (!location) throw new Error("URL redirect did not include a Location header");
