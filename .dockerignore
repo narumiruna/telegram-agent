@@ -7,6 +7,9 @@
 __pycache__
 *.py[cod]
 dist
+**/dist
+node_modules
+**/node_modules
 build
 *.egg-info
 htmlcov

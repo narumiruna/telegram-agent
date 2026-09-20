@@ -2,7 +2,7 @@
 
 ## Goal
 
-Reimplement `telegramagent` under `./typescript` with behavior-compatible Telegram handling while keeping the Python implementation available until the TypeScript service passes its parity checks.
+Reimplement `telegramagent` under `./apps/telegram-agent` with behavior-compatible Telegram handling while keeping the Python implementation available until the TypeScript service passes its parity checks.
 
 Use Pi's native layers instead of rebuilding agent infrastructure:
 
@@ -16,7 +16,7 @@ Use Biome for formatting and linting, TypeScript strict mode, grammY for Telegra
 
 The Python application has about 15,700 lines across runtime and tests. It includes Telegram private/group routing, reply branches, durable sessions, agent steering, URL extraction, documents, images, Morsel, events, MCP, Gurume, and container tools. A staged migration reduces the risk of losing safety limits or subtle Telegram behavior.
 
-The TypeScript implementation is isolated in `./typescript`. Python source, deployment files, and runtime data remain unchanged until cutover.
+The TypeScript implementation is isolated in `./apps/telegram-agent`. Python source, deployment files, and runtime data remain unchanged until cutover.
 
 ## Architecture
 
@@ -45,10 +45,10 @@ Each Telegram chat receives an isolated Pi session directory beneath `BOT_SESSIO
 
 ## Plan
 
-- [x] Create the Node/TypeScript/Biome/Vitest project in `./typescript`; evidence: dependency install and all local quality scripts pass.
+- [x] Create the Node/TypeScript/Biome/Vitest project in `./apps/telegram-agent`; evidence: dependency install and all local quality scripts pass.
 - [x] Implement validated environment settings and redacted logging; evidence: Vitest covers defaults, CSV parsing, invalid ranges, and secret redaction.
 - [x] Implement Pi model runtime, Telegram system prompt/resource loading, and isolated per-chat session registry; evidence: Pi session smoke test plus registry tests cover chat isolation, reuse, steering, follow-up, cancellation, reset, and passive context.
-- [ ] Implement Telegram private/group routing, commands, reply context, image input, status editing, output chunking, and allowlists; current: implementation and pure normalization/rendering tests exist, but update-level grammY parity fixtures remain.
+- [x] Implement Telegram private/group routing, commands, reply context, image input, status editing, output chunking, and allowlists; evidence: update-level grammY tests cover private routing, allowlist rejection, passive groups, concurrent cancellation, image failures, and Morsel long replies.
 - [x] Port safe URL extraction and proactive handling; evidence: Pi tool rejects unsafe schemes/addresses/redirects and tests bounded HTML extraction. Source-specific kabigon fallback remains part of optional integration work.
 - [ ] Port document conversion behind a bounded adapter; acceptance: supported-type, size, timeout, truncation, and failure tests pass.
 - [ ] Port image generation through `pi-ai` where supported and retain an OpenAI-compatible fallback only when required; acceptance: disabled/configuration/provider/error paths pass tests.
@@ -75,7 +75,7 @@ The Python application remains untouched and deployable throughout migration. Ty
 - [x] `npm run format:check`
 - [x] `npm run lint`
 - [x] `npm run typecheck`
-- [x] `npm test` (20 tests)
+- [x] `npm test` (30 tests)
 - [x] `npm run build`
 - [ ] TypeScript container build succeeds. Docker CLI is unavailable in the current WSL environment, so this requires external verification.
 - [ ] README documents local run, configuration, session-format difference, migration, and rollback.

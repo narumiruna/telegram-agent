@@ -1,0 +1,17 @@
+services:
+  telegramagent-typescript:
+    build:
+      context: ../..
+      dockerfile: apps/telegram-agent/Dockerfile
+    image: telegramagent-typescript:local
+    env_file:
+      - ../../.env
+    environment:
+      TELEGRAMAGENT_PROJECT_ROOT: /app
+    init: true
+    restart: unless-stopped
+    volumes:
+      - ../../.agents:/app/.agents:ro
+      - ../../.events:/app/.events
+      - ../../.telegramagent:/app/.telegramagent
+      - ../../SOUL.md:/app/SOUL.md:ro

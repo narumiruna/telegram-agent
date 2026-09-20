@@ -8,7 +8,7 @@ import { createLogger } from "./logging.js";
 import { createTelegramAgentBot } from "./telegram/bot.js";
 
 export async function startApplication(): Promise<void> {
-  const defaultProjectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const defaultProjectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
   const settings = loadSettings(process.env, process.env.TELEGRAMAGENT_PROJECT_ROOT || defaultProjectRoot);
   if (!settings.botToken) throw new Error("BOT_TOKEN is required");
   if (!settings.openaiApiKey) throw new Error("OPENAI_API_KEY is required");

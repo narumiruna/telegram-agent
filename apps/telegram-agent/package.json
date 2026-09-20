@@ -8,8 +8,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "dev": "node --env-file-if-exists=../.env --env-file-if-exists=.env --import tsx src/index.ts",
-    "start": "node --env-file-if-exists=../.env --env-file-if-exists=.env dist/index.js",
+    "dev": "node --env-file-if-exists=../../.env --env-file-if-exists=.env --import tsx src/index.ts",
+    "start": "node --env-file-if-exists=../../.env --env-file-if-exists=.env dist/index.js",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",
