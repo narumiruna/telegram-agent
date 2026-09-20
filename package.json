@@ -16,7 +16,7 @@
     "format": "npm run format --workspaces --if-present",
     "format:check": "npm run format:check --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
-    "prepare": "husky",
+    "prepare": "if command -v husky >/dev/null 2>&1; then husky; fi",
     "precommit": "sh scripts/pre-commit.sh",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
