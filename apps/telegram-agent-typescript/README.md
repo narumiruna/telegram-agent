@@ -1,6 +1,6 @@
 # telegramagent TypeScript
 
-TypeScript migration of `telegramagent`, isolated under `./apps/telegram-agent` while the Python service remains available.
+TypeScript migration of `telegramagent`, isolated under `./apps/telegram-agent-typescript` while the Python service remains available.
 
 ## Runtime stack
 
@@ -51,7 +51,7 @@ Track these items in [`docs/plans/2026-04-12_typescript-migration-plan.md`](docs
 From the repository root:
 
 ```bash
-cd apps/telegram-agent
+cd apps/telegram-agent-typescript
 npm install
 npm run build
 npm start
@@ -62,7 +62,7 @@ The scripts load `../../.env` first and then `./.env` as an optional override. P
 For development:
 
 ```bash
-cd apps/telegram-agent
+cd apps/telegram-agent-typescript
 npm run dev -- --verbose
 ```
 
@@ -71,7 +71,7 @@ Do not run the Python and TypeScript bots with the same `BOT_TOKEN` simultaneous
 ## Quality gates
 
 ```bash
-cd apps/telegram-agent
+cd apps/telegram-agent-typescript
 npm run format:check
 npm run lint
 npm run typecheck
@@ -110,13 +110,13 @@ The runtime registers these as an explicit Pi OpenAI-compatible provider. Coding
 
 ## Docker
 
-Build from the repository root so the Dockerfile can copy `apps/telegram-agent/` and `SOUL.md`:
+Build from the repository root so the Dockerfile can copy `apps/telegram-agent-typescript/` and `SOUL.md`:
 
 ```bash
-docker build -f apps/telegram-agent/Dockerfile -t telegramagent-typescript:local .
-docker compose -f apps/telegram-agent/docker-compose.yml up -d --build
-docker compose -f apps/telegram-agent/docker-compose.yml logs -f telegramagent-typescript
-docker compose -f apps/telegram-agent/docker-compose.yml down
+docker build -f apps/telegram-agent-typescript/Dockerfile -t telegramagent-typescript:local .
+docker compose -f apps/telegram-agent-typescript/docker-compose.yml up -d --build
+docker compose -f apps/telegram-agent-typescript/docker-compose.yml logs -f telegramagent-typescript
+docker compose -f apps/telegram-agent-typescript/docker-compose.yml down
 ```
 
 The Compose file intentionally uses a different service and image name from the Python deployment. Stop the Python service before starting this one with the same bot token.

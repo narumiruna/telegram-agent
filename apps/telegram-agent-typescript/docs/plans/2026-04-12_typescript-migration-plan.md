@@ -2,7 +2,7 @@
 
 ## Goal
 
-Reimplement `telegramagent` under `./apps/telegram-agent` with behavior-compatible Telegram handling while keeping the Python implementation available until the TypeScript service passes its parity checks.
+Reimplement `telegramagent` under `./apps/telegram-agent-typescript` with behavior-compatible Telegram handling while keeping the Python implementation available until the TypeScript service passes its parity checks.
 
 Use Pi's native layers instead of rebuilding agent infrastructure:
 
@@ -16,7 +16,7 @@ Use Biome for formatting and linting, TypeScript strict mode, grammY for Telegra
 
 The Python application has about 15,700 lines across runtime and tests. It includes Telegram private/group routing, reply branches, durable sessions, agent steering, URL extraction, documents, images, Morsel, events, MCP, Gurume, and container tools. A staged migration reduces the risk of losing safety limits or subtle Telegram behavior.
 
-The TypeScript implementation is isolated in `./apps/telegram-agent`. Python source, deployment files, and runtime data remain unchanged until cutover.
+The TypeScript implementation is isolated in `./apps/telegram-agent-typescript`. Python source, deployment files, and runtime data remain unchanged until cutover.
 
 ## Architecture
 
@@ -45,7 +45,7 @@ Each Telegram chat receives an isolated Pi session directory beneath `BOT_SESSIO
 
 ## Plan
 
-- [x] Create the Node/TypeScript/Biome/Vitest project in `./apps/telegram-agent`; evidence: dependency install and all local quality scripts pass.
+- [x] Create the Node/TypeScript/Biome/Vitest project in `./apps/telegram-agent-typescript`; evidence: dependency install and all local quality scripts pass.
 - [x] Implement validated environment settings and redacted logging; evidence: Vitest covers defaults, CSV parsing, invalid ranges, and secret redaction.
 - [x] Implement Pi model runtime, Telegram system prompt/resource loading, and isolated per-chat session registry; evidence: Pi session smoke test plus registry tests cover chat isolation, reuse, steering, follow-up, cancellation, reset, and passive context.
 - [x] Implement Telegram private/group routing, commands, reply context, image input, status editing, output chunking, and allowlists; evidence: update-level grammY tests cover private routing, allowlist rejection, passive groups, concurrent cancellation, image failures, and Morsel long replies.

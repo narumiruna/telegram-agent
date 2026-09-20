@@ -2,7 +2,7 @@ services:
   telegramagent-typescript:
     build:
       context: ../..
-      dockerfile: apps/telegram-agent/Dockerfile
+      dockerfile: apps/telegram-agent-typescript/Dockerfile
     image: telegramagent-typescript:local
     env_file:
       - ../../.env
