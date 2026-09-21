@@ -222,7 +222,7 @@ def test_morsel_settings_have_smart_routing_defaults() -> None:
     settings = Settings.model_validate({})
 
     assert settings.morsel_mode == "smart"
-    assert settings.morsel_long_reply_threshold == 2000
+    assert settings.morsel_long_reply_threshold == 1000
     assert settings.morsel_share_expires_in_seconds == 2_592_000
     assert settings.morsel_telegram_instant_view is True
     assert settings.morsel_telegram_instant_view_rhash is None

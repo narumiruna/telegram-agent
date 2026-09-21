@@ -120,7 +120,7 @@ All runtime settings are environment variables. Start from `.env.example`; the m
 | `MORSEL_URL` | `https://morsel.narumi.dev/` | Public Morsel origin used to create and validate rich Markdown share URLs. |
 | `MORSEL_API_KEY` | empty | Bearer API key required for any Morsel publishing. |
 | `MORSEL_MODE` | `smart` | `disabled` publishes nothing, `rich_only` enables only the agent tool, and `smart` also routes long replies. |
-| `MORSEL_LONG_REPLY_THRESHOLD` | `2000` | Sanitized character count after which `smart` mode publishes an ordinary reply; valid range is 1–4096. |
+| `MORSEL_LONG_REPLY_THRESHOLD` | `1000` | Sanitized character count after which `smart` mode publishes an ordinary reply; valid range is 1–4096. |
 | `MORSEL_SHARE_EXPIRES_IN_SECONDS` | `2592000` | Lifetime assigned to non-Instant-View shares (30 days by default; valid range is 1–315360000). |
 | `MORSEL_TELEGRAM_INSTANT_VIEW` | `true` | Create Telegram Instant View source pages; these shares cannot expire and disclose the complete rendered article to Telegram. |
 | `TELEGRAM_INSTANT_VIEW_RHASH` | empty | Optional domain-specific template hash appended to Morsel URLs as `tg_rhash` before Telegram approves the template. |
@@ -433,8 +433,8 @@ When the rich-rendering tool is available, the agent sends the complete Markdown
 instead of duplicating raw diagram, chart, or formula markup in Telegram. If the tool cannot publish, the agent must not
 claim success and falls back to a Telegram-readable plain-text answer.
 
-In default `smart` mode, a sanitized ordinary reply of exactly **2000 characters** remains in Telegram, while one of
-**2001 characters** is published and represented by a short Traditional Chinese context line containing its character
+In default `smart` mode, a sanitized ordinary reply of exactly **1000 characters** remains in Telegram, while one of
+**1001 characters** is published and represented by a short Traditional Chinese context line containing its character
 count plus the share URL. `rich_only` stops automatic long-reply publishing, and `disabled` stops all new Morsel shares.
 If publication is unavailable or rejected, the bot falls back to Telegram messages split into chunks of at most 4096
 characters. Set `MORSEL_LONG_REPLY_THRESHOLD` to customize this boundary.
